@@ -121,7 +121,7 @@ const ROTAS = {
     criacoes: 'Pessoas falando', gerar: 'Gerar pessoa falando',
     vazio: 'Nenhum vídeo de pessoa falando ainda. Envie uma foto de frente, escreva o texto e clique em Gerar.' },
 };
-const TITULOS = { inicio: 'Início', imagem: 'Imagem', video: 'Vídeo', apresentador: 'Pessoa falando', voz: 'Narração', canal: 'Canal automático', plano: 'Plano-sequência', musica: 'Música', fila: 'Fila', tudo: 'Minhas criações', configuracoes: 'Configurações' };
+const TITULOS = { inicio: 'Início', imagem: 'Imagem', video: 'Vídeo', apresentador: 'Pessoa falando', voz: 'Narração', canal: 'Canal automático', canais: 'Canais', plano: 'Plano-sequência', musica: 'Música', fila: 'Fila', tudo: 'Minhas criações', configuracoes: 'Configurações' };
 // IA recomendada em cada seção (CATALOGO_IAS.md: "Quem usar em cada caso")
 // 02/11/2026: a recomendada passou a ser a que o historico mostra em uso de verdade
 // (Krea 2 Turbo: 696 geracoes; LTX 2.5 texto: a mais usada que funciona SO com texto).
@@ -472,13 +472,14 @@ function cabecalhoDaGaleria(lista) {
 // ================================================================ roteador
 function rotaDoHash() {
   const h = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
-  return ['imagem', 'video', 'apresentador', 'musica', 'voz', 'canal', 'plano', 'tudo', 'fila', 'configuracoes'].includes(h) ? h : 'inicio';
+  return ['imagem', 'video', 'apresentador', 'musica', 'voz', 'canal', 'canais', 'plano', 'tudo', 'fila', 'configuracoes'].includes(h) ? h : 'inicio';
 }
 // "#conteudo" (link "Pular para o conteúdo") e outras âncoras não são rotas: não trocam a tela
 const hashEhRota = () => !location.hash || location.hash === '#' || location.hash.startsWith('#/');
 function focarTitulo(rolar = false) {
   const r = G.rota, h = r === 'inicio' ? $('#inicioTitulo') : r === 'musica' ? $('#musTitulo')
-    : r === 'voz' ? $('#vozTitulo') : r === 'canal' ? $('#canalTitulo') : r === 'plano' ? $('#planoTitulo')
+    : r === 'voz' ? $('#vozTitulo') : r === 'canal' ? $('#canalTitulo') : r === 'canais' ? $('#canaisTitulo')
+    : r === 'plano' ? $('#planoTitulo')
     : r === 'tudo' ? $('#tudoTitulo') : r === 'fila' ? $('#filaTitulo')
     : r === 'configuracoes' ? $('#configTitulo') : $('#rotaTitulo');
   if (h) h.focus({ preventScroll: !rolar });
@@ -504,6 +505,8 @@ function irPara() {
   $('#vVoz').hidden = r !== 'voz';
   $('#vCanal').hidden = r !== 'canal';
   if (r === 'canal' && window.CANAL) CANAL.abrir();
+  $('#vCanais').hidden = r !== 'canais';
+  if (r === 'canais' && window.CANAIS) CANAIS.abrir();
   $('#vPlano').hidden = r !== 'plano';
   if (r === 'plano' && window.PLANO) PLANO.abrir();
   $('#vTudo').hidden = r !== 'tudo';
@@ -526,7 +529,7 @@ function irPara() {
   if (!ehGerador(r)) pararGaleria();
   if (r === 'inicio') abrirInicio();
   else if (ehGerador(r)) abrirGerador(r);
-  else if (r === 'voz' || r === 'canal' || r === 'plano' || r === 'tudo' || r === 'configuracoes') medirTopo();  // voz.js / canal.js se viram sozinhos
+  else if (r === 'voz' || r === 'canal' || r === 'canais' || r === 'plano' || r === 'tudo' || r === 'configuracoes') medirTopo();  // voz.js / canal.js se viram sozinhos
   else { medirTopo(); atualizarMusica(true); }
   if (antes) {
     window.scrollTo(0, 0);

@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="plano.css?v=20261111-polir">
 <link rel="stylesheet" href="conta.css?v=20261103-conta2">
 <link rel="stylesheet" href="configuracoes.css?v=20261112-centro">
+<link rel="stylesheet" href="canais.css?v=20261112-canais1">
 </head>
 <body>
 <a class="pular" id="pular" href="#conteudo">Pular para o conteúdo</a>
@@ -77,6 +78,7 @@
     <a href="#/apresentador" data-rota="apresentador"><span data-ic="apresentador"></span><span data-i18n="nav.apresentador">Pessoa falando</span></a>
     <a href="#/plano" data-rota="plano"><span data-ic="video"></span><span data-i18n="nav.plano">Plano-sequência</span></a>
     <a href="#/canal" data-rota="canal"><span data-ic="fila"></span><span data-i18n="nav.canal">Canal</span></a>
+    <a href="#/canais" data-rota="canais"><span data-ic="estrela"></span><span>Canais</span></a>
     <a href="#/voz" data-rota="voz"><span data-ic="onda"></span><span data-i18n="nav.voz">Narração</span></a>
     <a href="#/musica" data-rota="musica"><span data-ic="musica"></span><span data-i18n="nav.musica">Música</span></a>
     <a href="#/fila" data-rota="fila"><span data-ic="fila"></span><span data-i18n="nav.fila">Fila</span>
@@ -743,6 +745,65 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
     </div>
   </section>
 
+  <!-- ============================== CANAIS (vários canais isolados) ============================== -->
+  <section id="vCanais" class="vista canais" hidden aria-labelledby="canaisTitulo">
+    <div class="canais-cab">
+      <div class="canais-tit">
+        <span class="painel-ic" data-ic="estrela"></span>
+        <div>
+          <p class="sobrelinha">Um mundo por canal</p>
+          <h1 id="canaisTitulo" tabindex="-1">Canais</h1>
+          <p class="fraco" id="canaisSub">Contexto, personagens, formatos, produção e agenda separados por canal.</p>
+        </div>
+      </div>
+      <div class="canais-cab-bts">
+        <button type="button" class="bt-sec" id="canaisAtualizar"><span data-ic="reusar"></span>Atualizar</button>
+        <button type="button" class="gerar" id="canaisNovo"><span data-ic="mais"></span>Novo canal</button>
+      </div>
+    </div>
+    <div class="canais-seletor" id="canaisSeletor" aria-label="Canais"></div>
+    <div class="canais-abas" id="canaisAbas" role="tablist" aria-label="Seções do canal"></div>
+    <p class="aviso-linha" id="canaisErro" hidden></p>
+    <div id="canaisCorpo"><p class="fraco">Carregando os canais…</p></div>
+  </section>
+
+  <dialog class="janela canal-dlg" id="dlgCanalNovo" aria-labelledby="canalNovoTitulo">
+    <form class="janela-corpo" id="canalNovoForm" onsubmit="return false">
+      <h2 id="canalNovoTitulo">Novo canal</h2>
+      <p class="fraco">Cada canal guarda o próprio contexto, personagens, voz, formatos e agenda. Nada se mistura com os outros.</p>
+      <label class="voz-campo"><span>Nome do canal</span>
+        <input id="canalNovoNome" type="text" maxlength="80" placeholder="Ex.: Histórias da Bíblia" required></label>
+      <label class="voz-campo"><span>Tema (o que este canal conta)</span>
+        <textarea id="canalNovoTema" rows="3" placeholder="Ex.: histórias bíblicas em 45 segundos, tom de conversa, para quem nunca leu"></textarea></label>
+      <div class="janela-acoes">
+        <button type="button" class="bt-sec" id="canalNovoCancelar">Cancelar</button>
+        <button type="button" class="gerar" id="canalNovoCriar"><span data-ic="ok"></span>Criar canal</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="janela canal-dlg" id="dlgAgendar" aria-labelledby="agendarTitulo">
+    <form class="janela-corpo" id="agendarForm" onsubmit="return false">
+      <h2 id="agendarTitulo">Agendar publicação</h2>
+      <p class="fraco" id="agendarSub"></p>
+      <div class="canais-form-2">
+        <label class="voz-campo"><span>Produção</span><select id="agendarProducao"></select></label>
+        <label class="voz-campo"><span>Formato</span><select id="agendarFormato"></select></label>
+      </div>
+      <label class="voz-campo"><span>Quando publicar</span>
+        <input id="agendarQuando" type="datetime-local" required></label>
+      <div class="voz-campo"><span>Plataformas</span><div class="chips" id="agendarPlataformas"></div></div>
+      <label class="voz-campo"><span>Título</span><input id="agendarTituloIn" type="text" maxlength="100"></label>
+      <label class="voz-campo"><span>Legenda / descrição</span><textarea id="agendarDescricao" rows="4"></textarea></label>
+      <label class="voz-campo"><span>Hashtags (separadas por espaço)</span><input id="agendarHashtags" type="text" placeholder="#historias #shorts"></label>
+      <p class="nota" id="agendarAviso"></p>
+      <div class="janela-acoes">
+        <button type="button" class="bt-sec" id="agendarCancelar">Cancelar</button>
+        <button type="button" class="gerar" id="agendarCriar"><span data-ic="relogio"></span>Agendar</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- janela das cenas -->
   <dialog class="janela canal-cenas" id="dlgCenas" aria-labelledby="cenasTitulo">
     <div class="janela-corpo">
@@ -1059,6 +1120,7 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
 <script src="fila.js?v=20261112-abas"></script>
 <script src="configuracoes.js?v=20261112-ias"></script>
 <script src="canal.js?v=20261030-canal"></script>
+<script src="canais.js?v=20261112-canais1"></script>
 <script src="plano.js?v=20261102-molde2"></script>
 <script src="tudo.js?v=20261102-tudo2"></script>
 </body>

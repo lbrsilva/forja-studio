@@ -75,6 +75,11 @@ import instalar_voz  # noqa: E402  (baixa o VoiceStudio da versao oficial)
 import latentsync_motor  # noqa: E402  (sincronia labial rapida, em ambiente proprio)
 import voz_studio  # noqa: E402  (voz LOCAL e de graça, opcional: só funciona com o VoiceStudio aberto)
 import canal  # noqa: E402  (a esteira do Canal automático)
+import canais  # noqa: E402  (cada canal com contexto, formatos e produções próprios)
+import roteirista  # noqa: E402  (briefing -> plano de cenas com IA local)
+import esteira  # noqa: E402  (plano -> voz, imagens e montagem por formato)
+import publicacao  # noqa: E402  (YouTube, TikTok e Instagram)
+import analytics  # noqa: E402  (retorno por canal, plataforma e horário)
 
 # o registro do Windows às vezes diz que .js é text/plain; a interface precisa dos tipos certos
 for _tipo, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("font/woff2", ".woff2"),
@@ -2522,6 +2527,7 @@ async def api_gerar(req):
            "estado": "fila", "criado": time.time(), "amostradores": amostradores,
            "total_passos": steps * n_amostr, "saida_final": saida_final}
     job["ia"] = info_ia(job)
+    job["oculto"] = bool(b.get("oculto"))
     if req.query.get("simular"):  # só monta o workflow (para validar sem gastar GPU)
         return web.json_response({"api": api, "job": job})
     antes = None
@@ -2575,7 +2581,9 @@ async def api_jobs(req):
         antes = float(req.query["antes"]) if req.query.get("antes") else None
     except ValueError:
         antes = None
-    lista = [j for j in reversed(JOBS) if not j.get("lixeira") and (not aba or j.get("aba") == aba)
+    lista = [j for j in reversed(JOBS) if not j.get("lixeira")
+             and (req.query.get("ocultos") == "1" or not j.get("oculto"))
+             and (not aba or j.get("aba") == aba)
              and (antes is None or j.get("criado", 0) < antes)]
     esperas = calcular_esperas()  # uma vez só por requisição (a conta da fila é linear)
     return web.json_response([publico(j, esperas) for j in lista[:limite]], headers={"X-Total": str(len(lista))})
@@ -4772,9 +4780,10 @@ async def _absorver_historico():
     except Exception:
         h = {}  # ComfyUI desligada: ainda ha o que ler dos trabalhos do painel e das narracoes
     novos = 0
+    ocultos = {j.get("prompt_id") for j in JOBS if j.get("oculto") and j.get("prompt_id")}
     meus = {j.get("prompt_id"): j for j in JOBS if j.get("prompt_id")}
     for pid, it in (h or {}).items():
-        if pid in itens or pid in removidos or not isinstance(it, dict):
+        if pid in itens or pid in removidos or not isinstance(it, dict) or pid in ocultos:
             continue
         st = it.get("status") or {}
         quando, fim = 0, 0
@@ -4899,7 +4908,7 @@ async def _absorver_historico():
     # Trabalhos do proprio painel: o historico da ComfyUI some quando ela reinicia, e o LatentSync nem
     # passa por ela. Sem isto os dois sumiam do "Ja gerado".
     for j in JOBS:
-        if j.get("lixeira") or j.get("estado") not in ("concluido", "erro"):
+        if j.get("lixeira") or j.get("oculto") or j.get("estado") not in ("concluido", "erro"):
             continue
         chave = j.get("prompt_id") or "job:" + str(j.get("id"))
         quando = int(j.get("inicio") or j.get("criado") or 0)
@@ -5231,10 +5240,483 @@ async def api_canal_fila(req):
     return web.json_response(est)
 
 
+# ===================================================================== CANAIS (vários canais)
+# Cada canal tem contexto, formatos, voz e produções próprios. O histórico do estúdio não
+# é usado por esta camada: as produções ficam em canais/<id>/producoes/ e os trabalhos de
+# imagem vão marcados com "oculto" para não aparecerem na Fila nem em Minhas criações.
+PUBLICANDO = set()
+
+
+def _canal_ou_erro(cid):
+    c = canais.obter(cid)
+    if not c:
+        raise web.HTTPNotFound(text="Canal não encontrado.")
+    return c
+
+
+def _resumo_canal(c):
+    d = dict(c)
+    d["contexto"] = canais.contexto(c["id"])
+    d["credenciais"] = canais.estado_credenciais(c["id"])
+    d["agenda"] = canais.agenda_listar(c["id"])
+    d["producoes"] = [esteira.resumo(p) for p in canais.lista_producoes(c["id"])]
+    d["pasta"] = str(canais.pasta_canal(c["id"]))
+    return d
+
+
+def _quando_de(v):
+    if isinstance(v, (int, float)):
+        return int(v)
+    s = str(v or "").strip()
+    if not s:
+        raise web.HTTPBadRequest(text="Escolha a data e a hora da publicação.")
+    if s.isdigit():
+        return int(s)
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
+        try:
+            return int(datetime.strptime(s, fmt).timestamp())
+        except ValueError:
+            continue
+    return int(analytics._data(s))
+
+
+def _proximo_horario(horarios):
+    from datetime import datetime as dt, timedelta
+    agora = dt.now()
+    validos = []
+    for h in horarios or []:
+        try:
+            hh, mm = [int(x) for x in str(h).replace("h", ":").split(":")[:2]]
+            validos.append((hh, mm))
+        except Exception:
+            continue
+    validos = sorted(set(validos)) or [(6, 0)]
+    for hh, mm in validos:
+        alvo = agora.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if alvo > agora + timedelta(minutes=2):
+            return int(alvo.timestamp())
+    hh, mm = validos[0]
+    amanha = (agora + timedelta(days=1)).replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return int(amanha.timestamp())
+
+
+def _meta_do_plano(canal, plano, quando=None):
+    return {"titulo": plano.get("titulo") or "Vídeo",
+            "descricao": roteirista.texto_legenda(plano),
+            "hashtags": plano.get("hashtags") or ((canal.get("publicacao") or {}).get("hashtags") or []),
+            "visibilidade": (canal.get("publicacao") or {}).get("visibilidade") or "public",
+            "quando": quando}
+
+
+def _agendar_automatico(canal, producao):
+    pub = canal.get("publicacao") or {}
+    if not pub.get("automatico"):
+        return []
+    plano = producao.get("plano") or {}
+    quando = _proximo_horario(pub.get("horarios") or ["06:00"])
+    meta = _meta_do_plano(canal, plano, quando)
+    criados = []
+    vistos_fora_do_youtube = set()
+    for fid, caminho in (producao.get("arquivos", {}).get("videos") or {}).items():
+        fmt = canais.formato_por_id(canal, fid)
+        if not fmt or fmt.get("plataforma") not in (pub.get("plataformas") or []):
+            continue
+        plataforma = fmt["plataforma"]
+        if plataforma != "youtube" and plataforma in vistos_fora_do_youtube:
+            continue
+        vistos_fora_do_youtube.add(plataforma)
+        criados.append(canais.agendar(canal["id"], producao["id"], fid, caminho,
+                                      [plataforma], quando, meta))
+    return criados
+
+
+async def api_canais(req):
+    if req.method == "GET":
+        return web.json_response({
+            "canais": [_resumo_canal(c) for c in canais.listar()],
+            "plataformas": canais.PLATAFORMAS,
+            "formatos_padrao": canais.FORMATOS_PADRAO,
+        })
+    b = await req.json()
+    nome = (b.get("nome") or "").strip()
+    if not nome:
+        raise web.HTTPBadRequest(text="Dê um nome ao canal.")
+    c = canais.criar(nome, cor=b.get("cor") or "#5B8DEF")
+    if isinstance(b.get("contexto"), dict):
+        canais.gravar_contexto(c["id"], b["contexto"])
+    print("[estudio] canal criado: %s (%s)" % (c["nome"], c["id"]), flush=True)
+    return web.json_response(_resumo_canal(c))
+
+
+async def api_canal(req):
+    cid = req.match_info["cid"]
+    c = _canal_ou_erro(cid)
+    if req.method == "GET":
+        return web.json_response(_resumo_canal(c))
+    if req.method == "DELETE":
+        return web.json_response(canais.arquivar(cid))
+    b = await req.json()
+    if isinstance(b.get("config"), dict):
+        c = canais.atualizar(cid, b["config"])
+    if isinstance(b.get("contexto"), dict):
+        canais.gravar_contexto(cid, b["contexto"])
+    return web.json_response(_resumo_canal(c))
+
+
+async def api_canal_contexto(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    if req.method == "GET":
+        return web.json_response(canais.contexto(cid))
+    b = await req.json()
+    return web.json_response(canais.gravar_contexto(cid, b))
+
+
+async def api_canal_plano(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    briefing = (b.get("briefing") or "").strip()
+    if not briefing:
+        raise web.HTTPBadRequest(text="Escreva o que você quer postar.")
+    ctx = canais.contexto(cid)
+    prod = canal.get("producao") or {}
+    try:
+        plano = await roteirista.gerar_plano(
+            _pedir_texto, canal, ctx, briefing,
+            int(b.get("quantas") or prod.get("cenas") or 6),
+            int(b.get("duracao") or prod.get("duracao_alvo") or 45))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except Exception as e:
+        raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
+    return web.json_response({"plano": plano, "contexto": ctx})
+
+
+async def _gerar_imagem_esteira(prompt, formato, destino, preset, qualidade):
+    """Gera uma cena pela rota de imagem do próprio estúdio, marcada como oculta.
+
+    Ir pela rota (em vez de falar com a ComfyUI) reaproveita a fila, a espera pela placa e a
+    conversão de formato que a tela já usa. `ocultos=1` é só para esta esteira enxergar o
+    próprio trabalho: a Fila e Minhas criações continuam sem ele.
+    """
+    aba, p = preset_ou_none(preset)
+    if aba != "imagem" or not p:
+        preset = "z_image_turbo"
+    base = "http://127.0.0.1:%d" % PORTA
+    corpo = {"preset": preset, "modo": "prompt", "prompt": prompt,
+             "formato": formato or "9:16", "qualidade": qualidade or "Normal", "oculto": True}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
+        jid = None
+        for tentativa in range(4):
+            async with s.post(base + "/api/gerar", json=corpo) as r:
+                txt = await r.text()
+                if r.status >= 400:
+                    if tentativa < 3 and ("não está respondendo" in txt or r.status >= 500):
+                        await asyncio.sleep(10)
+                        continue
+                    raise RuntimeError("o estúdio recusou a imagem (%s): %s" % (r.status, txt[:300]))
+                jid = (json.loads(txt) if txt else {}).get("id")
+                break
+        if not jid:
+            raise RuntimeError("o estúdio não devolveu o id do trabalho de imagem.")
+        limite = time.time() + 3600
+        while time.time() < limite:
+            await asyncio.sleep(4)
+            async with s.get(base + "/api/trabalhos", params={"ocultos": "1", "limite": 500}) as r:
+                lista = await r.json() if r.status == 200 else []
+            job = next((j for j in lista if j.get("id") == jid), None)
+            if job is None:
+                raise RuntimeError("o trabalho de imagem sumiu da lista.")
+            if job.get("estado") == "concluido":
+                break
+            if job.get("estado") in ("erro", "cancelado"):
+                raise RuntimeError(job.get("erro") or ("imagem %s" % job.get("estado")))
+        else:
+            raise RuntimeError("a imagem passou de uma hora sem terminar.")
+        async with s.get(base + "/api/midia/%s/0" % jid, timeout=aiohttp.ClientTimeout(total=300)) as r:
+            if r.status != 200:
+                raise RuntimeError("não consegui baixar a imagem pronta (%s)." % r.status)
+            dados = await r.read()
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(dados)
+    return str(destino)
+
+
+async def _rodar_esteira(cid, pid):
+    try:
+        producao = canais.ler_producao(cid, pid)
+        canal = _canal_ou_erro(cid)
+        if ((canal.get("producao") or {}).get("falar_cenas", True)):
+            try:
+                est = await voz_studio.estado()
+                if not est.get("no_ar"):
+                    ok, recado = await asyncio.to_thread(voz_studio.ligar, VOZ_SAIDA)
+                    if not ok:
+                        raise RuntimeError(recado)
+                    for _ in range(20):
+                        await asyncio.sleep(3)
+                        est = await voz_studio.estado()
+                        if est.get("no_ar"):
+                            break
+                    else:
+                        raise RuntimeError("O VoiceStudio não respondeu a tempo.")
+            except Exception as exc:
+                print("[estudio] não consegui ligar a voz para o canal %s: %r" % (cid, exc), flush=True)
+
+        try:
+            porta_comfy = _porta_url(COMFY) or 8188
+            if not porta_aberta(porta_comfy):
+                pedir_ligar("video")
+                for _ in range(40):
+                    await asyncio.sleep(3)
+                    if porta_aberta(porta_comfy):
+                        break
+        except Exception as exc:
+            print("[estudio] não consegui ligar a ComfyUI para o canal %s: %r" % (cid, exc), flush=True)
+
+        async def falar(texto, destino, voz_id, idioma, ajustes):
+            return await voz_studio.falar(texto, destino, voz_id, idioma, "wav", ajustes)
+
+        def cancelado():
+            try:
+                return bool(canais.ler_producao(cid, pid).get("cancelar"))
+            except Exception:
+                return False
+
+        def log(msg):
+            print("[canal %s] %s" % (canal.get("nome") or cid, msg), flush=True)
+
+        await esteira.produzir(producao, canal, {
+            "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
+            "cancelado": cancelado, "log": log})
+        if producao.get("estado") == "concluido":
+            _agendar_automatico(canal, producao)
+    except Exception as exc:
+        print("[estudio] esteira do canal %s falhou: %r" % (cid, exc), flush=True)
+
+
+async def api_canal_produzir(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    ctx = canais.contexto(cid)
+    plano = b.get("plano")
+    briefing = (b.get("briefing") or "").strip()
+    if not isinstance(plano, dict) or not (plano.get("cenas") or []):
+        if not briefing:
+            raise web.HTTPBadRequest(text="Escreva o briefing ou mande um plano com cenas.")
+        try:
+            plano = await roteirista.gerar_plano(
+                _pedir_texto, canal, ctx, briefing,
+                int(b.get("quantas") or (canal.get("producao") or {}).get("cenas") or 6),
+                int(b.get("duracao") or (canal.get("producao") or {}).get("duracao_alvo") or 45))
+        except Exception as e:
+            raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
+    for i, c in enumerate(plano.get("cenas") or [], 1):
+        if not str(c.get("fala") or "").strip():
+            raise web.HTTPBadRequest(text="A cena %d está sem fala." % i)
+        c["n"] = i
+    producao = esteira.criar(canal, plano, briefing, b.get("formatos"))
+    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
+
+
+async def api_canal_producoes(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    return web.json_response({"producoes": [esteira.resumo(p) for p in canais.lista_producoes(cid)]})
+
+
+async def api_canal_producao(req):
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    _canal_ou_erro(cid)
+    if req.method == "GET":
+        p = canais.ler_producao(cid, pid)
+        return web.json_response({**esteira.resumo(p), "plano": p.get("plano"), "log": p.get("log") or []})
+    b = await req.json()
+    p = canais.ler_producao(cid, pid)
+    if b.get("cancelar"):
+        p["cancelar"] = True
+        canais.gravar_producao(cid, pid, p)
+    return web.json_response(esteira.resumo(p))
+
+
+async def api_canal_video(req):
+    cid, pid, fid = req.match_info["cid"], req.match_info["pid"], req.match_info["fid"]
+    _canal_ou_erro(cid)
+    p = canais.ler_producao(cid, pid)
+    arq = (p.get("arquivos", {}).get("videos") or {}).get(fid)
+    if not arq:
+        raise web.HTTPNotFound(text="Este formato ainda não foi montado.")
+    caminho = Path(arq)
+    if not caminho.is_file() or not _dentro(caminho, canais.pasta_producao(cid, pid)):
+        raise web.HTTPNotFound(text="O arquivo não está mais no disco.")
+    return web.FileResponse(caminho, headers={"Cache-Control": "no-cache"})
+
+
+async def api_canal_agenda(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    if req.method == "GET":
+        return web.json_response({"agenda": canais.agenda_listar(cid),
+                                  "credenciais": canais.estado_credenciais(cid)})
+    b = await req.json()
+    pid = str(b.get("producao_id") or "")
+    if not pid:
+        raise web.HTTPBadRequest(text="Escolha a produção.")
+    p = canais.ler_producao(cid, pid)
+    fid = str(b.get("formato_id") or "")
+    fmt = canais.formato_por_id(canal, fid)
+    if not fmt:
+        raise web.HTTPBadRequest(text="Escolha um formato do canal.")
+    video = (p.get("arquivos", {}).get("videos") or {}).get(fid)
+    if not video or not Path(video).is_file():
+        raise web.HTTPBadRequest(text="O vídeo deste formato ainda não está pronto.")
+    plataformas = [x for x in (b.get("plataformas") or []) if x in canais.PLATAFORMAS]
+    if not plataformas:
+        plataformas = [fmt.get("plataforma")]
+    quando = _quando_de(b.get("quando"))
+    if not quando:
+        raise web.HTTPBadRequest(text="Data inválida para agendar.")
+    meta = {"titulo": b.get("titulo") or p.get("titulo"),
+            "descricao": b.get("descricao") or roteirista.texto_legenda(p.get("plano") or {}),
+            "hashtags": b.get("hashtags") or ((p.get("plano") or {}).get("hashtags") or []),
+            "visibilidade": b.get("visibilidade") or (canal.get("publicacao") or {}).get("visibilidade") or "public"}
+    item = canais.agendar(cid, pid, fid, video, plataformas, quando, meta)
+    return web.json_response(item)
+
+
+async def _executar_agendamento(aid):
+    if aid in PUBLICANDO:
+        return
+    PUBLICANDO.add(aid)
+    try:
+        a = canais.agenda_obter(aid)
+        if not a or a.get("estado") in ("publicado", "cancelado"):
+            return
+        canal = canais.obter(a["canal_id"])
+        if not canal:
+            canais.agenda_atualizar(aid, {"estado": "erro", "erro": "Canal não existe mais."})
+            return
+        producao = canais.ler_producao(a["canal_id"], a["producao_id"])
+        fmt = canais.formato_por_id(canal, a["formato_id"]) or {"id": a["formato_id"], "nome": a["formato_id"]}
+        canais.agenda_atualizar(aid, {"estado": "executando",
+                                      "ultima_tentativa": int(time.time()),
+                                      "tentativas": int(a.get("tentativas") or 0) + 1})
+        anteriores = a.get("resultados") or {}
+        plataformas = [p for p in (a.get("plataformas") or [])
+                       if not (anteriores.get(p) or {}).get("ok")]
+        if not plataformas:
+            canais.agenda_atualizar(aid, {"estado": "publicado"})
+            return
+        meta = {"titulo": a.get("titulo"), "descricao": a.get("descricao"),
+                "hashtags": a.get("hashtags"), "quando": a.get("quando"),
+                "visibilidade": a.get("visibilidade")}
+        novos = await publicacao.publicar(canal, producao, fmt, plataformas,
+                                          meta, canais.segredos(),
+                                          canais.pasta_producao(a["canal_id"], a["producao_id"]))
+        res = {**anteriores, **novos}
+        ok = any(r.get("ok") for r in res.values())
+        pendente = any(r.get("pendente") for r in res.values())
+        falhou = any((not r.get("ok") and not r.get("pendente")) for r in res.values())
+        estado = "publicado" if ok and not pendente and not falhou else \
+            ("parcial" if ok or pendente else "erro")
+        if estado == "erro" and int(a.get("tentativas") or 0) >= 3:
+            estado = "erro"
+        canais.agenda_atualizar(aid, {"estado": estado, "resultados": res,
+                                      "erro": "" if ok else
+                                      "; ".join("%s: %s" % (k, v.get("erro")) for k, v in res.items() if v.get("erro"))[:400]})
+        for plataforma, r in res.items():
+            if r.get("ok"):
+                analytics.registrar(a["canal_id"], canais.pasta_canal(a["canal_id"]),
+                                    {"producao_id": a["producao_id"], "titulo": a.get("titulo") or producao.get("titulo"),
+                                     "plataforma": plataforma, "publicado_em": int(time.time()),
+                                     "url": r.get("url") or ""})
+        print("[estudio] agendamento %s: %s" % (aid, estado), flush=True)
+    except Exception as exc:
+        try:
+            canais.agenda_atualizar(aid, {"estado": "erro", "erro": str(exc)[:400],
+                                          "ultima_tentativa": int(time.time())})
+        except Exception:
+            pass
+        print("[estudio] agendamento %s falhou: %r" % (aid, exc), flush=True)
+    finally:
+        PUBLICANDO.discard(aid)
+
+
+async def api_canal_agenda_item(req):
+    cid, aid = req.match_info["cid"], req.match_info["aid"]
+    _canal_ou_erro(cid)
+    a = canais.agenda_obter(aid)
+    if not a or a.get("canal_id") != cid:
+        raise web.HTTPNotFound(text="Agendamento não encontrado.")
+    if req.method == "DELETE":
+        return web.json_response(canais.agenda_remover(aid))
+    b = await req.json()
+    if b.get("cancelar"):
+        return web.json_response(canais.agenda_atualizar(aid, {"estado": "cancelado"}))
+    if b.get("publicar_agora"):
+        canais.agenda_atualizar(aid, {"quando": int(time.time()), "estado": "agendado"})
+        em_segundo_plano(_executar_agendamento(aid))
+        return web.json_response({"ok": True, "aviso": "Publicando agora. Acompanhe o estado na agenda."})
+    raise web.HTTPBadRequest(text="Ação desconhecida.")
+
+
+async def api_canal_credenciais(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    if req.method == "GET":
+        return web.json_response(canais.estado_credenciais(cid))
+    b = await req.json()
+    plataforma = str(b.get("plataforma") or "")
+    campos = b.get("campos") if isinstance(b.get("campos"), dict) else {}
+    try:
+        canais.gravar_credenciais(cid, plataforma, campos or {})
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    return web.json_response(canais.estado_credenciais(cid))
+
+
+async def api_canal_analytics(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    if req.method == "GET":
+        try:
+            dias = int(req.query.get("dias") or 30)
+        except ValueError:
+            dias = 30
+        return web.json_response(analytics.dashboard(cid, canais.pasta_canal(cid), dias, canal))
+    b = await req.json()
+    try:
+        r = analytics.importar(cid, canais.pasta_canal(cid), b.get("texto") or "", b.get("formato") or "auto")
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except Exception as e:
+        raise web.HTTPBadGateway(text="Não consegui ler os números: " + str(e)[:300])
+    return web.json_response(r)
+
+
+async def vigia_publicacao():
+    """Publica o que venceu, mesmo que ninguém esteja com a tela aberta. Roda a cada 30 s."""
+    while True:
+        try:
+            canais.recuperar_agenda()
+            for a in canais.agenda_devidos():
+                if a.get("id") not in PUBLICANDO:
+                    em_segundo_plano(_executar_agendamento(a["id"]))
+        except Exception as exc:
+            print("[estudio] vigia de publicação: %r" % exc, flush=True)
+        await asyncio.sleep(30)
+
+
 async def ciclo(app):
     tarefas = [asyncio.create_task(ouvir_comfy()), asyncio.create_task(vigia()),
                asyncio.create_task(reparar_ao_iniciar()), asyncio.create_task(TEXTO.vigiar()),
                asyncio.create_task(ligar_texto_ao_iniciar()),
+               asyncio.create_task(vigia_publicacao()),
                asyncio.create_task(renovar_licenca_de_vez_em_quando())]  # "sempre ligada": ~20 s depois, em segundo plano
     yield
     for t in tarefas:
@@ -5320,6 +5802,23 @@ app.add_routes([
     web.post("/api/canal/cenas/gravar", api_canal_cenas_gravar),
     web.post("/api/canal/conta", api_canal_conta),
     web.get("/api/canal/fila", api_canal_fila), web.post("/api/canal/fila", api_canal_fila),
+    web.get("/api/canais", api_canais), web.post("/api/canais", api_canais),
+    web.get("/api/canais/{cid}", api_canal), web.post("/api/canais/{cid}", api_canal),
+    web.delete("/api/canais/{cid}", api_canal),
+    web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
+    web.post("/api/canais/{cid}/plano", api_canal_plano),
+    web.post("/api/canais/{cid}/produzir", api_canal_produzir),
+    web.get("/api/canais/{cid}/producoes", api_canal_producoes),
+    web.get("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
+    web.post("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
+    web.get("/api/canais/{cid}/producoes/{pid}/video/{fid}", api_canal_video),
+    web.get("/api/canais/{cid}/agenda", api_canal_agenda), web.post("/api/canais/{cid}/agenda", api_canal_agenda),
+    web.post("/api/canais/{cid}/agenda/{aid}", api_canal_agenda_item),
+    web.delete("/api/canais/{cid}/agenda/{aid}", api_canal_agenda_item),
+    web.get("/api/canais/{cid}/credenciais", api_canal_credenciais),
+    web.post("/api/canais/{cid}/credenciais", api_canal_credenciais),
+    web.get("/api/canais/{cid}/analytics", api_canal_analytics),
+    web.post("/api/canais/{cid}/analytics", api_canal_analytics),
     web.get("/", estatico), web.get("/{caminho:.+}", estatico),
 ])
 

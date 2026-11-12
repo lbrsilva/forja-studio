@@ -50,3 +50,5 @@ __pycache__/
 # cache e historico da fila desta maquina
 _cache/
 estudio/fila_historico.json
+# canais, produções e credenciais de publicação desta máquina
+estudio/canais/
