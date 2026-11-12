@@ -613,6 +613,7 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
       <h2 class="fila-tit" data-i18n="tela.o-que-a-maquina-esta">O que a máquina está gerando agora</h2>
       <p class="nota" id="filaQuando"></p>
     </div>
+    <div class="fila-abas" id="filaAbas" role="tablist" aria-label="Tipo de trabalho"></div>
     <div class="fila-down" id="filaDown" hidden>
       <div class="fila-down-cab">
         <h2 class="fila-tit">Baixando IAs</h2>
@@ -1069,6 +1070,9 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
 </main>
 
 <aside class="maq-lateral" id="maqLateral" aria-label="Sua máquina">
+  <button type="button" class="maq-recolher" id="maqRecolher" aria-expanded="true" aria-controls="maquina"
+          title="Recolher o painel Sua máquina"><span data-ic="dir"></span></button>
+  <span class="maq-faixa" aria-hidden="true">Sua máquina</span>
   <section class="bloco-inicio maquina" id="maquina" aria-labelledby="maqTitulo">
     <div class="bloco-cab">
       <h2 id="maqTitulo" data-i18n="tela.sua-maquina">Sua máquina</h2>

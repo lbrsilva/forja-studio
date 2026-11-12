@@ -46,6 +46,81 @@
     return el;
   }
 
+  const ABAS = [['todos', 'Todos'], ['imagem', 'Imagem'], ['video', 'Vídeo'], ['pessoa', 'Pessoa falando'],
+    ['narracao', 'Narração'], ['musica', 'Música'], ['outros', 'Outros']];
+  const ULT = { vivos: [], hist: [] };
+  let aba = 'todos';
+  try { aba = sessionStorage.getItem('forja_fila_aba') || 'todos'; } catch (e) { /* sem armazenamento */ }
+
+  function tipoDe(i) {
+    if (i.tipo) return i.tipo;
+    if (i.fonte === 'voz') return 'narracao';
+    if (i.fonte === 'musica') return 'musica';
+    const s = String(i.saida || '').toLowerCase();
+    return s.startsWith('imagem') ? 'imagem' : s.startsWith('v') ? 'video' : 'outros';
+  }
+  const doTipo = (lista) => (aba === 'todos' ? lista : lista.filter((i) => tipoDe(i) === aba));
+
+  function desenharAbas() {
+    const caixa = $('#filaAbas');
+    if (!caixa) return;
+    const todos = [...ULT.vivos, ...ULT.hist];
+    const semMusica = typeof G !== 'undefined' && G.inicio && G.inicio.tem_musica === false;
+    caixa.innerHTML = '';
+    ABAS.forEach(([chave, rotulo]) => {
+      const n = chave === 'todos' ? todos.length : todos.filter((i) => tipoDe(i) === chave).length;
+      if ((chave === 'musica' && semMusica && !n) || (chave === 'outros' && !n)) return;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.dataset.tipo = chave;
+      b.setAttribute('aria-selected', String(chave === aba));
+      b.textContent = rotulo + ' ';
+      const c = document.createElement('span');
+      c.className = 'fila-aba-n';
+      c.textContent = n;
+      b.append(c);
+      caixa.append(b);
+    });
+  }
+
+  function desenharVivos() {
+    const lista = $('#filaLista');
+    const itens = doTipo(ULT.vivos);
+    lista.innerHTML = '';
+    if (!itens.length) {
+      const vazio = document.createElement('p');
+      vazio.className = 'fila-vazio';
+      vazio.textContent = aba === 'todos' ? 'Nada sendo gerado agora.' : 'Nada sendo gerado agora nesta aba.';
+      lista.append(vazio);
+    } else {
+      itens.forEach((i) => lista.append(cartao(i)));
+    }
+  }
+
+  function desenharHist() {
+    const lista = $('#filaHistLista');
+    const itens = doTipo(ULT.hist);
+    lista.innerHTML = '';
+    if (!itens.length) {
+      const v = document.createElement('p');
+      v.className = 'fila-vazio';
+      v.textContent = ULT.limpoEm ? 'Histórico limpo. O que for gerado daqui para a frente entra aqui.'
+        : aba === 'todos' ? 'Nada gerado ainda.' : 'Nada gerado ainda nesta aba.';
+      lista.append(v);
+      return;
+    }
+    itens.forEach((i) => lista.append(cartaoHist(i)));
+  }
+
+  function trocarAba(chave) {
+    aba = chave;
+    try { sessionStorage.setItem('forja_fila_aba', chave); } catch (e) { /* so nao lembra */ }
+    desenharAbas();
+    desenharVivos();
+    desenharHist();
+  }
+
   let ultimaAmostra = null;
   let nDown = 0;
   const gb = (b) => (b / 1e9).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
@@ -152,19 +227,12 @@
       $('#filaQuando').textContent = 'Não consegui ler a fila: ' + String(e.message || e);
       return;
     }
-    const lista = $('#filaLista');
     const todos = d.itens || [];
     const comfyFora = todos.some((i) => i.fonte === 'comfyui' && i.estado === 'erro');
     const itens = todos.filter((i) => !(i.fonte === 'comfyui' && i.estado === 'erro'));
-    lista.innerHTML = '';
-    if (!itens.length) {
-      const vazio = document.createElement('p');
-      vazio.className = 'fila-vazio';
-      vazio.textContent = 'Nada sendo gerado agora.';
-      lista.append(vazio);
-    } else {
-      itens.forEach((i) => lista.append(cartao(i)));
-    }
+    ULT.vivos = itens;
+    desenharVivos();
+    desenharAbas();
     const n = itens.filter((i) => i.estado === 'rodando' || i.estado === 'fila').length;
     nTrabalhos = n;
     atualizarContador(nDown);
@@ -201,6 +269,15 @@
       '<span class="fila-de' + (i.de === 'fora' ? ' fora' : '') + '"></span>';
     if (img) el.querySelector('img').src = img.url;
     if (vid) el.querySelector('video').src = vid.url + '#t=0.1';
+    const som = !img && !vid && (i.arquivos || []).find((a) => /\.(wav|mp3|ogg|m4a|flac)$/i.test(a.nome || ''));
+    if (som) {
+      const player = document.createElement('audio');
+      player.controls = true;
+      player.preload = 'none';
+      player.src = som.url;
+      player.className = 'fila-hist-audio';
+      el.querySelector('.fila-hist-txt').append(player);
+    }
     el.querySelector('.fila-hist-titulo').textContent =
       (i.deu_certo ? '' : '⚠️ ') + (i.titulo || 'trabalho');
     el.querySelector('.fila-hist-sub').textContent =
@@ -216,26 +293,18 @@
   async function puxarHist() {
     let d;
     try {
-      const r = await fetch('/api/fila/historico');
+      const r = await fetch('/api/fila/historico?quantos=300');
       if (!r.ok) throw new Error('HTTP ' + r.status);
       d = await r.json();
     } catch (e) {
       $('#filaHistN').textContent = '';
       return;
     }
-    const lista = $('#filaHistLista'), itens = d.itens || [];
-    lista.innerHTML = '';
+    ULT.hist = d.itens || [];
+    ULT.limpoEm = d.limpo_em || 0;
     $('#filaHistN').textContent = d.total ? '(' + d.total + ')' : '';
-    if (!itens.length) {
-      const v = document.createElement('p');
-      v.className = 'fila-vazio';
-      v.textContent = d.limpo_em
-        ? 'Histórico limpo. O que for gerado daqui para a frente entra aqui.'
-        : 'Nada gerado ainda.';
-      lista.append(v);
-      return;
-    }
-    itens.forEach((i) => lista.append(cartaoHist(i)));
+    desenharHist();
+    desenharAbas();
   }
 
   function pedirLimpar() {
@@ -272,6 +341,10 @@
     $('#filaDownParar').addEventListener('click', async () => {
       try { await fetch('/api/ias/parar', { method: 'POST' }); } catch (e) { /* o proximo pulso mostra o estado */ }
       puxarDown();
+    });
+    $('#filaAbas').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-tipo]');
+      if (b) trocarAba(b.dataset.tipo);
     });
     $('#filaLimpar').addEventListener('click', pedirLimpar);
     $('#filaLimparNao').addEventListener('click', () => {

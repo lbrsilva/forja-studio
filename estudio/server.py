@@ -2997,6 +2997,15 @@ async def api_remover(req):
     j["removido_em"] = time.time()
     apagados, total, falhas, mantidos = apagar_trabalho(j)
     salvar()
+    try:  # tira tambem do "Ja gerado" da Fila (e lembra, para a ComfyUI nao devolver o item)
+        h = _hist_fila_ler()
+        chaves = [k for k in (j.get("prompt_id"), j.get("prompt_id_voz"), "job:" + str(j["id"])) if k]
+        for k in chaves:
+            h["itens"].pop(k, None)
+        h["removidos"] = list(dict.fromkeys([*(h.get("removidos") or []), *chaves]))[-400:]
+        _hist_fila_gravar(h)
+    except Exception as e:
+        print("[estudio] nao tirei o trabalho do historico da fila: %s" % e, flush=True)
     resp = {"ok": True, "apagados": apagados, "mb": round(total / 1048576, 2), "falhas": falhas,
             "mantidos": mantidos}
     if mantidos:
@@ -5143,6 +5152,7 @@ async def reparar_ao_iniciar():
 # Tudo aqui é opcional: com o VoiceStudio fechado, /api/voz/estado devolve no_ar=false e a tela
 # mostra o cartão de "ligar", exatamente como o painel de música.
 VOZ_SAIDA = LOGS_DIR / "voz"
+MONTAGENS = LOGS_DIR / "montagens"
 
 
 async def api_voz_estado(req):
@@ -5534,6 +5544,35 @@ def _titulo_do_trabalho(meu, quem, oque):
     return principal or saida or quem.get("detalhe") or "trabalho"
 
 
+NARRANDO = {}
+
+
+def _tipo_do_item(meu=None, saida="", fonte="comfyui"):
+    """Aba da Fila a que o item pertence: imagem, video, pessoa, narracao, musica ou outros."""
+    if fonte == "voz":
+        return "narracao"
+    if fonte == "musica":
+        return "musica"
+    if meu and meu.get("preset"):
+        _, p = preset_ou_none(meu["preset"])
+        if p and p.get("tipo") == "apresentador" or e_apresentador(meu):
+            return "pessoa"
+    s = sem_acento(str(saida or "")).lower()
+    if s.startswith("imagem"):
+        return "imagem"
+    if s.startswith("video"):
+        return "video"
+    if s.startswith("audio") or s.startswith("narracao"):
+        return "narracao"
+    return "outros"
+
+
+def _completar_tipo(item):
+    if not item.get("tipo"):
+        item["tipo"] = _tipo_do_item(None, item.get("saida"), item.get("fonte") or "comfyui")
+    return item
+
+
 HIST_FILA = DADOS / "fila_historico.json"
 TETO_HIST_FILA = 800
 
@@ -5577,14 +5616,15 @@ async def _absorver_historico():
     """
     d = _hist_fila_ler()
     itens, limpo_em = d["itens"], d.get("limpo_em") or 0
+    removidos = set(d.get("removidos") or [])
     try:
         h = await comfy("GET", "/history?max_items=200", timeout=15)
     except Exception:
-        return 0
+        h = {}  # ComfyUI desligada: ainda ha o que ler dos trabalhos do painel e das narracoes
     novos = 0
     meus = {j.get("prompt_id"): j for j in JOBS if j.get("prompt_id")}
     for pid, it in (h or {}).items():
-        if pid in itens or not isinstance(it, dict):
+        if pid in itens or pid in removidos or not isinstance(it, dict):
             continue
         st = it.get("status") or {}
         quando, fim = 0, 0
@@ -5625,6 +5665,7 @@ async def _absorver_historico():
             "deu_certo": (st.get("status_str") == "success"),
             "arquivos": arquivos[:4],
             "prompt": ((meus.get(pid) or {}).get("prompt") or "")[:160],
+            "tipo": _tipo_do_item(meus.get(pid), oque["saida"]),
         }
         novos += 1
 
@@ -5658,6 +5699,79 @@ async def _absorver_historico():
             "deu_certo": estado == "done",
             "arquivos": [],
             "prompt": str(((j.get("settings") or {}).get("style") or ""))[:160],
+            "tipo": "musica",
+        }
+        novos += 1
+
+    # Narracoes: ficam em outputs/voz com uma ficha ao lado (texto, voz, duracao).
+    try:
+        for arq in VOZ_SAIDA.glob("voz_*.wav"):
+            chave = "voz:" + arq.name
+            if chave in itens:
+                continue
+            nota = {}
+            if arq.with_suffix(".json").is_file():
+                try:
+                    nota = json.loads(arq.with_suffix(".json").read_text(encoding="utf-8"))
+                except Exception:
+                    nota = {}
+            quando = int(nota.get("quando") or arq.stat().st_mtime)
+            if limpo_em and quando <= limpo_em:
+                continue
+            seg = nota.get("segundos")
+            itens[chave] = {
+                "id": chave, "fonte": "voz", "quando": quando, "fim": quando, "de": "estudio", "quem": "Este painel",
+                "titulo": "Narração" + (f" · {nota['voz']}" if nota.get("voz") else ""),
+                "saida": "narração" + (" · %d:%02d" % (int(seg) // 60, int(seg) % 60) if seg else ""),
+                "modelos": [], "deu_certo": True, "tipo": "narracao",
+                "arquivos": [{"nome": arq.name, "pasta": "", "tipo": "output", "url": "/api/voz/audio/" + arq.name}],
+                "prompt": (nota.get("texto") or "")[:160],
+            }
+            novos += 1
+    except OSError:
+        pass
+
+    # Videos montados fora da ComfyUI (ffmpeg, scripts): ficam em outputs/montagens.
+    try:
+        for arq in MONTAGENS.glob("*.mp4"):
+            chave = "montagem:" + arq.name
+            quando = int(arq.stat().st_mtime)
+            if chave in itens or chave in removidos or (limpo_em and quando <= limpo_em):
+                continue
+            itens[chave] = {
+                "id": chave, "fonte": "montagem", "quando": quando, "fim": quando, "de": "estudio", "quem": "Este painel",
+                "titulo": arq.stem.replace("_", " "), "saida": "vídeo montado", "modelos": [], "deu_certo": True,
+                "tipo": "video", "arquivos": [{"nome": arq.name, "pasta": "", "tipo": "output", "url": "/api/montagem/" + arq.name}],
+                "prompt": "",
+            }
+            novos += 1
+    except OSError:
+        pass
+
+    # Trabalhos do proprio painel: o historico da ComfyUI some quando ela reinicia, e o LatentSync nem
+    # passa por ela. Sem isto os dois sumiam do "Ja gerado".
+    for j in JOBS:
+        if j.get("lixeira") or j.get("estado") not in ("concluido", "erro"):
+            continue
+        chave = j.get("prompt_id") or "job:" + str(j.get("id"))
+        quando = int(j.get("inicio") or j.get("criado") or 0)
+        if (chave in itens or chave in removidos or "job:" + str(j.get("id")) in removidos
+                or (limpo_em and quando and quando <= limpo_em)):
+            continue
+        saidas = j.get("saidas") or []
+        arquivos = []
+        for n_, s_ in enumerate(saidas[:2]):
+            if isinstance(s_, dict) and s_.get("arquivo"):
+                arquivos.append({"nome": s_["arquivo"], "pasta": s_.get("sub") or "", "tipo": "output",
+                                 "url": f"/api/midia/{j['id']}/{n_}"})
+        f_ = ficha(j.get("preset")) or {}
+        saida_job = "imagem" if preset_ou_none(j.get("preset"))[0] == "imagem" else "video"
+        itens[chave] = {
+            "id": chave, "fonte": "painel", "quando": quando or int(time.time()), "fim": int(j.get("fim") or 0),
+            "de": "estudio", "quem": "Este painel", "titulo": f_.get("nome") or j.get("preset") or "trabalho",
+            "saida": saida_job, "modelos": [], "deu_certo": j.get("estado") == "concluido",
+            "arquivos": arquivos, "prompt": (j.get("prompt") or "")[:160],
+            "tipo": _tipo_do_item(j, saida_job),
         }
         novos += 1
 
@@ -5671,7 +5785,7 @@ async def api_fila_historico(req):
     """O que ja foi gerado, do mais novo para o mais velho."""
     await _absorver_historico()
     d = _hist_fila_ler()
-    itens = sorted(d["itens"].values(), key=lambda i: i.get("quando") or 0, reverse=True)
+    itens = sorted((_completar_tipo(i) for i in d["itens"].values()), key=lambda i: i.get("quando") or 0, reverse=True)
     try:
         quantos = int(req.query.get("quantos") or 60)
     except ValueError:
@@ -5734,6 +5848,7 @@ async def api_fila(req):
                 "saida": oque["saida"], "modelos": oque["modelos"],
                 "comecou": (meu or {}).get("inicio"),
                 "prompt": ((meu or {}).get("prompt") or "")[:160],
+                "tipo": _tipo_do_item(meu, oque["saida"]),
             })
 
     # 2) musica
@@ -5762,11 +5877,15 @@ async def api_fila(req):
                       "titulo": j.get("title") or "música", "saida": "música",
                       "modelos": [j.get("motor_nome") or (j.get("settings") or {}).get("engine")]
                                  if (j.get("motor_nome") or (j.get("settings") or {}).get("engine")) else [],
-                      "comecou": j.get("started"), "prompt": ""})
+                      "comecou": j.get("started"), "prompt": "", "tipo": "musica"})
 
     # 3) narracao: o VoiceStudio nao tem fila para consultar; o que sabemos e se ESTE painel
     #    esta gerando agora. Narracao mandada por fora nao aparece - e dizer isso e melhor do
     #    que fingir que a lista esta completa.
+    for nid, n in list(NARRANDO.items()):
+        itens.append({"fonte": "voz", "estado": "rodando", "id": nid, "de": "estudio", "quem": "Este painel",
+                      "titulo": "Narração" + (f" · {n['voz']}" if n.get("voz") else ""), "saida": "narração",
+                      "modelos": [], "comecou": n["inicio"], "prompt": n["texto"][:160], "tipo": "narracao"})
     return web.json_response({
         "itens": itens,
         "quando": int(time.time()),
@@ -5796,11 +5915,14 @@ async def api_voz_falar(req):
     ajustes = {k: b.get(k) for k in ("speed", "temperature", "cfg", "top_p") if b.get(k) is not None}
     VOZ_SAIDA.mkdir(parents=True, exist_ok=True)
     nome = "voz_%s_%s.wav" % (datetime.now().strftime("%Y%m%d_%H%M%S"), uuid.uuid4().hex[:6])
+    NARRANDO[nome] = {"inicio": time.time(), "texto": texto_falar, "voz": b.get("voz") or ""}
     try:
         r = await voz_studio.falar(texto_falar, VOZ_SAIDA / nome, b.get("voz") or None,
                                    b.get("idioma") or "pt", "wav", ajustes)
     except Exception as e:
         raise web.HTTPBadGateway(text=str(e)[:300])
+    finally:
+        NARRANDO.pop(nome, None)
     r["url"] = "/api/voz/audio/" + nome
     r["arquivo"] = nome
     # 07/11/2026: a narracao sempre foi gravada em disco, mas a tela nao mostrava as de antes
@@ -5836,6 +5958,13 @@ async def api_voz_falar(req):
     except Exception as e:
         print("[estudio] nao guardei o tempo da narracao: %s" % e, flush=True)
     return web.json_response(r)
+
+
+async def api_montagem(req):
+    arq = MONTAGENS / Path(req.match_info["nome"]).name
+    if not _dentro(arq, MONTAGENS) or not arq.is_file():
+        raise web.HTTPNotFound()
+    return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
 
 
 async def api_voz_audio(req):
@@ -6050,7 +6179,7 @@ app.add_routes([
     web.post("/api/voz/transcrever-ref", api_voz_transcrever_ref),
     web.post("/api/voz/apagar", api_voz_apagar),
     web.get("/api/voz/gravadas", api_voz_gravadas),
-    web.post("/api/voz/gravadas/apagar", api_voz_gravada_apagar), web.get("/api/voz/audio/{nome}", api_voz_audio),
+    web.post("/api/voz/gravadas/apagar", api_voz_gravada_apagar), web.get("/api/voz/audio/{nome}", api_voz_audio), web.get("/api/montagem/{nome}", api_montagem),
     web.post("/api/voz/ligar", api_voz_ligar),
     web.get("/api/voz/instalar-app", api_voz_instalar_app), web.post("/api/voz/instalar-app", api_voz_instalar_app),
     web.get("/api/canal/listar", api_canal_listar), web.post("/api/canal/criar", api_canal_criar),

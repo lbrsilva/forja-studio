@@ -286,6 +286,17 @@ async def _abrir(ses):
     return _sessao["id"]
 
 
+def _amigavel(texto):
+    """Troca o recado de licenca do VoiceStudio (em ingles) por uma explicacao em portugues."""
+    m = re.search(r"Licence not accepted for (.+?)\. Review", texto or "")
+    if not m:
+        return texto
+    return ("O VoiceStudio travou a narração porque a licença destes modelos de voz ainda não foi aceita: "
+            f"{m.group(1)}. Abra a janela do VoiceStudio, vá em Catálogo de modelos (Model Catalogue), leia a licença "
+            "de cada um e aceite. A decisão é sua: confira se a licença permite o seu uso (inclusive comercial, "
+            "se for publicar ou vender) antes de aceitar.")
+
+
 async def chamar(ferramenta, argumentos=None, timeout=TEMPO_RAPIDO, _retentar=True):
     """Chama uma ferramenta do VoiceStudio. Devolve o resultado cru do MCP."""
     async with aiohttp.ClientSession() as ses:
@@ -305,10 +316,10 @@ async def chamar(ferramenta, argumentos=None, timeout=TEMPO_RAPIDO, _retentar=Tr
     if not d:
         raise RuntimeError("O VoiceStudio não respondeu direito. Ele está aberto?")
     if d.get("error"):
-        raise RuntimeError(str(d["error"].get("message") or d["error"])[:300])
+        raise RuntimeError(_amigavel(str(d["error"].get("message") or d["error"]))[:500])
     res = d.get("result") or {}
     if res.get("isError"):
-        raise RuntimeError(_texto_do(res)[:300] or "O VoiceStudio recusou o pedido.")
+        raise RuntimeError(_amigavel(_texto_do(res))[:500] or "O VoiceStudio recusou o pedido.")
     return res
 
 

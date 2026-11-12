@@ -1657,3 +1657,33 @@ body.rota-inicio .maq-lateral .bloco-inicio { max-width: 560px; }
 .maq-lateral .maq-rot { flex-wrap: wrap; row-gap: 2px; align-items: baseline; }
 .maq-lateral .maq-rot > span { flex: 0 1 auto; }
 .maq-lateral .maq-rot b { margin-left: auto; }
+
+.maq-recolher, .maq-faixa { display: none; }
+@media (min-width: 1360px) {
+  body { transition: grid-template-columns .2s ease; }
+  .maq-recolher { display: grid; place-items: center; position: absolute; top: var(--e4); left: var(--e3); z-index: 2;
+    width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 1px solid var(--borda-forte);
+    background: var(--fundo-2); color: var(--fraco); cursor: pointer; }
+  .maq-recolher:hover, .maq-recolher:focus-visible { color: var(--texto); border-color: var(--acento-borda); }
+  .maq-recolher .ic { width: 16px; height: 16px; transition: transform .2s ease; }
+  .maq-lateral .bloco-cab { padding-left: 40px; }
+  body.maq-fechada { --maq-w: 52px; }
+  body.maq-fechada .maq-lateral { overflow: hidden; padding: 0; }
+  body.maq-fechada .maq-lateral .bloco-inicio { display: none; }
+  body.maq-fechada .maq-recolher { left: 11px; }
+  body.maq-fechada .maq-recolher .ic { transform: rotate(180deg); }
+  body.maq-fechada .maq-faixa { display: block; position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+    writing-mode: vertical-rl; color: var(--fraco); font-size: 12px; font-weight: 600; letter-spacing: .14em;
+    text-transform: uppercase; white-space: nowrap; }
+}
+
+.fila-abas { display: flex; flex-wrap: wrap; gap: var(--e2); padding: var(--e1); border: 1px solid var(--borda);
+  border-radius: 14px; background: var(--fundo-2); width: fit-content; max-width: 100%; }
+.fila-abas button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; border: 1px solid transparent;
+  background: none; color: var(--fraco); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.fila-abas button:hover { color: var(--texto); background: var(--painel); }
+.fila-abas button[aria-selected="true"] { color: var(--acento); background: var(--acento-suave); border-color: rgba(215, 255, 58, .22); }
+.fila-aba-n { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--fundo); border: 1px solid var(--borda);
+  color: var(--fraco); font-size: 11.5px; text-align: center; font-variant-numeric: tabular-nums; }
+.fila-abas button[aria-selected="true"] .fila-aba-n { color: var(--acento); border-color: rgba(215, 255, 58, .3); }
+.fila-hist-audio { width: 100%; height: 34px; margin-top: var(--e2); }

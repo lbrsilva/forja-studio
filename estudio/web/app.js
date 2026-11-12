@@ -3703,9 +3703,27 @@ function esconderAbasSemIA() {
       if (vazia && G.rota === rota) location.hash = '#/';
     });
 }
+function prepararRecolhimento() {
+  const bt = $('#maqRecolher');
+  if (!bt) return;
+  const aplicar = (fechada) => {
+    document.body.classList.toggle('maq-fechada', fechada);
+    bt.setAttribute('aria-expanded', String(!fechada));
+    bt.title = fechada ? 'Mostrar o painel Sua máquina' : 'Recolher o painel Sua máquina';
+  };
+  let fechada = false;
+  try { fechada = localStorage.getItem('forja_maq_fechada') === '1'; } catch (e) { /* sem armazenamento: abre */ }
+  aplicar(fechada);
+  bt.addEventListener('click', () => {
+    const agora = !document.body.classList.contains('maq-fechada');
+    aplicar(agora);
+    try { localStorage.setItem('forja_maq_fechada', agora ? '1' : '0'); } catch (e) { /* so nao lembra */ }
+  });
+}
 (async function iniciar() {
   pintarIcones();
   $('#marcaIc').innerHTML = ic('marca');
+  prepararRecolhimento();
   montarMaquina();
   prepararEventos();
   prepararUploads();
