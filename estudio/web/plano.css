@@ -1,6 +1,6 @@
 /* Estúdio Local — Plano-sequência. Só variáveis do estilo.css; tudo sob .plano. */
 
-.vista.plano { --tipo: var(--c-video); padding: 18px 20px 40px; }
+.vista.plano { --tipo: var(--c-video); padding: var(--pag-y) var(--pag-x) 40px; }
 
 .plano-cab { margin-bottom: 18px; }
 .plano-cab h1 { font-size: 26px; margin-top: 4px; }

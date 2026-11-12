@@ -59,6 +59,7 @@
     'nav.voz': 'Narration',
     'nav.musica': 'Music',
     'nav.fila': 'Queue',
+    'nav.config': 'Settings',
     'nav.secoes': 'Sections',
     'topo.marca': 'JerS Forja Studio — home',
 
@@ -302,6 +303,7 @@
     'nav.voz': 'Narración',
     'nav.musica': 'Música',
     'nav.fila': 'Cola',
+    'nav.config': 'Ajustes',
     'nav.secoes': 'Secciones',
     'topo.marca': 'JerS Forja Studio — inicio',
 

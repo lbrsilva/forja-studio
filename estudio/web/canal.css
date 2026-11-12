@@ -2,14 +2,15 @@
 
 /* 02/11/2026: sem o max-width central — as outras telas ocupam a largura toda, e o Canal
    centralizado era a 1ª coisa que denunciava que ele tinha nascido noutro dia. */
-.vista.canal { --tipo: var(--acento); padding: 18px 20px 120px; }
+.vista.canal { --tipo: var(--acento); padding: var(--pag-y) var(--pag-x) 120px; }
 
-.canal-cab { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
-  gap: 14px; margin-bottom: 16px; }
+.canal-cab { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 14px; margin-bottom: var(--e5); }
 .canal-cab h1 { font-size: 26px; }
 /* mesmo bloco de titulo das abas Imagem/Video/Plano: icone em quadrado arredondado + sobrelinha */
 .canal-cab-tit { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
-.canal-cab-tit .painel-ic { flex: none; margin-top: 2px; }
+.canal-cab-tit .painel-ic { flex: none; }
+#canalErro { margin-bottom: var(--e3); }
 .canal-cab-tit .sobrelinha { color: var(--tipo); font-size: 11px; }
 .canal-pasta { margin-top: 5px; font-size: 12px; color: var(--fraco);
   font-family: ui-monospace, Consolas, monospace; word-break: break-all; }

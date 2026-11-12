@@ -2,10 +2,10 @@
    Arquivo à parte do estilo.css: usa só as variáveis que já existem lá, para a tela nascer
    com a mesma cara do resto e para nada daqui vazar para as outras seções (tudo sob .voz). */
 
-.vista.voz { --tipo: var(--c-voz); padding: 18px 20px 28px; }
+.vista.voz { --tipo: var(--c-voz); padding: var(--pag-y) var(--pag-x) 28px; }
 
 /* ---------------------------------------------------------------- VoiceStudio fechado */
-.voz-off { padding: 14px 20px 0; }
+.voz-off { padding: 0; margin-bottom: var(--e4); }
 .voz-off-card { max-width: 560px; text-align: center; background: var(--painel); border: 1px solid var(--borda);
   border-radius: var(--raio); padding: 30px 28px; box-shadow: var(--sombra); }
 .voz-off-ic { display: inline-flex; width: 46px; height: 46px; align-items: center; justify-content: center;
@@ -136,7 +136,7 @@
 .voz-off-texto { flex: 1 1 280px; min-width: 0; }
 .voz-off-card h2 { font-size: 16px; margin-bottom: 2px; }
 .voz-off-card > .voz-off-ic { flex: none; margin: 0; }
-.voz-off-bts { flex: none; justify-content: flex-start; }
+.voz-off-bts { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-start; }
 .voz-off-ajuda { flex: 1 1 100%; margin-top: 2px; }
 .voz-off-ajuda > summary { cursor: pointer; color: var(--fraco); font-size: 13px; padding: 4px 0; }
 .voz-off-ajuda > summary:hover { color: var(--texto); }

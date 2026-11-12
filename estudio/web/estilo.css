@@ -16,6 +16,8 @@
      de contraste no fundo, e 2,0:1 contra a propria lima. */
   --brasa: #ff8a3d; --brasa-suave: rgba(255, 138, 61, .12); --brasa-borda: rgba(255, 138, 61, .38);
   --topo-h: 60px;
+  --e1: 4px; --e2: 8px; --e3: 12px; --e4: 16px; --e5: 20px; --e6: 24px; --e7: 32px;
+  --pag-x: 20px; --pag-y: 20px; --campo-h: 40px;
   color-scheme: dark;
 }
 .t-imagem { --tipo: var(--c-imagem); }
@@ -159,12 +161,12 @@ main:focus { outline: none; }
 @keyframes surgir { from { opacity: 0; transform: translateY(6px); } }
 
 /* ---------------------------------------------------------------- INÍCIO */
-.inicio { max-width: 1320px; margin: 0 auto; padding: 34px 24px 60px; }
+.inicio { max-width: 1320px; margin: 0 auto; padding: var(--e7) var(--pag-x) 60px; }
 /* ---- FORJA: o herói da página inicial (02/11/2026) -----------------------------
    A marca é uma forja: chapa de aço escura, brasa vazando por baixo e a letra condensada
    batida em cima. A fonte é a Bahnschrift, que JÁ VEM no Windows — de propósito: um
    estúdio que promete rodar sem internet não pode depender de fonte baixada do Google. */
-.heroi { position: relative; margin: -10px -24px 30px; padding: 48px 24px 34px; overflow: hidden;
+.heroi { position: relative; margin: calc(-1 * var(--e3)) calc(-1 * var(--pag-x)) var(--e7); padding: 48px var(--pag-x) 34px; overflow: hidden;
   border-bottom: 1px solid var(--borda); isolation: isolate; }
 .heroi-brasa { position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background:
@@ -198,7 +200,7 @@ main:focus { outline: none; }
 .heroi-tira b { color: var(--texto); font-variant-numeric: tabular-nums; }
 .heroi-tira .ic { width: 14px; height: 14px; color: var(--acento); }
 .heroi-tira.viva .ponto { width: 7px; height: 7px; }
-@media (max-width: 760px) { .heroi { padding: 34px 20px 26px; margin-inline: -20px; } }
+@media (max-width: 760px) { .heroi { padding-top: 34px; padding-bottom: 26px; } }
 .sobrelinha { display: inline-flex; align-items: center; gap: 6px; color: var(--acento); font-size: 12px; font-weight: 700; letter-spacing: .08em;
   text-transform: uppercase; }
 .heroi h1 { font-size: clamp(30px, 4.4vw, 50px); line-height: 1.05; margin: 10px 0 10px; letter-spacing: -.03em; font-weight: 700; }
@@ -351,7 +353,7 @@ button.escolha-aviso:hover, button.escolha-aviso:focus-visible { border-color: v
 .cat-item small { font-size: 12px; color: var(--fraco); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ---------------------------------------------------------------- GERADOR */
-.gerador { display: grid; grid-template-columns: minmax(340px, 420px) minmax(0, 1fr); gap: 18px; padding: 18px 20px 40px;
+.gerador { display: grid; grid-template-columns: minmax(340px, 420px) minmax(0, 1fr); gap: 18px; padding: var(--pag-y) var(--pag-x) 40px;
   max-width: 1800px; margin: 0 auto; align-items: start; }
 .painel { position: sticky; top: calc(var(--topo-h) + 14px); height: calc(100vh - var(--topo-h) - 28px); display: flex; flex-direction: column;
   background: var(--painel); border: 1px solid var(--borda); border-radius: 18px; box-shadow: var(--sombra); overflow: hidden; min-width: 0; }
@@ -413,7 +415,7 @@ button.escolha-aviso:hover, button.escolha-aviso:focus-visible { border-color: v
 .lista-ia { display: flex; flex-direction: column; gap: 12px; }
 .grupo-ia h3 { font-size: 11.5px; color: var(--fraco); text-transform: uppercase; letter-spacing: .07em; margin: 2px 0 6px; font-weight: 700; }
 .grupo-ia .itens { display: flex; flex-direction: column; gap: 6px; }
-.ia-trocar { display: flex; gap: 8px; }
+.ia-trocar { display: flex; gap: 8px; margin-top: var(--e2); }
 .ia-trocar .bt-sec { flex: 1; }
 .em-teste { font-size: 12.5px; color: var(--fraco); }
 .em-teste summary { cursor: pointer; padding: 4px 0; }
@@ -678,12 +680,12 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
   .topo { flex-wrap: wrap; height: auto; min-height: var(--topo-h); padding: 8px 14px; gap: 8px 12px; align-content: center; }
   .nav { order: 3; width: 100%; }
   .nav a { flex: 1 0 auto; justify-content: center; padding: 7px 10px; }
-  .gerador { grid-template-columns: minmax(0, 1fr); padding: 14px 14px 40px; }
+  .gerador { grid-template-columns: minmax(0, 1fr); padding: 14px var(--pag-x) 40px; }
   .painel { position: relative; top: 0; height: auto; overflow: visible; }
   .painel-corpo { overflow: visible; }
   .painel-rodape { position: sticky; bottom: 0; z-index: 5; border-radius: 0 0 18px 18px; box-shadow: 0 -10px 24px rgba(0, 0, 0, .35); background: var(--painel); }
   .inicio-grade { grid-template-columns: minmax(0, 1fr); }
-  .inicio { padding: 24px 16px 50px; }
+  .inicio { padding: var(--e6) var(--pag-x) 50px; }
   .lupa-grade { grid-template-columns: minmax(0, 1fr); grid-template-rows: 58vh auto; height: auto; min-height: 100%; overflow: visible; }
   .lupa { overflow-y: auto; }
   .lupa-midia { padding: 56px 12px 12px; }
@@ -709,7 +711,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
   .maq-mini .longo { display: none; }
   :root { --topo-h: 116px; }
   .nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; padding: 3px; }
-  .nav a { flex-direction: column; gap: 2px; padding: 6px 2px 5px; font-size: 11px; line-height: 1.15; white-space: normal; text-align: center; min-width: 0; }
+  .nav a { flex-direction: column; gap: 2px; padding: 6px 2px 5px; font-size: 10px; letter-spacing: 0; line-height: 1.15; white-space: normal; text-align: center; min-width: 0; padding-inline: 0; }
   .nav a .ic { width: 18px; height: 18px; }
   .grade { grid-template-columns: minmax(0, 1fr); }
   .cri-cab { align-items: stretch; }
@@ -780,6 +782,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
 .bt-desligar:disabled { opacity: .6; cursor: wait; }
 .bt-desligar .ic { width: 14px; height: 14px; }
 .bt-desligar-tudo { margin-left: 8px; }
+.forja-fornos .bt-desligar-tudo { margin-left: auto; }
 
 
 /* ---- fio de progresso no cabecalho (02/11/2026) ---------------------------------
@@ -791,7 +794,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
 .maq-mini.gerando { cursor: pointer; }
 
 /* ---- Minhas criações (02/11/2026): a mesma grade das outras abas, cartões simples ---- */
-.vista.tudo { padding: 18px 20px 40px; }
+.vista.tudo, #vFila { padding: var(--pag-y) var(--pag-x) 40px; }
 #tudoGrade { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
 #tudoGrade .card { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
   overflow: hidden; display: flex; flex-direction: column; }
@@ -856,7 +859,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
   background: rgba(11, 13, 18, .55); backdrop-filter: blur(3px);
   border: 1px solid var(--borda); border-radius: 14px; padding: 12px 14px; }
 .forja-fornos .maq-linha > div { flex: 1; min-width: 0; }
-.forja-fornos .maq-rot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+.forja-fornos .maq-rot { display: flex; align-items: center; justify-content: flex-start; gap: 10px; flex-wrap: wrap;
   font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--fraco); margin-bottom: 10px; }
 .forja-fornos .servicos { display: flex; flex-wrap: wrap; gap: 8px; }
 .forja-fornos .servico { display: inline-flex; align-items: center; gap: 8px; margin: 0;
@@ -884,7 +887,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
    No celular (ate 980px) tudo volta a ser barra horizontal, pelas regras de cima.
    ================================================================================ */
 @media (min-width: 981px) {
-  :root { --topo-h: 0px; --trilho: 104px; }
+  :root { --topo-h: 0px; --trilho: 104px; --pag-x: 28px; }
   body { display: grid; grid-template-columns: var(--trilho) minmax(0, 1fr); align-items: start; }
   .topo { position: sticky; top: 0; align-self: start; height: 100vh; height: 100dvh;
     flex-direction: column; align-items: stretch; gap: 12px; padding: 16px 10px 12px;
@@ -899,7 +902,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
 
   .nav { flex-direction: column; gap: 2px; padding: 0; background: none; border: 0;
     overflow-y: auto; overflow-x: hidden; margin-top: 4px; }
-  .nav a { flex-direction: column; gap: 5px; padding: 10px 4px; font-size: 10.5px; font-weight: 600;
+  .nav a { flex-direction: column; gap: 3px; padding: 6px 4px; font-size: 10.5px; font-weight: 600;
     text-align: center; white-space: normal; line-height: 1.15; letter-spacing: .01em; border-radius: 11px; }
   .nav a .ic { width: 21px; height: 21px; }
   .nav a[aria-current=page] { border-color: rgba(64, 206, 232, .22); }
@@ -912,8 +915,6 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
   .maq-mini span { min-width: 0; }
 
   /* o conteudo nao divide mais a largura com nada */
-  .inicio { padding-inline: 28px; }
-  .heroi { margin-inline: -28px; padding-inline: 28px; }
   .gerador, .vista.plano .plano-grade { gap: 20px; }
   /* no trilho o fio sobe pela borda direita, em vez de correr por baixo do cabecalho */
   .topo-prog { left: auto; right: -1px; bottom: 0; top: auto;
@@ -966,6 +967,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
   background: var(--brasa-suave); border: 1px solid var(--brasa-borda);
   color: var(--brasa); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
 }
+.ia-card .ia-falta { margin: var(--e2) var(--e3) var(--e1); width: calc(100% - 2 * var(--e3)); }
 .ia-falta:hover { background: rgba(255, 138, 61, .2); }
 .ia-falta b { font-weight: 700; }
 .ia-falta svg { width: 15px; height: 15px; flex: none; }
@@ -1576,3 +1578,82 @@ details.nov.destaque, details.nov.destaque[open] { background: none; border-colo
   border-color: var(--borda); }
 .bt-reparar:hover { color: var(--texto); border-color: var(--borda-forte); background: var(--painel-2); }
 .bt-reparar[disabled] { opacity: .55; cursor: progress; }
+
+@media (min-width: 981px) {
+.topo > .maq-mini, .topo > .idioma-canto, .topo > .conta-canto { width: 100%; box-sizing: border-box; margin-left: 0; margin-right: 0; }
+.conta-canto { padding: 0; }
+.conta-chip { border-radius: var(--raio-c); padding: 10px 6px; box-sizing: border-box; }
+.conta-chip { align-items: center; gap: 6px; }
+}
+.fila-down { margin-bottom: var(--e6); padding: var(--e4); border: 1px solid var(--borda); border-radius: var(--raio-c);
+  background: var(--fundo-2); display: grid; gap: var(--e3); }
+.fila-down-cab { display: flex; align-items: center; justify-content: space-between; gap: var(--e3); }
+.fila-down-cab .fila-tit { margin: 0; }
+.fila-down-item { display: grid; gap: 6px; }
+.fila-down-nome { margin: 0; font-weight: 650; }
+.fila-down-arq { margin: 0; color: var(--fraco); font-size: 12px; overflow-wrap: anywhere; }
+.fila-barra { height: 8px; border-radius: 999px; background: var(--fundo); border: 1px solid var(--borda); overflow: hidden; }
+.fila-barra > i { display: block; height: 100%; background: var(--acento); border-radius: 999px; transition: width .4s; }
+.fila-down-info { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--fraco); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.fila-down-prox { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.fila-down-prox li { display: flex; justify-content: space-between; gap: var(--e3); padding: 8px 10px; border-radius: 9px;
+  background: var(--fundo); border: 1px solid var(--borda); font-size: 13px; }
+.fila-down-prox li span { color: var(--fraco); white-space: nowrap; }
+.fila-down-tit { margin: 0; color: var(--fraco); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.fila-down { max-width: 760px; }
+@media (min-width: 981px) {
+.topo > .conta-canto { padding: 0; }
+}
+.ia-lixo { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 8px; border: 1px solid transparent;
+  background: none; color: var(--fraco); cursor: pointer; flex: none; }
+.ia-lixo svg { width: 15px; height: 15px; }
+.ia-lixo:hover, .ia-lixo:focus-visible { color: #f87171; background: rgba(248, 113, 113, .1); border-color: rgba(248, 113, 113, .4); }
+.cfg-ias { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.cfg-ias li { display: flex; align-items: center; gap: var(--e3); padding: 8px 10px; border-radius: 9px; background: var(--fundo); border: 1px solid var(--borda); }
+.cfg-ias li > span:first-child { flex: 1; min-width: 0; font-weight: 600; }
+.cfg-ias li > span.gb { color: var(--fraco); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.novidades { margin-bottom: var(--e5); }
+.inicio > .bloco-inicio + .bloco-inicio, .inicio > .inicio-grade + .bloco-inicio { margin-top: var(--e5); }
+.maq-lateral { display: none; }
+body.rota-inicio .maq-lateral { display: block; padding: var(--e4) var(--pag-x) var(--e7); grid-column: 2; }
+body.rota-inicio .maq-lateral .bloco-inicio { max-width: 560px; }
+@media (min-width: 1360px) {
+.maq-lateral, body.rota-inicio .maq-lateral { display: block; grid-column: 3; grid-row: 1; position: sticky; top: 0; align-self: start;
+    height: 100vh; height: 100dvh; overflow-y: auto; padding: var(--e4); border-left: 1px solid var(--borda);
+    background: rgba(11, 13, 18, .72); scrollbar-width: thin; }
+.maq-lateral .bloco-inicio, body.rota-inicio .maq-lateral .bloco-inicio { max-width: none; padding: var(--e2) var(--e3) var(--e4); border: 0; background: none; }
+.maq-lateral .bloco-cab h2 { font-size: 21px; }
+.maq-lateral .maq-linha { grid-template-columns: 38px 1fr; gap: var(--e3); padding: 14px 0; }
+.maq-lateral .maq-linha > .ic-caixa { width: 38px; height: 38px; border-radius: 11px; }
+.maq-lateral .maq-rot { font-size: 14.5px; }
+.maq-lateral .maq-rot b { font-size: 15.5px; }
+.maq-lateral .medidor { height: 12px; margin-top: 9px; }
+.maq-lateral .fila-box { padding: var(--e3) var(--e4); }
+.maq-lateral .fila-box p { font-size: 15px; }
+.maq-lateral .fila-box .barra { height: 12px; margin-top: 10px; }
+.maq-lateral .fila-box small { font-size: 13.5px; }
+.maq-lateral .nota, .maq-lateral .texto-status { font-size: 13px; }
+}
+@media (min-width: 1100px) {
+.escolha-caixa { grid-row: 1 / span 6; display: grid; grid-template-rows: subgrid; }
+.escolha-notas { grid-row: 5; align-self: start; }
+}
+.ia-card .ia-baixando { margin: var(--e2) var(--e3) var(--e1); padding: var(--e2) var(--e3); border-radius: var(--raio-c);
+  background: var(--brasa-suave); border: 1px solid var(--brasa-borda); display: grid; gap: 6px; }
+.ia-card .ia-barra { height: 8px; margin: 0; background: var(--fundo); border: 1px solid var(--borda); }
+.ia-card .ia-baixando > span { font-size: 12.5px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.conta-recado { margin: var(--e2) 0 var(--e5); padding: var(--e3) var(--e4); border-radius: var(--raio); font-size: 14px; line-height: 1.5;
+  color: var(--texto); display: flex; align-items: center; gap: var(--e3); min-height: 48px; }
+#contaRecado:not(:empty) + .heroi { margin-top: 0; }
+#vFila:not([hidden]) { display: grid; gap: var(--e5); align-content: start; }
+#vFila > * { min-width: 0; margin: 0; }
+.fila-topo { margin-bottom: 0; }
+.fila-down { max-width: none; margin-bottom: 0; }
+.fila-lista > .fila-vazio, .fila-lista > .fila-item { min-width: 0; }
+.fila-hist { max-width: none; margin-top: 0; padding-top: var(--e5); }
+#filaAviso { margin: 0; }
+#filaLimparConfirma { margin-top: var(--e3); }
+.maq-rot abbr { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+.maq-lateral .maq-rot { flex-wrap: wrap; row-gap: 2px; align-items: baseline; }
+.maq-lateral .maq-rot > span { flex: 0 1 auto; }
+.maq-lateral .maq-rot b { margin-left: auto; }

@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="canal.css?v=20261102-molde">
 <link rel="stylesheet" href="plano.css?v=20261102-molde2">
 <link rel="stylesheet" href="conta.css?v=20261114-porta4">
+<link rel="stylesheet" href="configuracoes.css?v=20261112-centro">
 <!-- Ate saber se a pessoa entrou, a pagina fica escondida: sem isto, ao atualizar, o painel
      aparecia meio segundo antes da tela de login. O conta.js tira a marca; se ele falhar, ela
      sai sozinha em 4 s, para ninguem ficar preso numa tela vazia. -->
@@ -105,6 +106,7 @@
     <a href="#/musica" data-rota="musica"><span data-ic="musica"></span><span data-i18n="nav.musica">Música</span></a>
     <a href="#/fila" data-rota="fila"><span data-ic="fila"></span><span data-i18n="nav.fila">Fila</span>
       <span class="nav-contador" id="navFilaN" hidden></span></a>
+    <a href="#/configuracoes" data-rota="configuracoes"><span data-ic="ajustes"></span><span data-i18n="nav.config">Configurações</span></a>
   </nav>
   <!-- O title daqui NÃO leva data-i18n-attr: o app.js reescreve ele a cada pulso com o
        estado da máquina ("Nada gerando agora", "O estúdio não respondeu"). Marcar para
@@ -541,11 +543,84 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
        07/11/2026: ele pediu "um local para ver o que esta sendo gerado, mesmo que seja o
        Claude, o GPT ou qualquer fluxo". Mostra TUDO que a maquina esta gerando, venha de
        onde vier - o que o painel mandou e o que veio de fora. -->
+  <!-- ============================== CONFIGURAÇÕES ==============================
+       Ajustes que ficam só neste computador. Hugging Face e ElevenLabs (configuracoes.js). -->
+  <section id="vConfig" hidden>
+    <h1 class="sr-only" id="configTitulo" tabindex="-1">Configurações</h1>
+    <div class="fila-topo">
+      <h2 class="fila-tit">Configurações</h2>
+      <p class="nota">Ajustes que ficam só neste computador. Nada daqui vai para o GitHub nem para o servidor de contas.</p>
+    </div>
+
+    <div class="cfg-cartao" id="cfgHf">
+      <h3 class="cfg-tit">Hugging Face <i class="nuvem-selo" id="cfgHfSelo"></i></h3>
+      <p class="nuvem-ex">Algumas IAs (como o <b>LTX 2.5</b>) baixam arquivos de repositórios restritos do
+        Hugging Face, e o download termina com <b>erro 401</b>. Com um token da <b>sua</b> conta o estúdio
+        consegue baixar.</p>
+      <ol class="cfg-passos">
+        <li>Entre no Hugging Face e aceite a licença do modelo
+          (LTX 2.5: <a href="https://huggingface.co/Lightricks/LTX-2.5" target="_blank" rel="noopener noreferrer">huggingface.co/Lightricks/LTX-2.5</a>).</li>
+        <li>Crie um token de <b>leitura</b> em
+          <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Settings, Access Tokens</a>.</li>
+        <li>Cole o token abaixo e salve. Depois, baixe a IA de novo: o que já veio continua de onde parou.</li>
+      </ol>
+      <label class="nuvem-rot" for="cfgHfChave">Token do Hugging Face</label>
+      <input type="password" id="cfgHfChave" autocomplete="off" spellcheck="false"
+             placeholder="hf_..." maxlength="300">
+      <div class="nuvem-bts">
+        <button type="button" class="gerar" id="cfgHfSalvar">Salvar</button>
+        <button type="button" class="bt-sec" id="cfgHfTirar">Remover</button>
+      </div>
+      <p class="nuvem-msg" id="cfgHfMsg" role="status"></p>
+      <p class="nuvem-pe" id="cfgHfPe">Fica num arquivo de texto na sua máquina, em <code>API/huggingface.txt</code>.
+        Só é enviado para <code>huggingface.co</code>.</p>
+    </div>
+
+    <div class="cfg-cartao" id="cfgEl">
+      <h3 class="cfg-tit">ElevenLabs <small data-i18n="tela.opcional">(opcional)</small> <i class="nuvem-selo" id="cfgElSelo"></i></h3>
+      <p class="nuvem-ex">As vozes da Narração são <b>locais e de graça</b>, e é com elas que o estúdio já funciona.
+        Se você tiver conta no <b>ElevenLabs</b> e quiser usar as vozes de lá, cole a <b>sua</b> chave: elas aparecem
+        na lista com o símbolo ☁ e gastam crédito da <b>sua</b> conta.</p>
+      <ol class="cfg-passos">
+        <li>Crie uma chave em
+          <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer">elevenlabs.io, Settings, API Keys</a>.</li>
+        <li>Cole a chave abaixo e salve. O estúdio confere pedindo a lista de vozes da sua conta.</li>
+      </ol>
+      <label class="nuvem-rot" for="cfgElChave" data-i18n="tela.chave-do-elevenlabs">Chave do ElevenLabs</label>
+      <input type="password" id="cfgElChave" autocomplete="off" spellcheck="false"
+             placeholder="cole a chave aqui" maxlength="300">
+      <div class="nuvem-bts">
+        <button type="button" class="gerar" id="cfgElSalvar">Salvar</button>
+        <button type="button" class="bt-sec" id="cfgElTirar">Remover</button>
+      </div>
+      <p class="nuvem-msg" id="cfgElMsg" role="status"></p>
+      <p class="nuvem-pe" id="cfgElPe">Fica num arquivo de texto na sua máquina, em <code>API/elevenlabs.txt</code>.
+        Só é enviada para o ElevenLabs.</p>
+    </div>
+
+    <div class="cfg-cartao" id="cfgIas">
+      <h3 class="cfg-tit">IAs instaladas</h3>
+      <p class="nuvem-ex">O que está no disco deste computador. A lixeira apaga os arquivos da IA depois de você confirmar;
+        o que outra IA instalada também usa não é apagado.</p>
+      <ul class="cfg-ias" id="cfgIasLista"></ul>
+      <p class="nota" id="cfgIasVazio" hidden>Nenhuma IA instalada ainda.</p>
+    </div>
+  </section>
+
   <section id="vFila" hidden>
     <h1 class="sr-only" id="filaTitulo" tabindex="-1">Fila</h1>
     <div class="fila-topo">
       <h2 class="fila-tit" data-i18n="tela.o-que-a-maquina-esta">O que a máquina está gerando agora</h2>
       <p class="nota" id="filaQuando"></p>
+    </div>
+    <div class="fila-down" id="filaDown" hidden>
+      <div class="fila-down-cab">
+        <h2 class="fila-tit">Baixando IAs</h2>
+        <button type="button" class="bt-sec" id="filaDownParar">Parar downloads</button>
+      </div>
+      <div id="filaDownAgora"></div>
+      <div id="filaDownProx"></div>
+      <p class="nota" id="filaDownErro"></p>
     </div>
     <div class="fila-lista" id="filaLista"></div>
     <p class="nota" id="filaAviso"></p>
@@ -788,20 +863,21 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
             <b>VoiceStudio</b> estiver aberto.</p>
         </div>
         <div class="voz-off-bts">
+          <button type="button" class="gerar" id="vozInstalar" hidden><span data-ic="baixar"></span><span>Instalar o VoiceStudio</span></button>
           <button type="button" class="gerar" id="vozLigar"><span data-ic="ligar"></span><span data-i18n="tela.ligar-a-voz-local">Ligar a voz local</span></button>
           <button type="button" class="bt-sec" id="vozReprocurar"><span data-ic="reusar"></span>Procurar de novo</button>
         </div>
         <details class="voz-off-ajuda">
           <summary data-i18n="tela.como-ligar-na-mao-nao">Como ligar na mão / não tenho o VoiceStudio</summary>
           <ol class="voz-passos">
-            <li data-i18n="tela.abra-o-voicestudio-icone-na">Abra o VoiceStudio (ícone na Área de Trabalho ou no menu Iniciar).</li>
+            <li data-i18n="tela.abra-o-voicestudio-icone-na">Abra o VoiceStudio (pelo ícone dele; no Mac, em Programas ou na pasta _ferramentas/VoiceStudio).</li>
             <li data-i18n="tela.espere-a-janela-dele-carregar">Espere a janela dele carregar por completo.</li>
             <li>Volte aqui e clique em <b>Procurar de novo</b>.</li>
           </ol>
           <p class="nota" id="vozOffDetalhe" aria-live="polite"></p>
           <p class="nota fraco">Não tem o VoiceStudio? Ele é gratuito e de código aberto:
             <span class="voz-link" data-i18n="tela.github-com-debpalash-voicestudio">github.com/debpalash/VoiceStudio</span> — baixe o arquivo
-            <b>win-x64</b> da página de releases.</p>
+            <b>do seu sistema</b> da página de releases — ou use o botão <b>Instalar o VoiceStudio</b>, que baixa e confere o arquivo certo sozinho.</p>
         </details>
       </div>
     </div>
@@ -992,6 +1068,16 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
   </section>
 </main>
 
+<aside class="maq-lateral" id="maqLateral" aria-label="Sua máquina">
+  <section class="bloco-inicio maquina" id="maquina" aria-labelledby="maqTitulo">
+    <div class="bloco-cab">
+      <h2 id="maqTitulo" data-i18n="tela.sua-maquina">Sua máquina</h2>
+      <span class="ao-vivo" id="maqAoVivo"><i></i>ao vivo</span>
+    </div>
+    <div id="maqCorpo"><p class="fraco">Verificando…</p></div>
+  </section>
+</aside>
+
 <!-- ============================== JANELAS ============================== -->
 <dialog class="janela confirmar" id="dlgConfirmar" aria-labelledby="confTitulo" aria-describedby="confTexto">
   <div class="janela-corpo">
@@ -1052,6 +1138,7 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
 <script src="app.js?v=20261114-musica"></script>
 <script src="voz.js?v=20261109-selo"></script>
 <script src="fila.js?v=20261109-musica"></script>
+<script src="configuracoes.js?v=20261112-ias"></script>
 <script src="canal.js?v=20261030-canal"></script>
 <script src="plano.js?v=20261102-molde2"></script>
 <script src="tudo.js?v=20261102-tudo2"></script>

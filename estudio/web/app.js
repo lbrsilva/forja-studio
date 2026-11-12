@@ -135,7 +135,7 @@ const ROTAS = {
     criacoes: 'Pessoas falando', gerar: 'Gerar pessoa falando',
     vazio: 'Nenhum vídeo de pessoa falando ainda. Envie uma foto de frente, escreva o texto e clique em Gerar.' },
 };
-const TITULOS = { inicio: 'Início', imagem: 'Imagem', video: 'Vídeo', apresentador: 'Pessoa falando', voz: 'Narração', canal: 'Canal automático', plano: 'Plano-sequência', musica: 'Música', fila: 'Fila', tudo: 'Minhas criações' };
+const TITULOS = { inicio: 'Início', imagem: 'Imagem', video: 'Vídeo', apresentador: 'Pessoa falando', voz: 'Narração', canal: 'Canal automático', plano: 'Plano-sequência', musica: 'Música', fila: 'Fila', tudo: 'Minhas criações', configuracoes: 'Configurações' };
 // IA recomendada em cada seção (CATALOGO_IAS.md: "Quem usar em cada caso")
 // 02/11/2026: a recomendada passou a ser a que o historico mostra em uso de verdade
 // (Krea 2 Turbo: 696 geracoes; LTX 2.5 texto: a mais usada que funciona SO com texto).
@@ -384,6 +384,7 @@ async function pulso(forcar) {
         G.falhas = 0;
         renderInicioVivo();
       } else {
+        await carregarInicio().then(renderMaquina).catch(() => {});
         // o cabeçalho usa o estado REAL do estúdio (todas as abas), lido agora: nunca a lista guardada de outra seção
         const [s, lista] = await Promise.all([api('/api/sistema', { timeout: 9000 }),
           api('/api/trabalhos?limite=20', { timeout: 9000 }).catch(() => null)]);
@@ -467,7 +468,7 @@ function renderCabecalho() {
     titulo = TX('A ComfyUI de vídeo está gerando algo que não foi pedido pelo estúdio.');
   } else {
     p.className = 'ponto on';
-    const vram = c.vramLivre != null ? `VRAM <b>${num(c.vramLivre)} GB</b><span class="longo"> livres</span> · ` : '';
+    const vram = c.vramLivre != null ? `${G.gpuMemoria === 'unificada' ? 'GPU' : 'VRAM'} <b>${num(c.vramLivre)} GB</b><span class="longo"> livres</span> · ` : '';
     t.innerHTML = `${vram}Livre`;
     titulo = TX('Nada gerando agora. Clique para ver a sua máquina no Início.');
   }
@@ -485,19 +486,21 @@ function cabecalhoDaGaleria(lista) {
 // ================================================================ roteador
 function rotaDoHash() {
   const h = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
-  return ['imagem', 'video', 'apresentador', 'musica', 'voz', 'canal', 'plano', 'tudo', 'fila'].includes(h) ? h : 'inicio';
+  return ['imagem', 'video', 'apresentador', 'musica', 'voz', 'canal', 'plano', 'tudo', 'fila', 'configuracoes'].includes(h) ? h : 'inicio';
 }
 // "#conteudo" (link "Pular para o conteúdo") e outras âncoras não são rotas: não trocam a tela
 const hashEhRota = () => !location.hash || location.hash === '#' || location.hash.startsWith('#/');
 function focarTitulo(rolar = false) {
   const r = G.rota, h = r === 'inicio' ? $('#inicioTitulo') : r === 'musica' ? $('#musTitulo')
     : r === 'voz' ? $('#vozTitulo') : r === 'canal' ? $('#canalTitulo') : r === 'plano' ? $('#planoTitulo')
-    : r === 'tudo' ? $('#tudoTitulo') : r === 'fila' ? $('#filaTitulo') : $('#rotaTitulo');
+    : r === 'tudo' ? $('#tudoTitulo') : r === 'fila' ? $('#filaTitulo')
+    : r === 'configuracoes' ? $('#configTitulo') : $('#rotaTitulo');
   if (h) h.focus({ preventScroll: !rolar });
 }
 function irPara() {
   if (G.rota && !hashEhRota()) return;
   const r = rotaDoHash(), antes = G.rota;
+  if (r === 'musica' && semMusica()) { location.hash = '#/'; return; }
   // o Início aparece na hora; as outras seções precisam da lista de IAs (vem do servidor): esperam por ela
   if (ehGerador(r) && !G.presets) {
     G.irDepois = true;
@@ -519,6 +522,8 @@ function irPara() {
   if (r === 'plano' && window.PLANO) PLANO.abrir();
   $('#vTudo').hidden = r !== 'tudo';
   $('#vFila').hidden = r !== 'fila';
+  $('#vConfig').hidden = r !== 'configuracoes';
+  if (r === 'configuracoes' && window.CONFIG) CONFIG.abrir();
   // 07/11/2026: ESTA linha nasceu sem o "window.X &&" que todas as vizinhas tem, e o
   // fila.js carrega DEPOIS do app.js - entao ela estourava "FILA is not defined" em
   // TODA abertura do painel, dentro de iniciar(), e matava o resto: os cartoes ficavam
@@ -527,6 +532,7 @@ function irPara() {
   if (window.FILA) { if (r === 'fila') FILA.abrir(); else FILA.fechar(); }
   if (r === 'tudo' && window.TUDO) TUDO.abrir();
   document.body.classList.toggle('rota-voz', r === 'voz');
+  document.body.classList.toggle('rota-inicio', r === 'inicio');
   if (r === 'voz' && window.VOZ) VOZ.abrir();
   document.body.classList.toggle('rota-musica', r === 'musica');
   document.title = r === 'inicio' ? 'JerS · Forja Studio' : `${TITULOS[r]} · Forja Studio`;
@@ -534,7 +540,7 @@ function irPara() {
   if (!ehGerador(r)) pararGaleria();
   if (r === 'inicio') abrirInicio();
   else if (ehGerador(r)) abrirGerador(r);
-  else if (r === 'voz' || r === 'canal' || r === 'plano' || r === 'tudo') medirTopo();  // voz.js / canal.js se viram sozinhos
+  else if (r === 'voz' || r === 'canal' || r === 'plano' || r === 'tudo' || r === 'configuracoes') medirTopo();  // voz.js / canal.js se viram sozinhos
   else { medirTopo(); atualizarMusica(true); }
   if (antes) {
     window.scrollTo(0, 0);
@@ -658,6 +664,12 @@ function abrirInicio() {
   if (G.dicaIdx == null) proximaDica();
   if (G.inicio) renderInicioVivo();
 }
+const semMusica = () => (G.presets && G.presets.tem_musica === false) || (G.inicio && G.inicio.tem_musica === false);
+function aplicarTemMusica() {
+  const tem = !semMusica();
+  document.querySelectorAll('[data-rota="musica"]').forEach((a) => { a.hidden = !tem; });
+  if (!tem && G.rota === 'musica') location.hash = '#/';
+}
 async function carregarInicio() {
   let I = null;
   try { I = await api('/api/inicio', { timeout: 9000 }); }
@@ -673,7 +685,9 @@ async function carregarInicio() {
     I.legado = !('servicos' in I);
     G.relogioDif = (+I.agora || Date.now() / 1000) - Date.now() / 1000;
     G.inicio = I;
+    G.gpuMemoria = I.sistema.gpu_memoria;
     G.cab = cabDeInicio(I);
+    aplicarTemMusica();
     return;
   }
   // servidor bem antigo (sem /api/inicio): monta o que der com /api/sistema e /api/trabalhos
@@ -1007,18 +1021,20 @@ function renderMaquina() {
   const h = [];
   // 14/11/2026: era uma coluna de 5 linhas e 869 px. Agora sao medidores lado a lado, e o
   // disco deixou de se chamar "E: (projeto)" com os numeros do C:.
+  const win = !I.plataforma || I.plataforma === 'windows';
+  const uni = S.gpu_memoria === 'unificada';
   const medida = (rotulo, forte, fraco, usado, alerta = '') =>
     `<div class="medida"><div class="medida-topo"><span>${rotulo}</span><b>${forte}</b></div>`
     + `${usado != null ? medidor(usado) : ''}<small>${fraco}</small>${alerta}</div>`;
-  h.push(`<p class="maq-gpu">${ic('placa')}<span>${esc(S.gpu || 'Placa de vídeo não encontrada')}</span></p>`);
+  h.push(`<p class="maq-gpu">${ic('placa')}<span>${esc(S.gpu || (uni ? 'Chip (GPU) não encontrado' : 'Placa de vídeo não encontrada'))}</span></p>`);
   const vT = gb(S.vram_total), vL = gb(S.vram_livre);
-  if (vT) h.push(medida('Memória da placa', `${num(vL)} GB`, `livres de ${num(vT)} GB`, 1 - vL / vT));
+  if (vT) h.push(medida(uni ? 'Memória da GPU' : 'Memória da placa', `${num(vL)} GB`, `livres de ${num(vT)} GB`, 1 - vL / vT));
   const rT = gb(S.ram_total_gb), rL = gb(S.ram_livre_gb);
   if (rT) h.push(medida('Memória RAM', `${num(rL)} GB`, `livres de ${num(rT, 0)} GB`, 1 - rL / rT));
   const disco = (d, rotulo) => {
     if (!d || d.livre_gb == null) return;
     const pouco = d.livre_gb < 50;
-    h.push(medida(`${rotulo} (${esc(d.unidade)}:)`, `${num(d.livre_gb, 0)} GB`,
+    h.push(medida(win ? `${rotulo} (${esc(d.unidade)}:)` : rotulo, `${num(d.livre_gb, 0)} GB`,
       d.total_gb ? `livres de ${num(d.total_gb, 0)} GB` : 'livres', d.total_gb ? 1 - d.livre_gb / d.total_gb : null,
       pouco ? `<p class="maq-alerta">${ic('alerta')}<span>Menos de 50 GB: vídeo e modelo novo podem não caber.</span></p>` : ''));
   };
@@ -1026,7 +1042,7 @@ function renderMaquina() {
     const mesmo = S.disco_ias && S.disco_painel && S.disco_ias.unidade === S.disco_painel.unidade;
     if (mesmo) disco(S.disco_ias, 'Disco');
     else { disco(S.disco_ias, 'Disco das IAs'); disco(S.disco_painel, 'Disco do painel'); }
-  } else {      // servidor antigo: so sabe o disco do painel (que chamava de "E:") e o C:
+  } else if (win) {      // servidor antigo: so sabe o disco do painel (que chamava de "E:") e o C:
     const eT = gb(S.disco_e_total_gb), eL = gb(S.disco_e_livre_gb), cL = gb(S.disco_c_livre_gb);
     if (eL != null) h.push(medida('Disco do painel', `${num(eL, 0)} GB`, eT ? `livres de ${num(eT, 0)} GB` : 'livres', eT ? 1 - eL / eT : null));
     if (cL != null && cL !== eL) h.push(medida('Disco C:', `${num(cL, 0)} GB`, 'livres', null));
@@ -1697,6 +1713,64 @@ function faixaInstalar(id) {
     aria-label="${esc(T('ia.faltaDica', '{q} ainda não está instalada. {gb} GB. Clique para baixar.', { q: e.nome, gb: e.gb_falta }))}">
     ${ic('baixar')}<span>${esc(T('ia.faltaAntes', 'Falta instalar —'))} <b>${e.gb_falta} GB</b></span></button>`;
 }
+function botaoRemoverIA(id) {
+  const e = (G.ias || {})[id];
+  if (!e || !e.conhecida || !e.instalada) return '';
+  const rotulo = T('ia.remover', 'Remover {q} do computador', { q: e.nome });
+  return `<button type="button" class="ia-lixo" data-remover="${esc(id)}" title="${esc(rotulo)}" aria-label="${esc(rotulo)}">${ic('lixo')}</button>`;
+}
+async function removerIA(id) {
+  const e = (G.ias || {})[id];
+  const nome = e ? e.nome : id;
+  let junto = false;
+  const chamar = async (confirmar) => {
+    const r = await fetch('/api/ias/remover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, confirmar, junto }) });
+    const d = await r.json().catch(() => ({}));
+    return { ok: r.ok, d };
+  };
+  let plano;
+  try { plano = await chamar(false); } catch (err) { aviso(T('ia.semEstudio', 'Não consegui falar com o estúdio.'), 'erro'); return false; }
+  if (!plano.ok) { aviso(plano.d.erro || plano.d.mensagem || T('ia.naoRemoveu', 'Não deu para remover.'), 'erro'); return false; }
+  let p = plano.d;
+  if (!p.apagar.length && p.manter.length) {
+    const donos = [...new Set(p.manter.flatMap((x) => x.usado_por))];
+    const ok = await confirmar({
+      titulo: T('ia.juntoTitulo', 'Remover também {d}?', { d: donos.join(', ') }),
+      texto: T('ia.juntoTexto', 'Todos os arquivos de "{q}" são compartilhados com {d}. Para liberar espaço, as duas precisam sair: {d} deixará de estar instalada.', { q: nome, d: donos.join(', ') }),
+      sim: T('ia.juntoSim', 'Ver o que será apagado'), nao: T('ia.voltar', 'Voltar'), icone: 'alerta' });
+    if (!ok) return false;
+    junto = true;
+    plano = await chamar(false);
+    if (!plano.ok) { aviso(plano.d.erro || T('ia.naoRemoveu', 'Não deu para remover.'), 'erro'); return false; }
+    p = plano.d;
+  }
+  if (!p.apagar.length) {
+    aviso(T('ia.nadaApagar', 'Nada a apagar: os arquivos desta IA não estão no disco.'), 'aviso');
+    return false;
+  }
+  const lista = [
+    ...p.apagar.map((x) => ({ txt: `${T('ia.vaiApagar', 'Apaga')}: ${x.arquivo} (${x.gb.toLocaleString('pt-BR')} GB)`, cls: 'alerta' })),
+    ...p.manter.map((x) => ({ txt: `${T('ia.fica', 'Fica')}: ${x.arquivo} — ${T('ia.usadoPor', 'usado por')} ${x.usado_por.join(', ')}`, cls: 'fica' })),
+  ];
+  const sim = await confirmar({
+    titulo: T('ia.removerTitulo', 'Remover "{q}" do computador?', { q: nome }),
+    texto: T('ia.removerTexto', 'Isso apaga {gb} GB do disco. Para usar esta IA de novo, será preciso baixar tudo outra vez.', { gb: p.gb.toLocaleString('pt-BR') }),
+    lista, sim: T('ia.removerSim', 'Remover do computador'), icone: 'lixo',
+  });
+  if (!sim) return false;
+  try {
+    const r = await chamar(true);
+    aviso(r.ok ? T('ia.removida', '{q} removida: {gb} GB liberados.', { q: nome, gb: (r.d.liberou_gb || 0).toLocaleString('pt-BR') })
+               : (r.d.mensagem || T('ia.naoRemoveu', 'Não deu para remover.')), r.ok ? 'ok' : 'erro');
+    await lerIAs();
+    return r.ok;
+  } catch (err) {
+    aviso(T('ia.semEstudio', 'Não consegui falar com o estúdio.'), 'erro');
+    return false;
+  }
+}
+window.removerIA = removerIA;
 function gbCurto(b) {
   if (!b) return '0';
   const gb = b / 1024 / 1024 / 1024;
@@ -2137,7 +2211,7 @@ function htmlIAAtual(p) {
       ${tempo ? `<span class="ia-tempo">${ic('relogio')}<span>${esc(tempo)}</span></span>` : ''}
     </div>
     ${faixaInstalar(p.id)}
-    <div class="ia-rodape"><span class="tags">${tagsDe(f)}</span>
+    <div class="ia-rodape"><span class="tags">${tagsDe(f)}</span>${botaoRemoverIA(p.id)}
       <button type="button" class="ia-saiba" data-saiba="${esc(p.id)}" aria-label="${esc(T('ia.saibaSobre', 'Saiba mais sobre {q}', { q: nomeCurto(f.nome || p.nome) }))}">${ic('info')}${esc(T('ia.saiba', 'Saiba mais'))}</button></div>
   </div>`;
 }
@@ -2151,7 +2225,7 @@ function htmlCardIA(p, f) {
       ${tempo ? `<span class="ia-tempo">${ic('relogio')}<span>${esc(tempo)}</span></span>` : ''}
     </button>
     ${faixaInstalar(p.id)}
-    <div class="ia-rodape"><span class="tags">${tagsDe(f, 3)}</span>
+    <div class="ia-rodape"><span class="tags">${tagsDe(f, 3)}</span>${botaoRemoverIA(p.id)}
       <button type="button" class="ia-saiba" data-saiba="${esc(p.id)}" aria-label="${esc(T('ia.saibaSobre', 'Saiba mais sobre {q}', { q: nome }))}">${ic('info')}${esc(T('ia.saiba', 'Saiba mais'))}</button></div>
   </div>`;
 }
@@ -3499,8 +3573,9 @@ function prepararEventos() {
   // seletor de IA
   $('#secIA').addEventListener('click', (e) => {
     const esc_ = e.target.closest('[data-escolher]'), saiba = e.target.closest('[data-saiba]'), troca = e.target.closest('#btTrocarIA');
-    const inst = e.target.closest('[data-instalar]');
+    const inst = e.target.closest('[data-instalar]'), rem = e.target.closest('[data-remover]');
     if (inst) { instalarIA(inst.dataset.instalar); return; }
+    if (rem) { removerIA(rem.dataset.remover); return; }
     if (esc_) escolherIA(esc_.dataset.escolher);
     else if (saiba) abrirFicha(fichaOuPreset(acharPreset(saiba.dataset.saiba)));
     else if (troca) {
@@ -3644,6 +3719,8 @@ function esconderAbasSemIA() {
   p.imagem = p.imagem || [];
   p.video = p.video || [];
   G.presets = p;
+  if (p.recomendada) Object.assign(RECOMENDADA, p.recomendada);
+  aplicarTemMusica();
   esconderAbasSemIA();
   await Promise.all([carregarFichas(), carregarVozes(), carregarNovidades()]);
   lerIAs();   // quais IAs estao no disco e quanto falta baixar (nao segura a tela)

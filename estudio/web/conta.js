@@ -279,10 +279,13 @@
     if (!onde) return;
     const pago = estado.plano === 'pago';
     const quando = estado.dias != null ? Math.max(0, Math.round(estado.dias)) : null;
+    const limpa = (t) => String(t || '').replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
+    const completo = (estado.nome || estado.email || '').trim();
+    const primeiro = estado.nome ? estado.nome.trim().split(/\s+/)[0] : String(estado.email || '').split('@')[0];
     onde.innerHTML =
       '<span class="conta-chip">' +
         '<span class="conta-plano' + (pago ? ' pago' : '') + '">' + (pago ? 'pago' : 'grátis') + '</span>' +
-        '<b title="' + (estado.email || '') + '">' + (estado.nome || estado.email || '') + '</b>' +
+        '<b title="' + limpa(completo) + '">' + limpa(primeiro) + '</b>' +
         '<button type="button" class="conta-sair" id="contaSair">sair</button>' +
       '</span>';
     const bt = $('#contaSair');

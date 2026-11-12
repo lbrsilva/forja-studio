@@ -46,6 +46,102 @@
     return el;
   }
 
+  let ultimaAmostra = null;
+  let nDown = 0;
+  const gb = (b) => (b / 1e9).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+
+  function duracao(seg) {
+    if (!isFinite(seg) || seg < 0) return '';
+    if (seg < 90) return Math.round(seg) + ' s';
+    if (seg < 5400) return Math.round(seg / 60) + ' min';
+    return Math.floor(seg / 3600) + ' h ' + String(Math.round((seg % 3600) / 60)).padStart(2, '0') + ' min';
+  }
+
+  async function puxarDown() {
+    let prog, tam = {};
+    try {
+      const r = await fetch('/api/ias/progresso');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      prog = await r.json();
+    } catch (e) { return; }
+    const fila = prog.fila || [], agora = prog.baixando;
+    nDown = fila.length;
+    const caixa = $('#filaDown');
+    const mostrar = !!(agora || fila.length || prog.erro);
+    caixa.hidden = !mostrar;
+    if (!mostrar) { ultimaAmostra = null; atualizarContador(0); return; }
+    if (fila.length) {
+      try {
+        const r = await fetch('/api/ias');
+        if (r.ok) Object.values((await r.json()).ias || {}).forEach((i) => { if (i.nome) tam[i.nome] = i.gb_falta; });
+      } catch (e) { /* so o tamanho some */ }
+    }
+    const blocoAgora = $('#filaDownAgora');
+    blocoAgora.innerHTML = '';
+    if (agora) {
+      const pct = agora.total ? Math.min(100, Math.round((agora.baixados / agora.total) * 100)) : 0;
+      const t = Date.now() / 1000;
+      let vel = null;
+      if (ultimaAmostra && ultimaAmostra.arq === agora.arquivo && agora.baixados >= ultimaAmostra.b && t - ultimaAmostra.t > 0.5) {
+        const v = (agora.baixados - ultimaAmostra.b) / (t - ultimaAmostra.t);
+        vel = ultimaAmostra.v ? ultimaAmostra.v * 0.6 + v * 0.4 : v;
+      }
+      ultimaAmostra = { arq: agora.arquivo, b: agora.baixados, t, v: vel };
+      const el = document.createElement('div');
+      el.className = 'fila-down-item';
+      el.innerHTML = '<p class="fila-down-nome"></p><p class="fila-down-arq"></p>'
+        + '<div class="fila-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div>'
+        + '<div class="fila-down-info"></div>';
+      $('.fila-down-nome', el).textContent = '⬇ ' + (agora.ia || '');
+      $('.fila-down-arq', el).textContent = agora.arquivo || '';
+      $('.fila-barra', el).setAttribute('aria-valuenow', pct);
+      $('.fila-barra > i', el).style.width = pct + '%';
+      const info = [pct + '%', gb(agora.baixados) + ' de ' + gb(agora.total) + ' GB'];
+      if (vel) {
+        info.push((vel / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB/s');
+        if (agora.total) info.push('faltam ~' + duracao((agora.total - agora.baixados) / vel));
+      }
+      if (agora.continuou) info.push('continuando de onde parou');
+      $('.fila-down-info', el).textContent = info.join(' · ');
+      blocoAgora.append(el);
+    } else {
+      ultimaAmostra = null;
+      const p = document.createElement('p');
+      p.className = 'nota';
+      p.textContent = prog.erro ? 'Os downloads pararam por causa do erro abaixo. Corrija e clique em baixar de novo na IA.' : (fila.length ? 'Preparando o próximo download…' : '');
+      blocoAgora.append(p);
+    }
+    const prox = fila.filter((n) => !agora || n !== agora.ia);
+    const blocoProx = $('#filaDownProx');
+    blocoProx.innerHTML = '';
+    if (prox.length) {
+      const h = document.createElement('p');
+      h.className = 'fila-down-tit';
+      h.textContent = 'Próximos na fila (' + prox.length + ')';
+      const ul = document.createElement('ul');
+      ul.className = 'fila-down-prox';
+      prox.forEach((n, i) => {
+        const li = document.createElement('li');
+        const nome = document.createElement('strong');
+        nome.textContent = (i + 1) + '. ' + n;
+        const sz = document.createElement('span');
+        sz.textContent = tam[n] ? 'falta ' + tam[n].toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' GB' : '';
+        li.append(nome, sz);
+        ul.append(li);
+      });
+      blocoProx.append(h, ul);
+    }
+    $('#filaDownErro').textContent = prog.erro ? 'O último download parou: ' + prog.erro : '';
+    atualizarContador(nDown);
+  }
+
+  let nTrabalhos = 0;
+  function atualizarContador(extra) {
+    const cont = $('#navFilaN');
+    const n = nTrabalhos + (extra || 0);
+    if (cont) { cont.textContent = n || ''; cont.hidden = !n; }
+  }
+
   async function puxar() {
     let d;
     try {
@@ -56,7 +152,10 @@
       $('#filaQuando').textContent = 'Não consegui ler a fila: ' + String(e.message || e);
       return;
     }
-    const lista = $('#filaLista'), itens = d.itens || [];
+    const lista = $('#filaLista');
+    const todos = d.itens || [];
+    const comfyFora = todos.some((i) => i.fonte === 'comfyui' && i.estado === 'erro');
+    const itens = todos.filter((i) => !(i.fonte === 'comfyui' && i.estado === 'erro'));
     lista.innerHTML = '';
     if (!itens.length) {
       const vazio = document.createElement('p');
@@ -67,11 +166,10 @@
       itens.forEach((i) => lista.append(cartao(i)));
     }
     const n = itens.filter((i) => i.estado === 'rodando' || i.estado === 'fila').length;
-    const cont = $('#navFilaN');
-    if (cont) { cont.textContent = n || ''; cont.hidden = !n; }
-    $('#filaQuando').textContent = n
-      ? n + (n === 1 ? ' trabalho' : ' trabalhos') + ' · atualiza sozinho'
-      : 'atualiza sozinho';
+    nTrabalhos = n;
+    atualizarContador(nDown);
+    $('#filaQuando').textContent = [comfyFora ? 'ComfyUI desligada' : '', n
+      ? n + (n === 1 ? ' trabalho' : ' trabalhos') : '', 'atualiza sozinho'].filter(Boolean).join(' · ');
     $('#filaAviso').textContent = d.aviso_narracao || '';
   }
 
@@ -91,14 +189,18 @@
     const el = document.createElement('div');
     el.className = 'fila-hist-item' + (i.deu_certo ? '' : ' falhou');
     const img = (i.arquivos || []).find((a) => /\.(png|jpe?g|webp|gif)$/i.test(a.nome || ''));
+    const vid = !img && (i.arquivos || []).find((a) => /\.(mp4|webm|mov|m4v)$/i.test(a.nome || ''));
     el.innerHTML =
-      (img ? '<img class="fila-hist-mini" loading="lazy" alt="">' : '<div class="fila-hist-mini vazia"></div>') +
+      (img ? '<img class="fila-hist-mini" loading="lazy" alt="">'
+        : vid ? '<video class="fila-hist-mini" muted playsinline preload="metadata" aria-hidden="true"></video>'
+        : '<div class="fila-hist-mini vazia"></div>') +
       '<div class="fila-hist-txt">' +
         '<p class="fila-hist-titulo"></p>' +
         '<p class="fila-hist-sub"></p>' +
       '</div>' +
       '<span class="fila-de' + (i.de === 'fora' ? ' fora' : '') + '"></span>';
     if (img) el.querySelector('img').src = img.url;
+    if (vid) el.querySelector('video').src = vid.url + '#t=0.1';
     el.querySelector('.fila-hist-titulo').textContent =
       (i.deu_certo ? '' : '⚠️ ') + (i.titulo || 'trabalho');
     el.querySelector('.fila-hist-sub').textContent =
@@ -167,6 +269,10 @@
   function ligarBotoes() {
     if (ligarBotoes.feito) return;
     ligarBotoes.feito = true;
+    $('#filaDownParar').addEventListener('click', async () => {
+      try { await fetch('/api/ias/parar', { method: 'POST' }); } catch (e) { /* o proximo pulso mostra o estado */ }
+      puxarDown();
+    });
     $('#filaLimpar').addEventListener('click', pedirLimpar);
     $('#filaLimparNao').addEventListener('click', () => {
       $('#filaLimparConfirma').hidden = true;
@@ -179,14 +285,15 @@
     ligarBotoes();
     puxar();
     puxarHist();
-    if (!tic) tic = setInterval(() => { puxar(); puxarHist(); }, 3000);
+    puxarDown();
+    if (!tic) tic = setInterval(() => { puxar(); puxarHist(); puxarDown(); }, 2000);
   }
   function fechar() {
     if (tic) { clearInterval(tic); tic = null; }
   }
 
   // o contador da barra lateral continua vivo com a tela fechada, mas devagar: e so um numero
-  setInterval(() => { if (!tic) puxar(); }, 15000);
+  setInterval(() => { if (!tic) { puxar(); puxarDown(); } }, 15000);
 
   window.FILA = { abrir, fechar, puxar, puxarHist };
 })();

@@ -42,6 +42,42 @@
     console.log(msg);
   }
 
+  // ------------------------------------------------------------------ instalar o VoiceStudio
+  let tInstal = null, tMotor = null;
+  function pintarInstalacao(i) {
+    if (!i || i.fase === 'parado') return false;
+    E.instalMsg = true;
+    const pct = i.fase === 'baixando' && i.total ? ` · ${Math.floor((i.baixados / i.total) * 100)}%` : '';
+    const mb = i.fase === 'baixando' && i.total ? ` (${Math.round(i.baixados / 1048576)} de ${Math.round(i.total / 1048576)} MB)` : '';
+    $('#vozOffDetalhe').textContent = (i.mensagem || '') + mb + pct;
+    return ['procurando', 'baixando', 'conferindo', 'instalando'].includes(i.fase);
+  }
+  async function acompanharInstalacao() {
+    clearTimeout(tInstal);
+    let i;
+    try { i = await pedir('/api/voz/instalar-app'); } catch (e) { return; }
+    const andando = pintarInstalacao(i);
+    $('#vozInstalar').disabled = andando;
+    if (andando) { tInstal = setTimeout(acompanharInstalacao, 1500); return; }
+    if (i.fase === 'pronto') esperarMotor();
+  }
+  function esperarMotor(n = 0) {
+    clearTimeout(tMotor);
+    if (n > 240) return;
+    tMotor = setTimeout(async () => {
+      let est;
+      try { est = await pedir('/api/voz/estado'); } catch (e) { return esperarMotor(n + 1); }
+      if (est.no_ar) { E.instalMsg = false; checar(); return; }
+      if (est.motor_instalado) {
+        $('#vozLigar').hidden = false;
+        $('#vozInstalar').hidden = true;
+        $('#vozOffDetalhe').textContent = 'O motor de voz está pronto. Clique em Ligar a voz local.';
+        return;
+      }
+      esperarMotor(n + 1);
+    }, 10000);
+  }
+
   // ------------------------------------------------------------------ abrir a tela
   async function abrir() {
     montarUmaVez();
@@ -61,10 +97,20 @@
     E.estado = est;
     E.vozes = est.vozes || [];
     const ligado = !!est.no_ar;
+    const semMotor = est.motor_instalado === false;
+    $('#vozInstalar').hidden = ligado || !semMotor;
+    $('#vozLigar').hidden = !ligado && semMotor;
+    if (!ligado && est.instalacao && est.instalacao.fase !== 'parado') {
+      const andando = pintarInstalacao(est.instalacao);
+      $('#vozInstalar').disabled = andando;
+      if (andando) acompanharInstalacao();
+      else if (est.instalacao.fase === 'pronto') esperarMotor();
+    }
     $('#vozOff').hidden = ligado;
     $('#vozTela').hidden = false;
     $('#vVoz').classList.toggle('voz-desligada', !ligado);
     if (!ligado) {
+      if (E.instalMsg) return;
       $('#vozOffDetalhe').textContent = est.detalhe
         ? 'Detalhe técnico: ' + String(est.detalhe).slice(0, 180)
         : 'Procurei em ' + (est.url || 'http://127.0.0.1:3900') + ' e não houve resposta.';
@@ -138,6 +184,18 @@
     if (window.ic) $$('#vVoz [data-ic]').forEach((el) => { if (!el.firstElementChild) el.innerHTML = window.ic(el.dataset.ic); });
 
     $('#vozReprocurar').addEventListener('click', checar);
+    $('#vozInstalar').addEventListener('click', async () => {
+      $('#vozInstalar').disabled = true;
+      E.instalMsg = true;
+      try {
+        const r = await pedir('/api/voz/instalar-app', {});
+        pintarInstalacao(r);
+        acompanharInstalacao();
+      } catch (e) {
+        $('#vozOffDetalhe').textContent = String(e.message || e).slice(0, 250);
+        $('#vozInstalar').disabled = false;
+      }
+    });
     $('#vozLigar').addEventListener('click', async () => {
       const bt = $('#vozLigar');
       bt.disabled = true;
