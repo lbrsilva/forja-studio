@@ -297,3 +297,23 @@
   padding-right: 42px;
 }
 .cx-hora-add select { padding-right: 32px; background-position: right 9px center; }
+
+/* análise automática e espaçamento geral */
+.canais { padding: 24px 26px 90px; max-width: 1280px; }
+.canais .cx-card { padding: 20px 22px; margin-bottom: 16px; }
+.canais .cx-grid2 { gap: 16px; }
+.canais .cx-grid3 { gap: 16px; }
+.cx-coleta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+.cx-coleta-plat { display: flex; align-items: center; gap: 8px; min-width: 0; background: var(--fundo-2);
+  border: 1px solid var(--borda); border-radius: var(--raio-c); padding: 9px 11px; font-size: 12.5px; }
+.cx-coleta-plat i { width: 9px; height: 9px; border-radius: 50%; background: var(--i, var(--acento)); flex: none; }
+.cx-coleta-plat b { white-space: nowrap; }
+.cx-coleta-plat span { color: var(--fraco); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-coleta-plat.ok { border-color: color-mix(in srgb, var(--cx-good) 40%, var(--borda)); }
+.cx-coleta-plat.erro { border-color: color-mix(in srgb, var(--cx-crit) 50%, var(--borda)); }
+.cx-coleta-plat.erro span { color: var(--cx-crit); white-space: normal; }
+.cx-coleta-plat.pendente { opacity: .85; }
+.cx-fallback { margin-top: 10px; border: 1px solid var(--borda); border-radius: var(--raio);
+  padding: 12px 14px; background: var(--cx-surface); }
+.cx-fallback summary { cursor: pointer; color: var(--fraco); font-size: 13px; font-weight: 600; }
+.cx-fallback[open] summary { margin-bottom: 10px; }

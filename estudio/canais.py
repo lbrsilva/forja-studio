@@ -123,7 +123,7 @@ def _canal_padrao(nome, **extra):
             "aprovacao_obrigatoria": True,
             "hashtags": [],
         },
-        "analytics": {"moeda": "BRL", "meta_receita": 0},
+        "analytics": {"moeda": "BRL", "meta_receita": 0, "automatico": True},
     }
     c.update(extra)
     return c

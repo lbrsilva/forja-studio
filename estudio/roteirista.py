@@ -107,6 +107,12 @@ REGRAS DE SAÍDA:
 - A primeira cena é o gancho: prende nos primeiros 3 segundos, sem "olá" e sem apresentação.
 - Cada cena tem uma descrição visual EM INGLÊS, de um objeto, lugar ou pessoa EM AÇÃO.
   Nada de texto escrito dentro da imagem; nada de marca d'água.
+- A cena é sobre a IDEIA e o que está sendo contado, não sobre o rosto do personagem.
+  Varie enquadramentos: plano aberto, objeto, detalhe, silhueta, ação e lugar. Só use
+  close no personagem quando ele for o foco emocional da cena.
+- O estilo narrativo vem do tom e da identidade visual do canal (novela, filme,
+  documentário, narrativa). Use esse estilo para variar os planos, sem virar uma série
+  de retratos iguais.
 %s
 - A legenda do post deve ter 1 a 2 frases e um convite claro no fim.
 - Hashtags curtas, sem espaço, começando com #.
@@ -460,6 +466,54 @@ def _contexto_em_linhas(txt):
     for k in ("regras", "nao_fazer", "referencias", "hashtags", "personagens"):
         if k in saida:
             saida[k] = saida[k][:20]
+    return saida
+
+
+async def gerar_personagens(pedir_texto, canal, contexto, existentes=None):
+    nomes = [str((p or {}).get("nome") or "").strip() for p in (existentes or []) if isinstance(p, dict)]
+    nomes = [n for n in nomes if n]
+    pedido = """Você cria personagens para um canal de vídeos curtos.
+
+Canal: %s
+Tema: %s
+Público: %s
+Tom/estilo: %s
+Identidade visual: %s
+Personagens que já existem (NÃO repita estes nomes): %s
+
+Crie de 1 a 3 personagens NOVOS que combinem com o canal e conversem com os existentes.
+Cada um precisa de:
+- nome curto;
+- descrição de quem é e como fala;
+- aparência visual EM INGLÊS, concreta o suficiente para repetir nas imagens.
+Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdown:
+[{"nome":"...","descricao":"...","visual":"english appearance"}]
+""" % (canal.get("nome") or "canal", contexto.get("tema") or "", contexto.get("publico") or "",
+       contexto.get("tom") or "", contexto.get("identidade_visual") or "", ", ".join(nomes) or "(nenhum)")
+    res = await pedir_texto("contexto", pedido)
+    bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
+    if isinstance(bruto, dict):
+        bruto = bruto.get("personagens") or []
+    if not isinstance(bruto, list):
+        raise ValueError("A IA não devolveu personagens. Tente de novo.")
+    vistos = {n.lower() for n in nomes}
+    saida = []
+    for p in bruto:
+        if isinstance(p, str):
+            p = {"nome": p}
+        if not isinstance(p, dict):
+            continue
+        nome = _limpar(p.get("nome") or p.get("name"), 60)
+        if not nome or nome.lower() in vistos:
+            continue
+        vistos.add(nome.lower())
+        saida.append({"nome": nome,
+                      "descricao": _limpar(p.get("descricao") or p.get("description"), 800),
+                      "visual": _limpar(p.get("visual") or p.get("appearance"), 800)})
+        if len(saida) >= 3:
+            break
+    if not saida:
+        raise ValueError("A IA não criou personagens novos. Tente de novo.")
     return saida
 
 

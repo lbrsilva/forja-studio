@@ -418,12 +418,8 @@ async def produzir(producao, canal, callbacks):
                 producao["arquivos"]["videos"][f["id"]] = arquivo_por_chave[chave]
         _etapa(producao, "montagem", "ok", len(distintos), len(distintos))
         producao["fim"] = int(time.time())
-        if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)):
-            producao["estado"] = "aguardando_aprovacao"
-            _log(producao, "vídeo montado. Aguardando aprovação para publicar.", callbacks)
-        else:
-            producao["estado"] = "concluido"
-            _log(producao, "vídeo pronto", callbacks)
+        producao["estado"] = "aguardando_aprovacao"
+        _log(producao, "vídeo montado. Aguardando aprovação para publicar.", callbacks)
     except Exception as exc:
         producao["estado"] = "erro"
         producao["erro"] = str(exc)[:600]

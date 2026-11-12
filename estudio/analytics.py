@@ -156,6 +156,7 @@ def _registro(base):
         "watch_time": float(base.get("watch_time") or 0),
         "receita": float(base.get("receita") or 0),
         "seguidores": float(base.get("seguidores") or 0),
+        "tipo": base.get("tipo") or "video",
         "atualizado": int(time.time()),
     }
 
@@ -233,16 +234,28 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
     agora = int(time.time())
     corte = agora - max(1, int(dias)) * 86400
     janela = [v for v in videos if int(v.get("publicado_em") or 0) >= corte]
-    base = janela or videos
+    # Linhas diárias do YouTube carregam o total do canal. As linhas por vídeo servem
+    # para o topo e para o melhor horário, mas não entram na soma para não contar duas vezes.
+    # Cada plataforma escolhe a fonte que não duplica: o YouTube tem linhas diárias do
+    # canal (total) e linhas por vídeo (topo); TikTok/Instagram só têm linhas por vídeo.
+    base_total = []
+    for plataforma in sorted({v.get("plataforma") for v in janela}):
+        do_p = [v for v in janela if v.get("plataforma") == plataforma]
+        com_dia = [v for v in do_p if v.get("tipo") not in ("video", "seguidores")]
+        base_total.extend(com_dia or [v for v in do_p if v.get("tipo") != "seguidores"] or do_p)
+    if not base_total:
+        base_total = janela
+    base_hora = [v for v in janela if v.get("tipo") == "video"] or base_total
+    base_top = [v for v in janela if v.get("tipo") == "video"] or janela
     total = {
-        "views": sum(float(v.get("views") or 0) for v in janela),
-        "likes": sum(float(v.get("likes") or 0) for v in janela),
-        "comments": sum(float(v.get("comments") or 0) for v in janela),
-        "shares": sum(float(v.get("shares") or 0) for v in janela),
-        "watch_time": sum(float(v.get("watch_time") or 0) for v in janela),
-        "receita": sum(float(v.get("receita") or 0) for v in janela),
+        "views": sum(float(v.get("views") or 0) for v in base_total),
+        "likes": sum(float(v.get("likes") or 0) for v in base_total),
+        "comments": sum(float(v.get("comments") or 0) for v in base_total),
+        "shares": sum(float(v.get("shares") or 0) for v in base_total),
+        "watch_time": sum(float(v.get("watch_time") or 0) for v in base_total),
+        "receita": sum(float(v.get("receita") or 0) for v in base_total),
         "seguidores": sum(float(v.get("seguidores") or 0) for v in janela),
-        "videos": len(janela),
+        "videos": len([v for v in janela if v.get("tipo") == "video"]) or len(base_total),
     }
     total["engagement"] = round((total["likes"] + total["comments"] + total["shares"]) / total["views"], 4) \
         if total["views"] else 0
@@ -252,13 +265,13 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
         dia = datetime.fromtimestamp(agora - i * 86400).date()
         ini = int(datetime.combine(dia, datetime.min.time()).timestamp())
         fim = ini + 86400
-        do_dia = [v for v in janela if ini <= int(v.get("publicado_em") or 0) < fim]
+        do_dia = [v for v in base_total if ini <= int(v.get("publicado_em") or 0) < fim]
         serie.append({"dia": dia.isoformat(), "rotulo": "%d/%s" % (dia.day, MESES[dia.month - 1]),
                       "views": round(sum(float(v.get("views") or 0) for v in do_dia)),
                       "receita": round(sum(float(v.get("receita") or 0) for v in do_dia), 2)})
 
     plataformas = {}
-    for v in janela:
+    for v in base_total:
         p = v.get("plataforma") or "youtube"
         x = plataformas.setdefault(p, {"views": 0, "receita": 0, "videos": 0, "likes": 0,
                                        "comments": 0, "shares": 0, "seguidores": 0})
@@ -274,19 +287,19 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
 
     horas = []
     for h in range(24):
-        do_h = [v for v in base if _hora_local(v.get("publicado_em")) == h]
+        do_h = [v for v in base_hora if _hora_local(v.get("publicado_em")) == h]
         horas.append({"hora": h, "videos": len(do_h),
                       "views": round(sum(float(v.get("views") or 0) for v in do_h)),
                       "media": round(sum(float(v.get("views") or 0) for v in do_h) / len(do_h)) if do_h else 0})
 
     dias_semana = []
     for w in range(7):
-        do_d = [v for v in base if _dia_semana(v.get("publicado_em")) == w]
+        do_d = [v for v in base_hora if _dia_semana(v.get("publicado_em")) == w]
         dias_semana.append({"dia": DIAS_SEMANA[w], "videos": len(do_d),
                             "views": round(sum(float(v.get("views") or 0) for v in do_d)),
                             "media": round(sum(float(v.get("views") or 0) for v in do_d) / len(do_d)) if do_d else 0})
 
-    top = sorted(janela or videos, key=lambda v: float(v.get("views") or 0), reverse=True)[:10]
+    top = sorted(base_top, key=lambda v: float(v.get("views") or 0), reverse=True)[:10]
     top = [{"titulo": v.get("titulo") or "(sem título)", "plataforma": v.get("plataforma"),
             "views": round(float(v.get("views") or 0)), "receita": round(float(v.get("receita") or 0), 2),
             "url": v.get("url"), "data": int(v.get("publicado_em") or 0)} for v in top]
@@ -298,7 +311,7 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
         sugestoes = list(((canal or {}).get("publicacao") or {}).get("horarios") or ["06:00", "12:00", "18:00"])[:3]
 
     meses = {}
-    for v in videos:
+    for v in base_total:
         ts = int(v.get("publicado_em") or 0)
         if not ts:
             continue
@@ -331,4 +344,5 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
         "melhores_horarios": sugestoes,
         "serie_meses": serie_meses,
         "total_historico": len(videos),
+        "coleta": d.get("coleta") or {},
     }

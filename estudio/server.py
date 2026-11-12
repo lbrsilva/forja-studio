@@ -80,6 +80,7 @@ import roteirista  # noqa: E402  (briefing -> plano de cenas com IA local)
 import esteira  # noqa: E402  (plano -> voz, imagens e montagem por formato)
 import publicacao  # noqa: E402  (YouTube, TikTok e Instagram)
 import analytics  # noqa: E402  (retorno por canal, plataforma e horário)
+import analytics_plataformas  # noqa: E402  (coleta automática nas plataformas)
 
 # o registro do Windows às vezes diz que .js é text/plain; a interface precisa dos tipos certos
 for _tipo, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("font/woff2", ".woff2"),
@@ -5382,6 +5383,25 @@ async def api_canais_sugerir(req):
     return web.json_response({"texto": texto})
 
 
+async def api_canal_personagens_gerar(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    ctx = canais.contexto(cid)
+    atuais = ctx.get("personagens") or []
+    try:
+        novos = await roteirista.gerar_personagens(
+            _pedir_texto, canal, ctx, canais.personagens_disponiveis(cid))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except Exception as e:
+        raise web.HTTPBadGateway(text="A IA não conseguiu criar personagens: " + str(e)[:300])
+    nomes = {str(p.get("nome") or "").strip().lower() for p in atuais}
+    adicionar = [p for p in novos if p["nome"].lower() not in nomes]
+    contexto = canais.gravar_contexto(cid, {"personagens": atuais + adicionar})
+    return web.json_response({"novos": adicionar, "personagens": canais.personagens_disponiveis(cid),
+                              "contexto": contexto})
+
+
 async def api_canal_contexto_ia(req):
     """Gera o contexto inteiro ou melhora um campo já digitado. Não grava: a tela revisa."""
     cid = req.match_info["cid"]
@@ -5692,8 +5712,7 @@ async def api_canal_agenda(req):
     if not pid:
         raise web.HTTPBadRequest(text="Escolha a produção.")
     p = canais.ler_producao(cid, pid)
-    if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)) and \
-            p.get("estado") not in ("aprovado", "publicado"):
+    if p.get("estado") not in ("aprovado", "publicado"):
         raise web.HTTPBadRequest(text="Aprove o vídeo antes de agendar ou publicar.")
     fid = str(b.get("formato_id") or "")
     fmt = canais.formato_por_id(canal, fid)
@@ -5729,8 +5748,7 @@ async def _executar_agendamento(aid):
             canais.agenda_atualizar(aid, {"estado": "erro", "erro": "Canal não existe mais."})
             return
         producao = canais.ler_producao(a["canal_id"], a["producao_id"])
-        if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)) and \
-                producao.get("estado") not in ("aprovado", "publicado"):
+        if producao.get("estado") not in ("aprovado", "publicado"):
             canais.agenda_atualizar(aid, {"estado": "aguardando_aprovacao",
                                           "erro": "Aprove o vídeo antes de publicar."})
             return
@@ -5793,8 +5811,7 @@ async def api_canal_agenda_item(req):
     if b.get("publicar_agora"):
         canal = _canal_ou_erro(cid)
         p = canais.ler_producao(cid, a["producao_id"])
-        if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)) and \
-                p.get("estado") not in ("aprovado", "publicado"):
+        if p.get("estado") not in ("aprovado", "publicado"):
             raise web.HTTPBadRequest(text="Aprove o vídeo antes de publicar.")
         canais.agenda_atualizar(aid, {"quando": int(time.time()), "estado": "agendado"})
         em_segundo_plano(_executar_agendamento(aid))
@@ -5836,6 +5853,67 @@ async def api_canal_analytics(req):
     return web.json_response(r)
 
 
+async def api_canal_analytics_coletar(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    try:
+        b = await req.json()
+    except ValueError:
+        b = {}
+    try:
+        dias = int(b.get("dias") or 30)
+    except (TypeError, ValueError):
+        dias = 30
+    try:
+        r = await analytics_plataformas.coletar(canal, canais.pasta_canal(cid), dias)
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui coletar os números: " + str(exc)[:300])
+    return web.json_response({"resultado": r,
+                              "dashboard": analytics.dashboard(cid, canais.pasta_canal(cid), dias, canal)})
+
+
+COLETANDO = set()
+
+
+async def vigia_analytics():
+    """Atualiza os números de cada canal conectado a cada 30 minutos."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            for c in canais.listar():
+                cid = c["id"]
+                if cid in COLETANDO:
+                    continue
+                if not ((c.get("analytics") or {}).get("automatico", True)):
+                    continue
+                cred = canais.credenciais(cid)
+                if not any(cred.get(p) for p in ("youtube", "tiktok", "instagram")):
+                    continue
+                d = analytics.carregar(cid, canais.pasta_canal(cid))
+                coleta = d.get("coleta") or {}
+                agora = int(time.time())
+                precisa = any(cred.get(p) and
+                              (not coleta.get(p) or agora - int(coleta[p].get("quando") or 0) > 1800)
+                              for p in ("youtube", "tiktok", "instagram"))
+                if not precisa:
+                    continue
+                COLETANDO.add(cid)
+
+                async def rodar(canal=c, cid=cid):
+                    try:
+                        r = await analytics_plataformas.coletar(canal, canais.pasta_canal(cid))
+                        print("[estudio] análise automática de %s: %r" % (canal.get("nome"), r.get("resultados")),
+                              flush=True)
+                    except Exception as exc:
+                        print("[estudio] análise automática de %s falhou: %r" % (cid, exc), flush=True)
+                    finally:
+                        COLETANDO.discard(cid)
+                em_segundo_plano(rodar())
+        except Exception as exc:
+            print("[estudio] vigia de análise: %r" % exc, flush=True)
+        await asyncio.sleep(1800)
+
+
 async def vigia_publicacao():
     """Publica o que venceu, mesmo que ninguém esteja com a tela aberta. Roda a cada 30 s."""
     while True:
@@ -5854,6 +5932,7 @@ async def ciclo(app):
                asyncio.create_task(reparar_ao_iniciar()), asyncio.create_task(TEXTO.vigiar()),
                asyncio.create_task(ligar_texto_ao_iniciar()),
                asyncio.create_task(vigia_publicacao()),
+               asyncio.create_task(vigia_analytics()),
                asyncio.create_task(renovar_licenca_de_vez_em_quando())]  # "sempre ligada": ~20 s depois, em segundo plano
     yield
     for t in tarefas:
@@ -5946,6 +6025,7 @@ app.add_routes([
     web.delete("/api/canais/{cid}", api_canal),
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
     web.post("/api/canais/{cid}/contexto/ia", api_canal_contexto_ia),
+    web.post("/api/canais/{cid}/personagens/gerar", api_canal_personagens_gerar),
     web.post("/api/canais/{cid}/plano", api_canal_plano),
     web.post("/api/canais/{cid}/produzir", api_canal_produzir),
     web.get("/api/canais/{cid}/producoes", api_canal_producoes),
@@ -5960,6 +6040,7 @@ app.add_routes([
     web.post("/api/canais/{cid}/credenciais", api_canal_credenciais),
     web.get("/api/canais/{cid}/analytics", api_canal_analytics),
     web.post("/api/canais/{cid}/analytics", api_canal_analytics),
+    web.post("/api/canais/{cid}/analytics/coletar", api_canal_analytics_coletar),
     web.get("/", estatico), web.get("/{caminho:.+}", estatico),
 ])
 

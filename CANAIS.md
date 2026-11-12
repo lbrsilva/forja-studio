@@ -19,11 +19,14 @@ Rota nova: `#/canais` (menu **Canais**).
   Produzir, marque os que quer manter; sem marcar, a IA escolhe e repete a aparência.
 - **Inspiração**: cole a URL de um vídeo do YouTube ou TikTok e clique em **Ler referência**.
   O roteiro usa título e autor como referência de ritmo e clima, sem baixar nem copiar o vídeo.
-- **Aprovação**: com "Exigir aprovação antes de publicar" ligado, o vídeo para em
-  **Aguardando aprovação**. Você assiste, confere legenda e imagens e então escolhe
-  **Aprovar e limpar arquivos**, **Agendar** ou **Publicar agora**. Antes da aprovação,
-  a agenda recusa o vídeo. A aprovação apaga imagens, vozes por cena e temporários;
-  ficam só os vídeos finais, os personagens e os metadados.
+- **Análise**: o estúdio lê views, receita, seguidores e engajamento direto das contas
+  conectadas, atualiza sozinho a cada 30 minutos e também pelo botão **Atualizar agora**.
+  O CSV/JSON manual fica como reserva quando uma plataforma não liberar a permissão.
+- **Aprovação**: o vídeo sempre para em **Aguardando aprovação**. Você assiste, confere
+  legenda e imagens e então escolhe **Aprovar e limpar arquivos**, **Agendar** ou
+  **Publicar agora**. Antes da aprovação, a agenda recusa o vídeo. A aprovação apaga
+  imagens, vozes por cena e temporários; ficam só os vídeos finais, os personagens e os
+  metadados.
 - **Contexto com IA**: em Ajustes, **Gerar contexto com IA** preenche tema, público, tom,
   identidade visual, personagens, regras, referências, chamada e hashtags a partir do nome
   e da descrição. Cada campo tem **Melhorar** para reescrever só ele. No canal novo,
@@ -70,8 +73,9 @@ Precisa de um app OAuth no Google Cloud com a YouTube Data API v3 habilitada:
 
 1. Crie credenciais OAuth do tipo "App para computador".
 2. Autorize a conta do canal com os escopos
-   `https://www.googleapis.com/auth/youtube.upload` e
-   `https://www.googleapis.com/auth/youtube.readonly`.
+   `https://www.googleapis.com/auth/youtube.upload`,
+   `https://www.googleapis.com/auth/youtube.readonly` e
+   `https://www.googleapis.com/auth/yt-analytics.readonly`.
 3. Cole em Ajustes: `client_id`, `client_secret` e `refresh_token`.
 
 O agendamento usa `publishAt` do YouTube: o vídeo sobe privado e o YouTube publica na hora
@@ -82,7 +86,7 @@ marcada. Depois de publicado, o link aparece na Agenda.
 Precisa do TikTok Content Posting API com `video.upload` e `video.publish`:
 
 1. Crie um app em developers.tiktok.com.
-2. Autorize a conta e guarde o `access_token`.
+2. Autorize a conta com `video.upload`, `video.publish`, `user.info.basic` e `video.list`.
 3. Cole em Ajustes o `access_token` e a privacidade (`PUBLIC_TO_EVERYONE` ou `SELF_ONLY`).
 
 Enquanto o app não passa pela auditoria do TikTok, publique com `SELF_ONLY`. O TikTok não
@@ -93,7 +97,8 @@ tem agendamento nativo nesta API: o estúdio guarda a hora e envia no momento ce
 Precisa de uma conta profissional do Instagram ligada a uma Página do Facebook e do
 Instagram Graph API:
 
-1. Crie um app no Meta for Developers e pegue um token com `instagram_content_publish`.
+1. Crie um app no Meta for Developers e pegue um token com `instagram_content_publish`
+   e `instagram_manage_insights`.
 2. Descubra o `ig_user_id` da conta.
 3. O Graph API exige uma URL pública do vídeo. Configure `video_base_url` apontando para
    uma pasta servida por link público (túnel, CDN, servidor próprio). O arquivo final
@@ -146,7 +151,8 @@ Todas as rotas abaixo ficam em `/api/canais`.
 - A publicação só roda enquanto o estúdio está aberto. Computador desligado não publica.
 - A geração usa a mesma placa da ComfyUI e a mesma voz do VoiceStudio. Duas produções
   podem ficar na fila, mas a placa e a voz trabalham uma por vez.
-- A análise não puxa números sozinha: ela lê o CSV/JSON exportado por cada plataforma
-  e registra o que foi publicado pelo próprio estúdio. Coleta automática exigiria
-  permissões de analytics em cada app, que são separadas das permissões de publicação.
+- A análise automática depende da permissão de análise em cada app. Sem ela, a plataforma
+  mostra o motivo na aba Análise e o CSV/JSON manual continua funcionando.
+- TikTok não devolve receita orgânica e o Instagram também não: a receita aparece quando a
+  plataforma entrega esse número (YouTube monetizado) ou quando você importa um CSV.
 - Instagram exige URL pública do vídeo. Não existe publicação local sem isso.

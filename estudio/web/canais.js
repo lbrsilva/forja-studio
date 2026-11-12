@@ -34,7 +34,7 @@
     concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
   const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70' };
   const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
-  const ABAS = [['visao', 'Visão geral'], ['produzir', 'Produzir'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['ajustes', 'Ajustes']];
+  const ABAS = [['visao', 'Visão geral'], ['ajustes', 'Ajustes'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['produzir', 'Produzir']];
   const HORAS = ['06:00', '08:00', '09:00', '11:00', '12:00', '15:00', '18:00', '19:00', '20:00', '21:00'];
   const CATEGORIAS_YT = [
     ['1', 'Filmes e animação'], ['2', 'Automóveis'], ['10', 'Música'], ['15', 'Animais'],
@@ -68,6 +68,7 @@
     iniciado: false, canais: [], atual: null, dados: null, aba: 'visao',
     plano: null, briefing: '', producao: null, poll: null, analise: null,
     analiseDias: 30, analiseCarregada: false, vozes: null, presets: null, charts: {}, erros: 0,
+    personagensNovos: [], agendarAgora: false, abaFixa: false,
   };
 
   async function pedir(url, corpo, metodo) {
@@ -94,11 +95,17 @@
   async function abrir() {
     montar();
     const sub = (location.hash.replace(/^#\/?/, '').split('/')[1] || '').trim();
-    if (ABAS.some(([k]) => k === sub)) S.aba = sub;
+    if (ABAS.some(([k]) => k === sub)) { S.aba = sub; S.abaFixa = true; }
     if (!S.presets) carregarPresets();
     if (!S.canais.length) await carregarCanais();
     else if (S.atual) { await carregarCanal(false); render(); }
     else render();
+    if (!S.abaFixa && S.dados) {
+      S.aba = (S.dados.contexto && S.dados.contexto.tema) ? 'visao' : 'ajustes';
+      S.abaFixa = true;
+      render();
+    }
+    if (S.aba === 'analise') { S.analiseCarregada = false; await carregarAnalise(true); }
   }
 
   async function carregarPresets() {
@@ -145,7 +152,7 @@
     S.analiseCarregada = true;
     try {
       S.analise = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/analytics?dias=' + S.analiseDias);
-      if (renderizar && (S.aba === 'analise' || S.aba === 'visao')) render();
+      if (renderizar || S.aba === 'analise' || S.aba === 'visao') render();
     } catch (e) {
       S.analise = null;
       if (renderizar && S.aba === 'analise') mostrar('Não consegui ler a análise: ' + e.message, 'erro');
@@ -230,8 +237,7 @@
     const prods = (S.dados.producoes || []);
     if (!prods.length) return '<div class="cx-vazio"><b>Nenhum vídeo produzido neste canal</b>Use a aba Produzir para gerar o primeiro roteiro e montar o vídeo.</div>';
     return '<div class="cx-lista">' + prods.slice(0, 12).map((p) => {
-      const exigeAprov = ((S.dados && S.dados.publicacao) || {}).aprovacao_obrigatoria !== false;
-      const podeAgendar = (p.estado === 'aprovado' || (!exigeAprov && p.estado === 'concluido')) &&
+      const podeAgendar = p.estado === 'aprovado' &&
         p.arquivos && Object.keys(p.arquivos.videos || {}).length;
       return `<div class="cx-prod ${esc(p.estado || '')}">
         <div><b>${esc(p.titulo || p.id)}</b>
@@ -325,8 +331,12 @@
             <span class="cx-dica">Sem marcar = a IA escolhe e repete a aparência</span></div>
             <div class="cx-personagens-uso">${disponiveis.map((p) =>
               `<label class="cx-check cx-pill" title="${esc(p.descricao || p.origem || '')}">
-                <input type="checkbox" data-personagem="${esc(p.nome)}">${esc(p.nome)}</label>`).join('')
+                <input type="checkbox" data-personagem="${esc(p.nome)}" ${(S.personagensNovos || []).includes(p.nome) ? 'checked' : ''}>${esc(p.nome)}</label>`).join('')
               || '<span class="fraco">Nenhum personagem ainda. A IA cria no roteiro e os próximos vídeos podem reaproveitar.</span>'}</div>
+            <div class="cx-acoes" style="justify-content:flex-start">
+              <button type="button" class="bt-sec mini" data-acao="gerar-personagens">${ic('brilho')}Gerar personagens com IA</button>
+              <span class="cx-dica">Cria novos a partir do que já existe no canal.</span>
+            </div>
           </div>
           <div class="cx-campo"><div class="cx-rotulo"><label for="cxInspiracaoUrl">Vídeo de inspiração</label>
             <button type="button" class="cx-ia" data-acao="ler-inspiracao">${ic('brilho')}Ler referência</button></div>
@@ -407,9 +417,8 @@
     const videos = (p.arquivos && p.arquivos.videos) || {};
     const plano = p.plano || {};
     const urlVideo = (fid) => `/api/canais/${encodeURIComponent(S.atual)}/producoes/${encodeURIComponent(p.id)}/video/${encodeURIComponent(fid)}`;
-    const exigeAprov = ((S.dados && S.dados.publicacao) || {}).aprovacao_obrigatoria !== false;
-    const revisao = est === 'aguardando_aprovacao' || (exigeAprov && est === 'concluido');
-    const podePublicar = est === 'aprovado' || (!exigeAprov && est === 'concluido');
+    const revisao = est === 'aguardando_aprovacao' || est === 'concluido';
+    const podePublicar = est === 'aprovado';
     return `<div class="cx-card">
       <div class="cx-row"><h2 style="margin:0">${esc(p.titulo || 'Produção')}</h2>${seloEstado(est)}
         <span class="fraco">${p.progresso || 0}%</span>
@@ -475,29 +484,52 @@
   }
 
   // ------------------------------------------------------------------ análise
+  function statusColeta(a) {
+    const coleta = (a && a.coleta) || {};
+    return Object.keys(Rotulo).map((p) => {
+      const cfg = (S.dados.credenciais || {})[p] || {};
+      const c = coleta[p] || {};
+      let cls = 'pendente', txt = 'ainda não coletado';
+      if (!cfg.configurado) { txt = 'conta não conectada'; }
+      else if (c.erro) { cls = 'erro'; txt = c.erro; }
+      else if (c.quando) { cls = 'ok'; txt = 'atualizado ' + dataHora(c.quando) + (c.novos ? ' · ' + c.novos + ' itens' : ''); }
+      return `<div class="cx-coleta-plat ${cls}"><i style="--i:${Cores[p]}"></i>
+        <b>${esc(Rotulo[p])}</b><span>${esc(txt)}</span></div>`;
+    }).join('');
+  }
+
+  function cartaoColeta(a) {
+    return `<div class="cx-card cx-coleta-card">
+      <div class="cx-card-cab"><div><h2>Análise automática</h2>
+        <p class="fraco">O estúdio lê views, receita, seguidores e engajamento direto das contas conectadas. Atualiza sozinho a cada 30 minutos.</p></div>
+        <button type="button" class="gerar" data-acao="atualizar-analise">${ic('reusar')}Atualizar agora</button></div>
+      <div class="cx-coleta-grid">${statusColeta(a)}</div>
+    </div>`;
+  }
+
   function telaAnalise() {
     const a = S.analise;
-    if (!a) return '<p class="fraco">Lendo os números do canal…</p>';
-    const t = a.total || {};
     const periodo = [[7, '7 dias'], [30, '30 dias'], [90, '90 dias']];
-    let html = `<div class="cx-row" style="margin-bottom:12px">
+    let html = cartaoColeta(a) + `<div class="cx-row" style="margin-bottom:12px">
       <span class="fraco">Período</span>
       ${periodo.map(([d, r]) => `<button type="button" class="bt-sec mini" data-dias="${d}" ${S.analiseDias === d ? 'aria-pressed="true" style="border-color:var(--acento);color:var(--acento)"' : ''}>${r}</button>`).join('')}
-      <span class="cx-right nota">${a.tem_dados ? 'atualizado ' + dataHora(a.atualizado) : 'sem números importados'}</span></div>`;
+      </div>`;
+    if (!a) return html + '<p class="fraco">Lendo os números do canal…</p>';
+    const t = a.total || {};
     if (!a.tem_dados) {
-      return html + `<div class="cx-vazio"><b>Nenhum número importado ainda</b>
-        Exporte o CSV do YouTube Studio, do TikTok ou do Instagram e cole abaixo. A tela calcula totais,
-        receita, engajamento, melhores horários e os vídeos que puxaram o canal.</div>
-        ${cartaoImportar()}`;
+      return html + `<div class="cx-vazio"><b>Nenhum número ainda</b>
+        Conecte YouTube, TikTok e Instagram em Ajustes. Depois clique em Atualizar agora ou espere a coleta automática.
+        <div class="cx-acoes" style="justify-content:center"><button type="button" class="gerar" data-acao="atualizar-analise">${ic('reusar')}Atualizar agora</button></div></div>
+        <details class="cx-fallback"><summary>Importar CSV/JSON manualmente</summary>${cartaoImportar()}</details>`;
     }
     html += `<div class="cx-kpis">
       <div class="cx-kpi"><div class="k-rotulo">Visualizações</div><div class="k-valor">${nf.format(t.views || 0)}</div>
-        <div class="k-nota">${t.videos || 0} vídeos publicados</div></div>
+        <div class="k-nota">${t.videos || 0} vídeos no período</div></div>
       <div class="cx-kpi destaque"><div class="k-rotulo">Receita</div><div class="k-valor">${money(t.receita)}</div>
         <div class="k-nota">${a.meta_receita ? pct(a.progresso_meta) + ' da meta' : 'defina uma meta em Ajustes'}</div>
         ${a.meta_receita ? `<div class="k-barra"><i style="width:${Math.min(100, (a.progresso_meta || 0) * 100)}%"></i></div>` : ''}</div>
       <div class="cx-kpi"><div class="k-rotulo">Seguidores</div><div class="k-valor">${nf.format(t.seguidores || 0)}</div>
-        <div class="k-nota">novos no período</div></div>
+        <div class="k-nota">ganhos no período</div></div>
       <div class="cx-kpi"><div class="k-rotulo">Engajamento</div><div class="k-valor">${pct(t.engagement)}</div>
         <div class="k-nota">curtidas + comentários + shares / views</div></div>
     </div>`;
@@ -514,13 +546,13 @@
       <div class="cx-card"><h3>Receita por mês</h3>${graficoMeses(a.serie_meses)}</div>
     </div>`;
     html += `<div class="cx-card"><h3>Vídeos que puxaram o canal</h3>${tabelaTop(a.top)}</div>`;
-    html += cartaoImportar();
+    html += `<details class="cx-fallback"><summary>Importar CSV/JSON manualmente</summary>${cartaoImportar()}</details>`;
     return html;
   }
 
   function cartaoImportar() {
-    return `<div class="cx-card cx-importar"><h3>Importar números</h3>
-      <p class="fraco">Cole o CSV exportado da plataforma (YouTube Studio, TikTok Analytics, Instagram Insights) ou um JSON. As colunas podem estar em português ou inglês: data, plataforma, views, likes, comentários, shares, receita, seguidores.</p>
+    return `<div class="cx-card cx-importar"><h3>Importar números manualmente</h3>
+      <p class="fraco">Se alguma plataforma não liberar a análise automática, cole o CSV/JSON dela aqui. As colunas podem estar em português ou inglês: data, plataforma, views, likes, comentários, shares, receita, seguidores.</p>
       <textarea id="cxImportar" placeholder="data,plataforma,titulo,views,likes,comments,shares,receita,seguidores&#10;2026-11-10,youtube,Davi e Golias,12000,450,32,18,12.40,9"></textarea>
       <div class="cx-acoes"><button type="button" class="bt-sec" data-acao="importar">${ic('baixar')}Importar</button></div></div>`;
   }
@@ -715,7 +747,6 @@
           <div class="cx-card-cab"><div><h2>Publicação</h2>
             <p class="fraco">O estúdio publica sozinho no horário, mesmo com esta tela fechada. O computador precisa estar ligado.</p></div></div>
           <div class="cx-check-linha" style="margin-bottom:12px">
-            <label class="cx-check"><input type="checkbox" id="ajAprovacao" ${pub.aprovacao_obrigatoria !== false ? 'checked' : ''}>Exigir aprovação antes de publicar</label>
             <label class="cx-check"><input type="checkbox" id="ajAuto" ${pub.automatico ? 'checked' : ''}>Agendar sozinho depois de aprovar</label>
           </div>
           <div class="cx-grid2">
@@ -740,6 +771,12 @@
             <div class="cx-campo"><label for="ajTagsAgenda">Hashtags da agenda</label>
               <input id="ajTagsAgenda" type="text" value="${esc(((d.publicacao || {}).hashtags || []).join(' '))}" placeholder="#historias #shorts"></div>
           </div>
+        </div>
+
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Análise</h2>
+            <p class="fraco">A coleta usa as mesmas contas conectadas para publicar. Sem a permissão de análise, a plataforma mostra o motivo e você ainda pode importar CSV.</p></div></div>
+          <label class="cx-check"><input type="checkbox" id="ajAnaliseAuto" ${((d.analytics || {}).automatico !== false) ? 'checked' : ''}>Atualizar automaticamente a cada 30 minutos</label>
         </div>
 
         <div class="cx-card">
@@ -1093,6 +1130,37 @@
     }
   }
 
+  async function gerarPersonagens() {
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/gerar', {});
+      S.personagensNovos = (r.novos || []).map((p) => p.nome);
+      await carregarCanal(false);
+      render();
+      mostrar((r.novos || []).length + ' personagem(ns) criado(s) e salvo(s) no canal.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui criar personagens: ' + e.message, 'erro');
+    }
+  }
+
+  async function atualizarAnalise() {
+    const bt = $('[data-acao="atualizar-analise"]');
+    if (bt) bt.disabled = true;
+    mostrar('Coletando números no YouTube, TikTok e Instagram… pode levar alguns segundos.', 'ok');
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/analytics/coletar',
+        { dias: S.analiseDias });
+      S.analise = r.dashboard || S.analise;
+      S.analiseCarregada = true;
+      render();
+      const res = ((r.resultado || {}).resultados) || {};
+      const erros = Object.entries(res).filter(([, v]) => !v.ok && v.erro)
+        .map(([p, v]) => (Rotulo[p] || p) + ': ' + v.erro);
+      mostrar(erros.length ? 'Números atualizados com avisos. ' + erros.join(' · ') : 'Números atualizados.', erros.length ? 'erro' : 'ok');
+    } catch (e) {
+      mostrar('Não consegui coletar: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
   // ================================================================ contexto com IA
   const CAMPOS_IA = {
     tema: '#ajTema', publico: '#ajPublico', tom: '#ajTom', identidade_visual: '#ajVisual',
@@ -1225,12 +1293,13 @@
       formatos,
       publicacao: { ...(d.publicacao || {}),
         automatico: !!($('#ajAuto') || {}).checked,
-        aprovacao_obrigatoria: !!($('#ajAprovacao') || {}).checked,
+        aprovacao_obrigatoria: true,
         horarios: String(($('#ajHorarios') || {}).value || '').split(',').map((x) => x.trim()).filter(Boolean),
         plataformas: $$('[data-pubplat]:checked').map((x) => x.dataset.pubplat),
         visibilidade: ($('#ajVisibilidade') || {}).value || 'public',
         hashtags: tags(($('#ajTagsAgenda') || {}).value || '') },
-      analytics: { ...(d.analytics || {}), meta_receita: Number(($('#ajMeta') || {}).value) || 0 },
+      analytics: { ...(d.analytics || {}), meta_receita: Number(($('#ajMeta') || {}).value) || 0,
+        automatico: !!($('#ajAnaliseAuto') || {}).checked },
     };
   }
 
@@ -1346,6 +1415,8 @@
     if (acao === 'gerar-plano') { await gerarPlano(); return; }
     if (acao === 'produzir') { await produzir(); return; }
     if (acao === 'produzir-direto') { await produzirDireto(); return; }
+    if (acao === 'gerar-personagens') { await gerarPersonagens(); return; }
+    if (acao === 'atualizar-analise') { await atualizarAnalise(); return; }
     if (acao === 'ia-campo') { await melhorarCampo(b); return; }
     if (acao === 'ia-contexto') { await gerarContexto(); return; }
     if (acao === 'sugerir-descricao') { await sugerirDescricao(); return; }
