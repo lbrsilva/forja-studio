@@ -547,6 +547,27 @@
       "evite_para": "Personagem que precisa ficar IDÊNTICO em várias cenas (não aceita fichas de referência: para isso use MiniMax H3 - Referências) e falas longas em português (ainda não testado).",
       "nota_velocidade": 5,
       "nota_qualidade": 4
+    },
+    "latentsync15": {
+      "id": "latentsync15",
+      "aba": "video",
+      "nome": "LatentSync 1.5 (rápido, boca sincronizada)",
+      "categoria": "Pessoa falando",
+      "resumo_curto": "Foto + voz viram vídeo com a boca sincronizada, bem mais leve que o Apresentador",
+      "o_que_faz": "Você manda uma foto de frente e o texto. O estúdio cria a voz com o Chatterbox e o LatentSync 1.5 sincroniza a boca com a fala. A cabeça e o corpo ficam parados: só a boca se mexe. Roda direto no Mac com chip Apple.",
+      "melhor_para": "Apresentador falando para a câmera, recado em vídeo e aula curta, quando o tempo importa mais que o movimento do corpo.",
+      "evite_para": "Cena com movimento, mais de uma pessoa, rosto de perfil, rosto pequeno na foto (ele precisa achar o rosto) e vídeos longos de uma vez.",
+      "tempo_tipico": "Medido num Mac M4 Pro com 48 GB: 5,3 s de fala em 2 min 53 s, já carregando o modelo. A voz do Chatterbox soma de 30 a 60 s.",
+      "limites": "Uma pessoa só, com a foto de frente. O vídeo sai com até 640 px de largura. Modelo de 5 GB mais cerca de 4 GB de bibliotecas, instalados pelo botão do cartão. Por enquanto só em Mac com chip Apple.",
+      "dica_prompt": "Escreva frases curtas terminadas em ponto: o estúdio corta o texto por frase e confere cada pedaço. Use uma foto de frente, com o rosto grande e bem iluminado.",
+      "tags": [
+        "Rápido",
+        "Boca sincronizada",
+        "Voz",
+        "Mac"
+      ],
+      "nota_velocidade": 4,
+      "nota_qualidade": 3
     }
   }
 }

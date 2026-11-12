@@ -5,6 +5,7 @@ Os outros modulos perguntam aqui em vez de testar o sistema cada um do seu jeito
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -102,6 +103,27 @@ def _sysctl(chave):
         return ""
 
 
+def pids_escutando(porta):
+    """PIDs que escutam em `porta` (TCP). No macOS o psutil exige root para listar conexoes; la usa-se o lsof."""
+    if not MAC:
+        try:
+            import psutil
+            return {c.pid for c in psutil.net_connections(kind="tcp")
+                    if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == porta and c.pid}
+        except Exception:
+            pass
+    try:
+        saida = subprocess.run(["/usr/sbin/lsof", "-nP", f"-iTCP:{porta}", "-sTCP:LISTEN", "-t"],
+                               capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {int(x) for x in saida.split() if x.isdigit()}
+
+
+def apple_silicon():
+    return MAC and platform.machine() == "arm64"
+
+
 def memoria():
     """(total, disponivel) em bytes, ou (None, None)."""
     try:
@@ -112,17 +134,43 @@ def memoria():
         return None, None
 
 
+_teto_metal_bytes = None
+
+
+def _medir_teto_metal():
+    global _teto_metal_bytes
+    try:
+        saida = subprocess.run(
+            [sys.executable, "-c", "import torch;print(int(torch.mps.recommended_max_memory()))"],
+            capture_output=True, text=True, timeout=60).stdout.strip().splitlines()
+        valor = int(saida[-1]) if saida else 0
+        if valor > 0:
+            _teto_metal_bytes = valor
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+
+
+_medicao_iniciada = False
+
+
 def gpu_unificada():
     """(nome, total, livre) em bytes para o chip da Apple.
 
-    A memoria da GPU e a RAM. O Metal deixa a GPU usar cerca de 3/4 dela por padrao, entao o
-    "total" da placa e esse teto, e o "livre" nunca passa dele.
+    A memoria da GPU e a RAM. O "total" e o teto que o proprio Metal recomenda (medido uma vez pelo
+    PyTorch); sem PyTorch, 3/4 da RAM. O "livre" nunca passa dele.
     """
+    global _medicao_iniciada
+    if not apple_silicon():
+        return None
+    if not _medicao_iniciada:
+        import threading
+        _medicao_iniciada = True
+        threading.Thread(target=_medir_teto_metal, daemon=True).start()
     total, livre = memoria()
     if not total:
         return None
     nome = _sysctl("machdep.cpu.brand_string") or "Apple Silicon"
-    teto = int(total * 0.75)
+    teto = min(_teto_metal_bytes, total) if _teto_metal_bytes else int(total * 0.75)
     return nome, teto, min(livre, teto)
 
 

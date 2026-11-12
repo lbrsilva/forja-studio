@@ -95,8 +95,16 @@ def achar_backend():
     ap = os.environ.get("APPDATA")
     if ap:
         tentativas.append(Path(ap) / "VoiceStudio" / "runtime" / "project")
-    if plataforma.MAC:
-        tentativas.append(Path.home() / "Library" / "Application Support" / "VoiceStudio" / "runtime" / "project")
+    dados_do_app = (Path.home() / "Library" / "Application Support" / "VoiceStudio" if plataforma.MAC
+                    else Path.home() / ".config" / "VoiceStudio" if not plataforma.WIN else None)
+    if dados_do_app:
+        tentativas.append(dados_do_app / "runtime" / "project")
+        try:
+            raiz = json.loads((dados_do_app / "runtime-location.json").read_text(encoding="utf-8")).get("root")
+            if raiz:
+                tentativas.append(Path(raiz) / "project")
+        except (OSError, ValueError, AttributeError):
+            pass
     # instalado AO LADO do projeto -- e onde ele costuma estar
     _irmao = Path(__file__).resolve().parent.parent.parent / "VoiceStudio"
     tentativas.append(_irmao / "runtime" / "project")

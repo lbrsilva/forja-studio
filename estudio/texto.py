@@ -366,15 +366,9 @@ def _matar_llama_na_porta(porta):
         return False
     alvo = str(LLAMA).lower()
     matou = False
-    try:
-        conexoes = psutil.net_connections(kind="tcp")
-    except Exception:
-        return False
-    for c in conexoes:
-        if c.status != psutil.CONN_LISTEN or not c.laddr or c.laddr.port != porta or not c.pid:
-            continue
+    for pid in plataforma.pids_escutando(porta):
         try:
-            p = psutil.Process(c.pid)
+            p = psutil.Process(pid)
             if p.name().lower() != plataforma.exe("llama-server") or not (
                     (p.exe() or "").lower().startswith(alvo)
                     or os.path.realpath(p.exe() or "") in (os.path.realpath(EXE_GPU), os.path.realpath(EXE_CPU))):
@@ -386,7 +380,7 @@ def _matar_llama_na_porta(porta):
                     pass
             p.kill()
             matou = True
-            print(f"[texto] servidor de texto que sobrou na porta {porta} encerrado (processo {c.pid}).", flush=True)
+            print(f"[texto] servidor de texto que sobrou na porta {porta} encerrado (processo {pid}).", flush=True)
         except psutil.Error:
             pass
     return matou
@@ -724,7 +718,7 @@ class MotorTexto:
                 raise ErroTexto("Outro programa está usando o lugar da IA de texto. Feche o estúdio pelo "
                                 "“Desligar Estúdio” e abra de novo.", 503)
             self.externo[onde] = False
-            falta = self.faltando("rapido" if onde == "processador" else None)
+            falta = self.faltando("rapido")
             if onde == "placa":
                 falta = [f for f in falta if "processador" not in f]
             else:

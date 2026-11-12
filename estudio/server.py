@@ -91,6 +91,8 @@ import apresentador  # noqa: E402
 import voz  # noqa: E402
 import texto  # noqa: E402
 import elevenlabs  # noqa: E402  (voz na nuvem, opcional: só funciona se a chave estiver em API\elevenlabs.txt)
+import instalar_voz  # noqa: E402  (baixa o VoiceStudio da versao oficial)
+import latentsync_motor  # noqa: E402  (sincronia labial rapida, em ambiente proprio)
 import voz_studio  # noqa: E402  (voz LOCAL e de graça, opcional: só funciona com o VoiceStudio aberto)
 import canal  # noqa: E402  (a esteira do Canal automático)
 
@@ -181,8 +183,26 @@ VOZ_MOTOR = "Chatterbox Multilingual"
 # (maquina de desenvolvimento). O cofre so abre com a chave que a VPS da a quem tem conta -
 # por isso a carga NAO pode derrubar o painel: sem conta ainda, PRESETS fica vazio e a tela
 # pede para entrar, em vez de o programa nem subir. Ver estudio/cofre.py.
+def com_presets_locais(dados):
+    """Soma as IAs de estudio/presets_locais.json (as que nao vem do cofre) as listas de presets."""
+    if not dados:
+        return dados
+    try:
+        locais = json.loads((AQUI / "presets_locais.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return dados
+    for aba, lista in locais.items():
+        atuais = dados.setdefault(aba, [])
+        for p in lista:
+            if p.get("so_apple_silicon") and not plataforma.apple_silicon():
+                continue
+            if not any(x.get("id") == p["id"] for x in atuais):
+                atuais.append(p)
+    return dados
+
+
 try:
-    PRESETS = cofre.ler_json("presets.json")
+    PRESETS = com_presets_locais(cofre.ler_json("presets.json"))
 except cofre.CofreFechado:
     PRESETS = {}
 
@@ -355,6 +375,11 @@ def nome_curto(nome):
 
 
 # ---------------------------------------------------------------- "qual IA gerou"
+def e_apresentador(j):
+    return j.get("preset") == "apresentador" or any(
+        p.get("tipo") == "apresentador" and p.get("id") == j.get("preset") for p in (PRESETS or {}).get("video", []))
+
+
 def motor_apresentador(j):
     if j.get("motor_usado"):
         return j["motor_usado"]
@@ -382,8 +407,8 @@ def info_ia(j):
     f = ficha(j.get("preset")) or {}
     nome = f.get("nome") or (p or {}).get("nome") or j.get("nome") or j.get("preset") or "IA desconhecida"
     motor = voz_txt = None
-    if j.get("preset") == "apresentador":
-        motor = motor_apresentador(j)
+    if e_apresentador(j):
+        motor = None if j.get("motor_externo") else motor_apresentador(j)
         voz_txt = texto_voz(j)
     partes = [nome_curto(nome)]
     if motor:
@@ -609,11 +634,11 @@ def migrar_jobs():
         normalizar_opcoes(j)
         if j.get("estado") in ("fila", "rodando") and not j.get("prompt_id") and not j.get("lixeira"):
             # a tarefa que cuidava dele morreu junto com o estúdio anterior
-            if j.get("preset") == "apresentador" and j.get("estado") == "rodando":
+            if e_apresentador(j) and j.get("estado") == "rodando":
                 marcar(j, "erro", "O estúdio foi reiniciado durante a geração da voz. Gere de novo.")
             else:
                 marcar(j, "erro", "O estúdio foi reiniciado antes de mandar este trabalho para a ComfyUI. Gere de novo.")
-        if j.get("preset") == "apresentador" and not j.get("motor_usado"):
+        if e_apresentador(j) and not j.get("motor_usado"):
             m = motor_apresentador(j)
             if m:
                 j["motor_usado"] = m
@@ -684,6 +709,8 @@ def estimativa_apresentador(job):
     voz_s = 0 if job.get("audio") else 30 + 8 * len(voz.dividir(job.get("prompt") or "x"))
     carga = 0 if ULTIMO_PRESET["id"] == "apresentador" else 240
     motor = job.get("motor_usado") or job.get("motor") or "Automático"
+    if job.get("motor_externo") == "latentsync":
+        return 32 * seg + 40 + voz_s + (0 if ULTIMO_PRESET["id"] == job.get("preset") else 30)
     if motor.startswith("LTX") or (sem_acento(motor).startswith("automatico")
                                    and seg <= apresentador.LTX_MAX_S and ltx23_instalado()):
         return 25 * seg + 60 + voz_s + carga  # medido: 8 s em ~436 s com carga do HD
@@ -693,7 +720,7 @@ def estimativa_apresentador(job):
 
 def estimativa(job):
     """Estimativa total (s) a partir do histórico; senão, do preset."""
-    if job.get("preset") == "apresentador":
+    if e_apresentador(job):
         return estimativa_apresentador(job)
     reg = STATS.get(chave_tempo(job))
     if reg:
@@ -1382,6 +1409,9 @@ def publico(j, esperas=None):
 
 
 # ---------------------------------------------------------------- rotas
+RECOMENDADA_POR_PLATAFORMA = {"mac": {"video": "wan22_5b", "apresentador": "latentsync15"}}
+
+
 async def api_presets(req):
     dados = copy.deepcopy(PRESETS)
     # IAs com "desligado": true nao aparecem no painel. Para reativar uma basta tirar essa
@@ -1396,6 +1426,11 @@ async def api_presets(req):
     ativos = [p for aba in ("imagem", "video") for p in dados.get(aba, [])]
     for p in ativos:
         f = ficha(p["id"])
+        if f and p["id"] == "apresentador" and plataforma.apple_silicon():
+            f = {**f, "tempo_tipico": "No Mac com chip Apple (medido num M4 Pro) o InfiniteTalk, de 14 bilhões de parâmetros, "
+                 "passou de 8 minutos sem terminar o primeiro dos 6 passos: neste computador prefira o LatentSync 1.5. "
+                 "Os tempos abaixo são de uma placa NVIDIA. " + (f.get("tempo_tipico") or ""),
+                 "nota_velocidade": 1}
         p["ficha"] = f
         p["categoria"] = (f or {}).get("categoria")
     nomes = [sem_acento(p["nome"]) for p in ativos]
@@ -1405,6 +1440,8 @@ async def api_presets(req):
                                                for x in nomes)]
     dados["aguardando_teste"] = ag
     dados["musica_fichas"] = [f for k, f in (fichas().get("ias") or {}).items() if eh_musica_do_pacote(k, f)]
+    dados["tem_musica"] = TEM_MUSICA
+    dados["recomendada"] = RECOMENDADA_POR_PLATAFORMA.get("mac" if plataforma.MAC else "", {})
     return web.json_response(dados)
 
 
@@ -1643,6 +1680,44 @@ async def api_chaves(req):
     return web.json_response({"ok": True, "tem": True,
                               "mensagem": "Pronto: %d vozes da sua conta apareceram na "
                                           "lista, com o símbolo de nuvem." % len(vs)})
+
+
+async def api_chave_hf(req):
+    """O token do Hugging Face de QUEM USA o estudio, para baixar as IAs que exigem conta (ex.: LTX 2.5).
+
+    Mesmo desenho da chave do ElevenLabs: fica num arquivo texto em API/huggingface.txt (fora do git) e o GET
+    NUNCA devolve o token, so se existe um e de onde ele vem.
+    """
+    def estado(extra=None):
+        return web.json_response({"tem": ias.origem_do_token_hf() is not None, "origem": ias.origem_do_token_hf(),
+                                  "arquivo": str(ias.ARQ_TOKEN_HF), **(extra or {})})
+    if req.method == "GET":
+        return estado()
+    try:
+        b = await req.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text="Pedido invalido.")
+    token = (b.get("chave") or "").strip() if isinstance(b, dict) else ""
+    if not token:
+        ias.remover_token_hf()
+        extra = {"ok": True, "mensagem": "Token removido deste computador."}
+        if ias.origem_do_token_hf() == "variavel":
+            extra["mensagem"] += " Atencao: a variavel de ambiente HF_TOKEN continua definida e vale no lugar dele."
+        return estado(extra)
+    if len(token) > 300 or any(c.isspace() for c in token):
+        raise web.HTTPBadRequest(text="Isso nao parece um token. Cole so o token, sem espacos nem quebra de linha.")
+    if not token.startswith("hf_"):
+        raise web.HTTPBadRequest(text="Token do Hugging Face comeca com \"hf_\". Confira o que voce copiou.")
+    try:
+        nome = await asyncio.to_thread(ias.quem_e_o_token_hf, token)
+    except ias.TokenRecusado as exc:
+        return estado({"ok": False, "mensagem": str(exc)})
+    except OSError as exc:
+        await asyncio.to_thread(ias.guardar_token_hf, token)
+        return estado({"ok": False, "mensagem": str(exc)})
+    await asyncio.to_thread(ias.guardar_token_hf, token)
+    return estado({"ok": True, "conta": nome, "mensagem": f"Pronto: token da conta {nome} guardado. "
+                   "Pode baixar as IAs que exigiam conta."})
 
 
 async def api_voz_salvar(req):
@@ -2032,6 +2107,48 @@ CENA_APRESENTADOR = ("A person talking naturally to the camera like a presenter,
                      "expressive face, blinking, steady camera, realistic.")
 
 
+async def executar_latentsync(job, foto, audio, dur):
+    """Foto + voz -> video pelo LatentSync (fora da ComfyUI). Registra o resultado como os outros trabalhos."""
+    jid = job["id"]
+    versao = job.get("versao_motor") or "1.5"
+    arquivo = f"apresentador_{jid}_00001_.mp4"
+    destino = COMFY_DIR / "output" / "video" / "estudio"
+    job["motor_usado"] = f"LatentSync {versao}"
+    job["total_passos"] = max(1, math.ceil(dur * latentsync_motor.FPS / latentsync_motor.QUADROS_POR_BLOCO))
+    job["segmentos"] = 1
+    job["prog"] = {"fase": "Carregando o LatentSync", "passos": 0}
+    job["ia"] = info_ia(job)
+    salvar()
+
+    def progredir(feitos, total, fase):
+        agora = time.time()
+        prog = job.setdefault("prog", {})
+        if feitos > prog.get("passos", 0):
+            prog.setdefault("t_primeiro", agora)
+            prog["t_ultimo"] = agora
+        prog["passos"] = feitos
+        prog["fase"] = f"{fase} (bloco {min(feitos + 1, total)} de {total})" if feitos < total else fase
+
+    try:
+        await latentsync_motor.executar(foto, audio, destino / arquivo, versao, dur, progredir, lambda: jid in CANCELAR)
+    except latentsync_motor.Cancelou:
+        raise Cancelado()
+    job["saidas"] = [{"no": "latentsync", "arquivo": arquivo, "sub": "video/estudio", "tipo": "output"}]
+    job["estado"] = "concluido"
+    job["fim"] = time.time()
+    for k in ("erro", "erro_tecnico", "erro_vigia", "aguardando"):
+        job.pop(k, None)
+    ULTIMO_PRESET["id"] = job["preset"]
+    ATIVIDADE["ultima"] = time.time()
+    ATIVIDADE["liberado"] = False
+    try:
+        total = job["fim"] - job["inicio"]
+        STATS.setdefault(chave_tempo(job), []).append(
+            {"total": total, "carga": 0.0, "por_passo": total / job["total_passos"], "pos": None})
+    except Exception:
+        pass
+
+
 async def processar_apresentador(job):
     """1) voz: Chatterbox (por frases) + limpeza com Whisper; 2) vídeo: LTX-2.3 ou InfiniteTalk do tamanho do áudio."""
     jid = job["id"]
@@ -2100,6 +2217,9 @@ async def processar_apresentador(job):
             from PIL import Image
             with Image.open(entrada / job["imagem"]) as im:
                 tam_foto = im.size
+            if job.get("motor_externo") == "latentsync":
+                await executar_latentsync(job, entrada / job["imagem"], entrada / audio_nome, dur)
+                return
             motor = job.get("motor") or "Automático"
             automatico = sem_acento(motor).startswith("automatico")
             usar_ltx = motor.startswith("LTX") or (automatico and dur <= apresentador.LTX_MAX_S)
@@ -2165,6 +2285,8 @@ async def gerar_apresentador(aba, p, b):
     texto = (b.get("prompt") or "").strip()
     if not b.get("audio") and not texto:
         raise web.HTTPBadRequest(text="Escreva o texto que ele vai falar (ou envie um áudio pronto).")
+    if p.get("motor_externo") == "latentsync" and not latentsync_motor.instalada(p.get("versao_motor") or "1.5"):
+        raise web.HTTPBadRequest(text=f"{p['nome']} ainda não está instalada. Use o botão “Falta instalar” no cartão da IA.")
     seed = int(b["seed"]) if str(b.get("seed", "")).strip().isdigit() else random.randint(1, 2**31)
     jid = uuid.uuid4().hex[:8]
     voz_ref, voz_nome, origem = b.get("voz"), None, ("enviada" if b.get("voz") else "padrao")
@@ -2188,6 +2310,7 @@ async def gerar_apresentador(aba, p, b):
            "voz": Path(voz_ref).name if voz_ref else None, "voz_nome": voz_nome, "voz_id": b.get("voz_id"),
            "voz_origem": origem, "voz11": voz11, "idioma": idioma, "cena": (b.get("cena") or "").strip(),
            "motor": motor_rotulo(p, b.get("motor")), "steps": p["padrao"]["steps"], "seed": seed,
+           "motor_externo": p.get("motor_externo"), "versao_motor": p.get("versao_motor"),
            "estado": "fila", "criado": time.time(), "amostradores": [], "total_passos": 1, "saida_final": "salvar"}
     job["ia"] = info_ia(job)
     if b.get("simular"):
@@ -2682,7 +2805,7 @@ async def api_estimativa(req):
     steps, _ = qualidade(p, q.get("qualidade"))
     if p.get("tipo") == "apresentador":  # não tem workflow fixo: o tempo vem do texto/áudio e do motor
         job = {"preset": p["id"], "motor": q.get("motor"), "prompt": q.get("texto") or "",
-               "audio": q.get("audio") or None}
+               "audio": q.get("audio") or None, "motor_externo": p.get("motor_externo")}
         return web.json_response({"segundos": estimativa_segura(job), "historico": False,
                                   "carregado": ULTIMO_PRESET["id"] == p["id"]})
     try:
@@ -2742,7 +2865,7 @@ def entradas_do_job(j):
     for v in j.get("imagens") or []:
         if isinstance(v, str) and v.strip():
             nomes.add(Path(v).name)
-    if j.get("preset") == "apresentador" and j.get("id"):
+    if e_apresentador(j) and j.get("id"):
         nomes.add(f"apres_{j['id']}.wav")
     return nomes
 
@@ -2829,7 +2952,7 @@ def apagar_trabalho(j):
         if m:  # poses detectadas para esse recorte
             candidatos.extend((out / "estudio_pose").glob(f"{m.group(1)}_img*.json"))
             candidatos.extend((out / "estudio_pose").glob(f"{m.group(1)}_vid*.json"))
-    if j.get("preset") == "apresentador" and j.get("id"):  # trechos da voz (Chatterbox) antes de juntar
+    if e_apresentador(j) and j.get("id"):  # trechos da voz (Chatterbox) antes de juntar
         candidatos.extend((out / "audio" / "estudio").glob(f"apres_{j['id']}_t*"))
 
     apagados, total, falhas = 0, 0, []
@@ -2931,6 +3054,19 @@ async def _get_json(url, timeout=2):
                 return await r.json(content_type=None)
     except Exception:
         return None
+
+
+def tipo_memoria_gpu(st, nv):
+    """"unificada" (a GPU divide a RAM com o sistema, como no Apple Silicon), "dedicada" (VRAM propria) ou None."""
+    for dev in (st or {}).get("devices") or []:
+        tipo = str(dev.get("type") or "").lower()
+        if tipo == "mps":
+            return "unificada"
+        if tipo in ("cuda", "xpu", "hip", "rocm"):
+            return "dedicada"
+    if plataforma.apple_silicon():
+        return "unificada"
+    return "dedicada" if nv else None
 
 
 def _gpu(st):
@@ -3566,7 +3702,7 @@ async def gpu_nvidia_smi():
     if time.time() - _NVSMI["t"] < 10:
         return _NVSMI["d"]
     _NVSMI["t"] = time.time()
-    if plataforma.MAC:
+    if plataforma.apple_silicon():
         _NVSMI["d"] = plataforma.gpu_unificada()
         return _NVSMI["d"]
     proc = None
@@ -3630,7 +3766,7 @@ async def montar_inicio():
     c_livre, _ = _tente(lambda: disco("C:\\") if plataforma.WIN else disco(Path.home()), (None, None), "disco do usuário")
     gb = 1024 ** 3
     ligado = {k: (servicos.get(k) or {}).get("estado") == "ligado" for k in CHAVES_SERVICO}
-    sistema = {"gpu": gpu, "vram_total": vt, "vram_livre": vl,
+    sistema = {"gpu": gpu, "gpu_memoria": tipo_memoria_gpu(st, nv), "vram_total": vt, "vram_livre": vl,
                "vram_total_gb": round(vt / gb, 1) if vt else None, "vram_livre_gb": round(vl / gb, 1) if vl else None,
                **_tente(memoria_ram, {}, "RAM"), "disco_e_livre_gb": e_livre, "disco_e_total_gb": e_total,
                "disco_c_livre_gb": c_livre,
@@ -3673,6 +3809,7 @@ async def montar_inicio():
         "tem_musica": TEM_MUSICA,  # só é falso se a pasta painel_musica não existir (aí a aba some da tela)
         # o endereço do painel (a tela abre o quadro nele) e o que falta para a música funcionar nesta máquina
         "musica_url": MUSICA, "musica_estado": _tente(estado_musica, None, "estado da música"),
+        "plataforma": "mac" if plataforma.MAC else ("windows" if plataforma.WIN else "linux"),
         "agora": time.time(),
     }
 
@@ -3909,11 +4046,9 @@ def _encerrar_na_porta(porta):
     """Encerra o programa DO PROJETO que escuta na porta. Nunca mexe em outros."""
     import psutil
     n = 0
-    for c in psutil.net_connections(kind="tcp"):
-        if not (c.laddr and c.laddr.port == porta and c.status == psutil.CONN_LISTEN and c.pid):
-            continue
+    for pid in plataforma.pids_escutando(porta):
         try:
-            proc = psutil.Process(c.pid)
+            proc = psutil.Process(pid)
             linha = " ".join(proc.cmdline()).lower()
             if not _e_nosso(linha):
                 continue
@@ -4356,7 +4491,7 @@ def recarregar_presets():
     o painel, e a atualizacao deixaria de ser "aparece e pronto".
     """
     global PRESETS
-    PRESETS = cofre.ler_json("presets.json")
+    PRESETS = com_presets_locais(cofre.ler_json("presets.json"))
 
 
 async def api_ias(req):
@@ -4378,7 +4513,9 @@ async def api_ias(req):
         for p in lista:
             if p.get("desligado") or not p.get("nome"):
                 continue
-            fora[p["id"]] = dict(ias.estado_de(p["nome"], cat), nome=p["nome"],
+            estado = (latentsync_motor.estado_ia(p.get("versao_motor") or "1.5")
+                      if p.get("motor_externo") == "latentsync" else ias.estado_de(p["nome"], cat))
+            fora[p["id"]] = dict(estado, nome=p["nome"],
                                  aprovada=p["id"] in APROVADAS, aba=aba)
     # as IAs de musica nao sao preset: entram pelo id da ficha, no fim da lista de aprovadas
     musica = []
@@ -4388,7 +4525,30 @@ async def api_ias(req):
             musica.append(mid)
     return web.json_response({"ok": True, "tem_catalogo": bool(cat), "ias": fora,
                               "aprovadas": [i for i in APROVADAS if i in fora] + musica,
-                              "progresso": ias.progresso()})
+                              "progresso": progresso_de_instalacao()})
+
+
+def preset_por_id(pid):
+    for lista in (PRESETS or {}).values():
+        if isinstance(lista, list):
+            for p in lista:
+                if isinstance(p, dict) and p.get("id") == pid:
+                    return p
+    return None
+
+
+def progresso_de_instalacao():
+    """O andamento dos downloads de IA, somando o do LatentSync (que se instala a parte) ao do catalogo."""
+    d = ias.progresso()
+    ls = latentsync_motor.progresso()
+    if ls["ativo"] or ls["erro"]:
+        d = dict(d)
+        if ls["ativo"]:
+            d["baixando"] = {"ia": ls["ia"], "arquivo": ls["etapa"], "baixados": ls["baixados"], "total": ls["total"],
+                             "comecou": time.time()}
+        if ls["erro"] and not d.get("erro"):
+            d["erro"] = ls["erro"]
+    return d
 
 
 # As IAs que o projeto ja usou de verdade e aprova. Contado no historico do estudio de
@@ -4696,21 +4856,53 @@ async def api_motor_parar(req):
 async def api_ias_instalar(req):
     b = await req.json()
     pid = (b.get("id") or "").strip()
-    nome = None
-    for lista in (PRESETS or {}).values():
-        if isinstance(lista, list):
-            for p in lista:
-                if p.get("id") == pid:
-                    nome = p.get("nome")
-    nome = nome or ias.MUSICA_IAS.get(pid)
+    p = preset_por_id(pid)
+    nome = (p or {}).get("nome") or ias.MUSICA_IAS.get(pid)
     if not nome:
         return web.json_response({"erro": "Não achei essa IA no painel."}, status=404)
+    if p and p.get("motor_externo") == "latentsync":
+        entrou, recado = latentsync_motor.instalar(p.get("versao_motor") or "1.5", nome)
+        return web.json_response({"ok": entrou, "mensagem": recado}, status=200 if entrou else 409)
     entrou, recado = ias.instalar(nome)
     return web.json_response({"ok": entrou, "mensagem": recado}, status=200 if entrou else 409)
 
 
+async def api_ias_remover(req):
+    """POST {"id", "confirmar"}: sem confirmar so mostra o que seria apagado; com confirmar, apaga os arquivos
+    exclusivos da IA (os compartilhados com outra IA instalada ficam)."""
+    try:
+        b = await req.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text="Pedido invalido.")
+    pid = (b.get("id") or "").strip() if isinstance(b, dict) else ""
+    p = preset_por_id(pid)
+    nome = (p or {}).get("nome")
+    if not nome:
+        return web.json_response({"erro": "Não achei essa IA no painel."}, status=404)
+    if p.get("motor_externo") == "latentsync":
+        versao = p.get("versao_motor") or "1.5"
+        gb = round(latentsync_motor.VERSOES[versao]["bytes"] / 1e9, 1)
+        resumo = {"nome": nome, "gb": gb, "junto": False, "manter": [],
+                  "apagar": [{"arquivo": f"LatentSync {versao} (pesos)", "gb": gb}]}
+        if not b.get("confirmar"):
+            return web.json_response(resumo)
+        ok, msg, liberados = await asyncio.to_thread(latentsync_motor.remover, versao)
+        return web.json_response({**resumo, "ok": ok, "mensagem": msg, "liberou_gb": round(liberados / 1e9, 1)},
+                                 status=200 if ok else 409)
+    junto = bool(b.get("junto"))
+    plano = await asyncio.to_thread(ias.plano_de_remocao, nome, junto)
+    resumo = {"nome": nome, "gb": round(plano["bytes"] / 1e9, 1),
+              "apagar": [{"arquivo": n, "gb": round(t / 1e9, 2)} for n, t in plano["apagar"]],
+              "manter": [{"arquivo": n, "usado_por": d} for n, d in plano["manter"]], "junto": junto}
+    if not b.get("confirmar"):
+        return web.json_response(resumo)
+    ok, msg, liberados = await asyncio.to_thread(ias.remover, nome, junto)
+    return web.json_response({**resumo, "ok": ok, "mensagem": msg, "liberou_gb": round(liberados / 1e9, 1)},
+                             status=200 if ok else 409)
+
+
 async def api_ias_progresso(req):
-    return web.json_response(ias.progresso())
+    return web.json_response(progresso_de_instalacao())
 
 
 async def api_ias_parar(req):
@@ -4961,7 +5153,17 @@ async def api_voz_estado(req):
     else:
         est["vozes"], est["idiomas"] = [], []
     est["url"] = voz_studio.URL
+    est["motor_instalado"] = voz_studio.achar_backend() is not None
+    est["instalacao"] = instalar_voz.estado()
     return web.json_response(est)
+
+
+async def api_voz_instalar_app(req):
+    """POST: baixa e instala o VoiceStudio da versao oficial, para este sistema. GET: andamento."""
+    if req.method == "POST":
+        ok, recado = await asyncio.to_thread(instalar_voz.iniciar)
+        return web.json_response({"ok": ok, "recado": recado, **instalar_voz.estado()})
+    return web.json_response(instalar_voz.estado())
 
 
 async def api_voz_ligar(req):
@@ -5802,6 +6004,7 @@ app.add_routes([
     web.get("/api/requisitos", api_requisitos), web.post("/api/requisitos/instalar", api_requisitos_instalar),
     web.post("/api/requisitos/parar", api_requisitos_parar),
     web.get("/api/ias/progresso", api_ias_progresso),
+    web.post("/api/ias/remover", api_ias_remover),
     web.post("/api/ias/parar", api_ias_parar),
     web.get("/api/presets", api_presets), web.get("/api/fichas", api_fichas),
     web.get("/api/conta/estado", api_conta_estado),
@@ -5825,6 +6028,7 @@ app.add_routes([
     web.post("/api/chaves", api_chaves),
     web.get("/api/chave-nuvem", api_chave_nuvem),
     web.post("/api/chave-nuvem", api_chave_nuvem),
+    web.get("/api/chave-hf", api_chave_hf), web.post("/api/chave-hf", api_chave_hf),
     web.post("/api/vozes/remover/{id}", api_voz_remover),
     web.get("/api/sistema", api_sistema), web.get("/api/inicio", api_inicio), web.get("/api/ocupado", api_ocupado),
     web.get("/api/pastas", api_pastas),
@@ -5848,6 +6052,7 @@ app.add_routes([
     web.get("/api/voz/gravadas", api_voz_gravadas),
     web.post("/api/voz/gravadas/apagar", api_voz_gravada_apagar), web.get("/api/voz/audio/{nome}", api_voz_audio),
     web.post("/api/voz/ligar", api_voz_ligar),
+    web.get("/api/voz/instalar-app", api_voz_instalar_app), web.post("/api/voz/instalar-app", api_voz_instalar_app),
     web.get("/api/canal/listar", api_canal_listar), web.post("/api/canal/criar", api_canal_criar),
     web.post("/api/canal/cenas/sugerir", api_canal_cenas_sugerir),
     web.post("/api/canal/cenas/gravar", api_canal_cenas_gravar),

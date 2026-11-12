@@ -274,6 +274,20 @@ aponte com `ESTUDIO_VOZ_DIR`.
 
 ---
 
+## IAs que exigem conta no Hugging Face
+
+Algumas IAs (o LTX 2.5, por exemplo) baixam arquivos de repositórios restritos do Hugging Face, e o
+botão da tela termina com **HTTP 401**. Para liberar:
+
+1. Entre no Hugging Face e aceite a licença do modelo (para o LTX: `huggingface.co/Lightricks/LTX-2.5`).
+2. Crie um token de **leitura** em Settings, Access Tokens.
+3. No painel, abra **Configurações** (último item do menu), cole o token e clique em **Salvar**. O estúdio confere o
+   token com o Hugging Face e guarda em `API/huggingface.txt` (a pasta `API/` já é ignorada pelo git). Também
+   dá para criar esse arquivo à mão, com o token na primeira linha, ou definir a variável `HF_TOKEN`.
+4. Baixe a IA de novo. O download continua de onde parou.
+
+O token só é enviado para `huggingface.co`; ao seguir o redirecionamento para outro servidor, ele é retirado.
+
 ## Ajustes por variável de ambiente
 
 Nada aqui é obrigatório — só serve se a sua máquina for diferente:

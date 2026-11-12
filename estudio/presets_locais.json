@@ -1,0 +1,34 @@
+{
+  "video": [
+    {
+      "id": "latentsync15",
+      "nome": "LatentSync 1.5 (rápido, boca sincronizada)",
+      "tipo": "apresentador",
+      "motor_externo": "latentsync",
+      "versao_motor": "1.5",
+      "so_apple_silicon": true,
+      "modos": [
+        "referencia"
+      ],
+      "campos": {},
+      "idiomas": [
+        "Português",
+        "Inglês",
+        "Espanhol",
+        "Francês",
+        "Italiano",
+        "Alemão",
+        "Japonês"
+      ],
+      "padrao": {
+        "steps": 20,
+        "idioma": "Português",
+        "motor": "LatentSync 1.5"
+      },
+      "amostragens": 1,
+      "motores": [
+        "LatentSync 1.5"
+      ]
+    }
+  ]
+}

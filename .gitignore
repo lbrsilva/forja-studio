@@ -50,6 +50,8 @@ saidas/
 # --- modelos: 388 GB, baixados pelo instalador ---
 ComfyUI_windows_portable/
 ComfyUI_mac/
+modelos_texto/
+_ferramentas/
 caminhos.sh
 caminhos.bat
 modelos_texto/*.gguf
@@ -63,7 +65,6 @@ modelos_texto/*.gguf
 *.bak*
 __pycache__/
 *.pyc
-
 # arquivos temporarios de quem mantem o projeto
 _msg.txt
 
@@ -83,3 +84,7 @@ estudio/icone_feito.json
 _ferramentas/
 _baixados/
 estudio/reparo_pendente.json
+
+# cache e historico da fila desta maquina
+_cache/
+estudio/fila_historico.json

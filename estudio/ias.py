@@ -188,6 +188,65 @@ def espaco_livre():
             except OSError:
                 return None
     return None
+ARQ_TOKEN_HF = TOKEN_ARQ
+
+
+def origem_do_token_hf():
+    """'variavel' (HF_TOKEN manda), 'arquivo' ou None."""
+    if os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"):
+        return "variavel"
+    return "arquivo" if _token_hf() else None
+
+
+def guardar_token_hf(token):
+    token = (token or "").strip()
+    TOKEN_ARQ.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_ARQ.write_text(token + "\n", encoding="utf-8")
+    if os.name != "nt":
+        os.chmod(TOKEN_ARQ, 0o600)
+
+
+def remover_token_hf():
+    try:
+        TOKEN_ARQ.unlink()
+    except FileNotFoundError:
+        pass
+
+
+class TokenRecusado(OSError):
+    pass
+
+
+def quem_e_o_token_hf(token=None):
+    """Nome da conta dona do token, perguntando ao Hugging Face. Levanta OSError com frase em portugues."""
+    token = token or _token_hf()
+    pedido = urllib.request.Request("https://huggingface.co/api/whoami-v2",
+                                    headers={"User-Agent": "ForjaStudio/1.0", "Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(pedido, timeout=20) as r:
+            return json.loads(r.read()).get("name") or "?"
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise TokenRecusado("O Hugging Face nao aceitou este token, entao nao guardei. Confira se ele foi copiado inteiro e se e de leitura.") from exc
+        raise OSError(f"O Hugging Face respondeu erro {exc.code}.") from exc
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise OSError("Nao consegui falar com o Hugging Face (sem internet?). O token foi guardado mesmo assim.") from exc
+
+
+def _abrir(pedido, nome):
+    if urllib.parse.urlparse(pedido.full_url).hostname == "huggingface.co":
+        token = _token_hf()
+        if token:
+            pedido.add_header("Authorization", f"Bearer {token}")
+    try:
+        return urllib.request.build_opener(_SemTokenEmOutroHost).open(pedido, timeout=60)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403) and urllib.parse.urlparse(pedido.full_url).hostname == "huggingface.co":
+            raise OSError(
+                f"{nome}: o Hugging Face recusou o download (HTTP {exc.code}). Esta IA exige conta: aceite a "
+                f"licenca do modelo no site e coloque um token de leitura em API/huggingface.txt "
+                f"(ou na variavel HF_TOKEN).") from exc
+        raise
 
 # Quanto o arquivo no disco pode diferir do catalogo e ainda contar como completo.
 # Zero seria rigido demais: o mesmo modelo as vezes e republicado com metadado diferente.
@@ -556,10 +615,74 @@ def instalar(ia):
     return True, "Começando a baixar."
 
 
+def plano_de_remocao(ia, junto=False):
+    """O que apagar ao remover `ia`: so os arquivos que NENHUMA outra IA instalada usa.
+
+    Devolve {"apagar": [(nome, bytes)], "manter": [(nome, [outras IAs])], "bytes": total_liberado}.
+    """
+    cat = catalogo()
+    meus = arquivos_da(ia, cat)
+    outras = {}
+    for nome, info in cat.items():
+        for outra in info.get("usado_por") or []:
+            if outra != ia:
+                outras.setdefault(nome, []).append(outra)
+    instaladas = {n for n in {u for i in cat.values() for u in (i.get("usado_por") or [])}
+                  if n != ia and estado_de(n, cat).get("instalada")}
+    apagar, manter = [], []
+    for nome, info in sorted(meus.items()):
+        if "/" in nome or "\\" in nome or nome.startswith(".") or ".." in (info.get("pasta") or ""):
+            continue
+        existe = caminho_de(nome, info).is_file() or caminho_de(nome, info).with_suffix(
+            caminho_de(nome, info).suffix + ".baixando").is_file()
+        if not existe:
+            continue
+        donos = [] if junto else [o for o in outras.get(nome, []) if o in instaladas]
+        if donos:
+            manter.append((nome, donos))
+        else:
+            apagar.append((nome, _tamanho_no_disco(nome, info)))
+    return {"apagar": apagar, "manter": manter, "bytes": sum(b for _, b in apagar)}
+
+
+def _tamanho_no_disco(nome, info):
+    destino = caminho_de(nome, info)
+    for p in (destino, destino.with_suffix(destino.suffix + ".baixando")):
+        try:
+            return p.stat().st_size
+        except OSError:
+            continue
+    return 0
+
+
+def remover(ia, junto=False):
+    """Apaga do disco os arquivos exclusivos de `ia`. Devolve (ok, recado, bytes_liberados)."""
+    with _trava:
+        if _tocando and (ia in _fila or (_agora and _agora.get("ia") == ia)):
+            return False, "Esta IA está sendo baixada agora. Pare o download antes de remover.", 0
+    cat = catalogo()
+    base = MODELOS.resolve()
+    liberados = 0
+    for nome, _ in plano_de_remocao(ia, junto)["apagar"]:
+        info = cat[nome]
+        destino = caminho_de(nome, info)
+        for alvo in (destino, destino.with_suffix(destino.suffix + ".baixando")):
+            try:
+                real = alvo.resolve()
+                if base not in real.parents or not alvo.is_file():
+                    continue
+                tam = alvo.stat().st_size
+                alvo.unlink()
+                liberados += tam
+            except OSError as exc:
+                return False, f"Não consegui apagar {nome}: {exc}", liberados
+    return True, "IA removida.", liberados
+
+
 def parar():
     """Para o download atual. O pedaco baixado FICA: continua da proxima vez."""
     global _parar
     with _trava:
         _fila.clear()
-        _parar = True
+        _parar = _tocando
     return True

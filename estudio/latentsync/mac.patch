@@ -1,0 +1,112 @@
+diff --git a/latentsync/models/unet.py b/latentsync/models/unet.py
+index 13722e0..582577d 100644
+--- a/latentsync/models/unet.py
++++ b/latentsync/models/unet.py
+@@ -505,7 +505,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
+             unet.load_state_dict(ckpt["state_dict"], strict=False)
+ 
+             del ckpt
+-            torch.cuda.empty_cache()
++            if torch.cuda.is_available():
++                torch.cuda.empty_cache()
+         else:
+             resume_global_step = 0
+ 
+diff --git a/latentsync/pipelines/lipsync_pipeline.py b/latentsync/pipelines/lipsync_pipeline.py
+index 693155e..7072931 100644
+--- a/latentsync/pipelines/lipsync_pipeline.py
++++ b/latentsync/pipelines/lipsync_pipeline.py
+@@ -339,7 +339,7 @@ class LipsyncPipeline(DiffusionPipeline):
+         # 0. Define call parameters
+         device = self._execution_device
+         mask_image = load_fixed_mask(height, mask_image_path)
+-        self.image_processor = ImageProcessor(height, device="cuda", mask_image=mask_image)
++        self.image_processor = ImageProcessor(height, device=device.type if hasattr(device, "type") else str(device), mask_image=mask_image)
+         self.set_progress_bar_config(desc=f"Sample frames: {num_frames}")
+ 
+         # 1. Default height and width to unet
+diff --git a/latentsync/utils/face_detector.py b/latentsync/utils/face_detector.py
+index faa55c9..922515e 100644
+--- a/latentsync/utils/face_detector.py
++++ b/latentsync/utils/face_detector.py
+@@ -10,9 +10,9 @@ class FaceDetector:
+         self.app = FaceAnalysis(
+             allowed_modules=["detection", "landmark_2d_106"],
+             root="checkpoints/auxiliary",
+-            providers=["CUDAExecutionProvider"],
++            providers=["CUDAExecutionProvider"] if str(device).startswith("cuda") else ["CPUExecutionProvider"],
+         )
+-        self.app.prepare(ctx_id=cuda_to_int(device), det_size=(INSIGHTFACE_DETECT_SIZE, INSIGHTFACE_DETECT_SIZE))
++        self.app.prepare(ctx_id=cuda_to_int(device) if str(device).startswith("cuda") else -1, det_size=(INSIGHTFACE_DETECT_SIZE, INSIGHTFACE_DETECT_SIZE))
+ 
+     def __call__(self, frame, threshold=0.5):
+         f_h, f_w, _ = frame.shape
+diff --git a/latentsync/utils/util.py b/latentsync/utils/util.py
+index 6aa9ab3..3c9c500 100644
+--- a/latentsync/utils/util.py
++++ b/latentsync/utils/util.py
+@@ -28,7 +28,10 @@ from torchvision import transforms
+ 
+ from einops import rearrange
+ import cv2
+-from decord import AudioReader, VideoReader
++try:
++    from decord import AudioReader, VideoReader
++except ImportError:
++    AudioReader = VideoReader = None
+ import shutil
+ import subprocess
+ 
+@@ -103,6 +106,12 @@ def read_video_cv2(video_path: str):
+ def read_audio(audio_path: str, audio_sample_rate: int = 16000):
+     if audio_path is None:
+         raise ValueError("Audio path is required.")
++    if AudioReader is None:
++        import librosa
++
++        samples, _ = librosa.load(audio_path, sr=audio_sample_rate, mono=True)
++        return torch.from_numpy(samples)
++
+     ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)
+ 
+     # To access the audio samples
+diff --git a/scripts/inference.py b/scripts/inference.py
+index ae2ff67..7c69709 100644
+--- a/scripts/inference.py
++++ b/scripts/inference.py
+@@ -31,8 +31,15 @@ def main(config, args):
+         raise RuntimeError(f"Audio path '{args.audio_path}' not found")
+ 
+     # Check if the GPU supports float16
+-    is_fp16_supported = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] > 7
+-    dtype = torch.float16 if is_fp16_supported else torch.float32
++    if torch.cuda.is_available():
++        device = "cuda"
++        dtype = torch.float16 if torch.cuda.get_device_capability()[0] > 7 else torch.float32
++    elif torch.backends.mps.is_available():
++        device = "mps"
++        dtype = torch.float16 if os.environ.get("LATENTSYNC_FP32") != "1" else torch.float32
++    else:
++        device = "cpu"
++        dtype = torch.float32
+ 
+     print(f"Input video path: {args.video_path}")
+     print(f"Input audio path: {args.audio_path}")
+@@ -49,7 +56,7 @@ def main(config, args):
+ 
+     audio_encoder = Audio2Feature(
+         model_path=whisper_model_path,
+-        device="cuda",
++        device=device,
+         num_frames=config.data.num_frames,
+         audio_feat_length=config.data.audio_feat_length,
+     )
+@@ -71,7 +78,7 @@ def main(config, args):
+         audio_encoder=audio_encoder,
+         unet=unet,
+         scheduler=scheduler,
+-    ).to("cuda")
++    ).to(device)
+ 
+     # use DeepCache
+     if args.enable_deepcache:
