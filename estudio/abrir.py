@@ -30,6 +30,10 @@ import time
 import webbrowser
 from pathlib import Path
 
+import plataforma
+
+plataforma.completar_path()
+
 AQUI = Path(__file__).resolve().parent          # ...\estudio
 RAIZ = AQUI.parent                              # a pasta do projeto
 PORTA = int(os.environ.get("ESTUDIO_PORTA") or 8194)
@@ -48,6 +52,10 @@ def no_ar(porta=PORTA, segundos=0.6):
 
 def python_do_projeto():
     """O python.exe que roda o estudio. Sem console: pythonw.exe quando existir."""
+    if not plataforma.WIN:
+        comfy = _ambiente().get("ESTUDIO_COMFY_DIR")
+        proprio = (Path(comfy).parent / "venv" / "bin" / "python") if comfy else plataforma.python_comfy(RAIZ)
+        return proprio if proprio.is_file() else Path(sys.executable)
     # O Python proprio do Forja (o que o instalador .exe traz) vem primeiro: e o unico
     # que a gente sabe que tem as bibliotecas. Depois, o da ComfyUI.
     for base in (RAIZ / "python", RAIZ / "ComfyUI_windows_portable" / "python_embeded"):
@@ -159,6 +167,17 @@ def faltando(py):
     return [m for m in (r.stdout or "").strip().split(",") if m]
 
 
+def _ambiente():
+    env = dict(os.environ)
+    caminhos = RAIZ / "caminhos.sh"
+    if not plataforma.WIN and caminhos.is_file():
+        for linha in caminhos.read_text(encoding="utf-8").splitlines():
+            if linha.startswith("export ") and "=" in linha:
+                chave, _, valor = linha[7:].partition("=")
+                env[chave.strip()] = valor.strip().strip('"')
+    return env
+
+
 def ligar_escondido():
     """Liga o estudio sem abrir janela. Devolve o processo, ou None se nao deu."""
     py = python_do_projeto()
@@ -167,7 +186,7 @@ def ligar_escondido():
         return None
 
     criar = 0
-    if os.name == "nt":
+    if plataforma.WIN:
         # CREATE_NO_WINDOW: nenhum console aparece, nem por um piscar.
         # DETACHED_PROCESS nao serve aqui: ele solta o processo do nosso e o estudio
         # morreria junto com algumas sessoes. CREATE_NO_WINDOW basta e e mais simples.
@@ -181,8 +200,9 @@ def ligar_escondido():
     try:
         return subprocess.Popen(
             [str(py), "-s", str(servidor)],
-            cwd=str(RAIZ), creationflags=criar,
-            stdin=subprocess.DEVNULL, stdout=registro, stderr=subprocess.STDOUT)
+            cwd=str(RAIZ), env=_ambiente(), creationflags=criar,
+            stdin=subprocess.DEVNULL, stdout=registro, stderr=subprocess.STDOUT,
+            **({} if plataforma.WIN else {"start_new_session": True}))
     except OSError:
         return None
 

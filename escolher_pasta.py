@@ -10,7 +10,7 @@ O que a pessoa escolhe:
 
 O que ela NAO escolhe: a pasta do codigo. Ele e 1,3 MB e fica onde ja esta.
 
-O resultado vira `caminhos.bat`, que o lancador lê antes de abrir o estudio.
+O resultado vira `caminhos.bat` (Windows) ou `caminhos.sh` (macOS), que o lancador lê antes de abrir o estudio.
 Arquivo de texto simples, de proposito: se der errado, a pessoa abre no bloco de
 notas e conserta na mao, sem precisar de mim nem de ninguem.
 """
@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 GB = 1024 ** 3
+WIN = os.name == "nt"
+PASTA_COMFY = "ComfyUI_windows_portable" if WIN else "ComfyUI_mac"
 PRECISA_TUDO = 270      # os 235,7 GB de modelos + ComfyUI + folga (ver REQUISITOS.md)
 PRECISA_IMAGEM = 100    # so a trilha de imagem
 
@@ -29,7 +31,17 @@ PRECISA_IMAGEM = 100    # so a trilha de imagem
 def discos():
     """Os discos da maquina, com o espaco livre. So Windows."""
     fora = []
-    if os.name != "nt":
+    if sys.platform == "darwin":
+        raizes = ["/"] + [str(Path("/Volumes") / n) for n in sorted(os.listdir("/Volumes"))
+                          if (Path("/Volumes") / n).is_mount()] if Path("/Volumes").is_dir() else ["/"]
+        for raiz in dict.fromkeys(raizes):
+            try:
+                u = shutil.disk_usage(raiz)
+                fora.append({"letra": raiz, "raiz": raiz, "livre": u.free / GB, "total": u.total / GB})
+            except OSError:
+                continue
+        return fora
+    if not WIN:
         return fora
     bits = ctypes.windll.kernel32.GetLogicalDrives()
     for i, letra in enumerate(string.ascii_uppercase):
@@ -88,7 +100,7 @@ def escolher(aqui: Path):
             print(f"    {d['raiz']:<7} {d['livre']:>8.0f} GB {d['total']:>8.0f} GB   {veredito}")
         melhor = max(ds, key=lambda d: d["livre"])
         print(f"\n  O mais folgado e o {melhor['raiz']} com {melhor['livre']:.0f} GB livres.")
-        sugestao = f"{melhor['letra']}:\\ForjaStudio"
+        sugestao = f"{melhor['letra']}:\\ForjaStudio" if WIN else str(Path(melhor["raiz"]) / "ForjaStudio")
     else:
         sugestao = str(aqui)
 
@@ -96,9 +108,9 @@ def escolher(aqui: Path):
     print("  (a conta inteira esta em REQUISITOS.md)")
 
     print("\n  --- 1. A ComfyUI e os modelos (o que pesa) ---")
-    print(f"  Hoje: {aqui / 'ComfyUI_windows_portable'}")
+    print(f"  Hoje: {aqui / PASTA_COMFY}")
     print("  Enter para deixar aqui mesmo, ou escreva outra pasta.")
-    comfy = perguntar("  Pasta: ", str(aqui / "ComfyUI_windows_portable"))
+    comfy = perguntar("  Pasta: ", str(aqui / PASTA_COMFY))
     ok, livre = cabe(comfy, PRECISA_TUDO)
     if ok is None:
         print(f"  ! Nao consegui ler o espaco de {comfy}. Vou aceitar assim mesmo.")
@@ -118,16 +130,26 @@ def escolher(aqui: Path):
     padrao_saidas = str(Path(comfy) / "ComfyUI" / "output")
     saidas = perguntar(f"  Pasta [{padrao_saidas}]: ", padrao_saidas)
 
-    arq = aqui / "caminhos.bat"
-    arq.write_text(
-        "@echo off\r\n"
-        "rem Caminhos escolhidos na instalacao. E so texto: pode abrir no bloco de\r\n"
-        "rem notas e corrigir na mao se voce mudar as pastas de lugar.\r\n"
-        f'set "ESTUDIO_COMFY_DIR={Path(comfy) / "ComfyUI"}"\r\n'
-        f'set "ESTUDIO_SAIDAS={saidas}"\r\n',
-        encoding="utf-8")
+    if WIN:
+        arq = aqui / "caminhos.bat"
+        arq.write_text(
+            "@echo off\r\n"
+            "rem Caminhos escolhidos na instalacao. E so texto: pode abrir no bloco de\r\n"
+            "rem notas e corrigir na mao se voce mudar as pastas de lugar.\r\n"
+            f'set "ESTUDIO_COMFY_DIR={Path(comfy) / "ComfyUI"}"\r\n'
+            f'set "ESTUDIO_SAIDAS={saidas}"\r\n',
+            encoding="utf-8")
+        leitor = "Forja Studio.bat"
+    else:
+        arq = aqui / "caminhos.sh"
+        arq.write_text(
+            "# Caminhos escolhidos na instalacao. E so texto: edite aqui se mudar as pastas de lugar.\n"
+            f'export ESTUDIO_COMFY_DIR="{Path(comfy) / "ComfyUI"}"\n'
+            f'export ESTUDIO_SAIDAS="{saidas}"\n',
+            encoding="utf-8")
+        leitor = "Forja Studio.command"
     print(f"\n  Guardado em {arq}")
-    print("  O atalho 'Forja Studio.bat' le esse arquivo toda vez que abre.")
+    print(f"  O atalho '{leitor}' le esse arquivo toda vez que abre.")
     print("=" * 66 + "\n")
     return {"comfy": comfy, "saidas": saidas}
 

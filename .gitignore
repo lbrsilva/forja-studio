@@ -49,6 +49,9 @@ saidas/
 
 # --- modelos: 388 GB, baixados pelo instalador ---
 ComfyUI_windows_portable/
+ComfyUI_mac/
+caminhos.sh
+caminhos.bat
 modelos_texto/*.gguf
 *.safetensors
 *.ckpt

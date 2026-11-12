@@ -34,18 +34,38 @@ import ctypes
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
+import sys
 import time
 from ctypes import wintypes
 from pathlib import Path
 
 import aiohttp
 
+import plataforma
+
 AQUI = Path(__file__).resolve().parent
 ROOT = AQUI.parent
 LLAMA = ROOT / "_ferramentas" / "llama.cpp"
-EXE_GPU = LLAMA / "gpu" / "llama-server.exe"
-EXE_CPU = LLAMA / "cpu" / "llama-server.exe"
+
+
+def _exe_llama(variante):
+    """No Windows, o pacote traz um llama-server por variante. No macOS (Metal) um so serve aos dois:
+    o da pasta do projeto, ou o que o Homebrew instalou (brew install llama.cpp)."""
+    nome = plataforma.exe("llama-server")
+    proprio = LLAMA / variante / nome
+    if plataforma.WIN or proprio.is_file():
+        return proprio
+    for candidato in (LLAMA / nome, shutil.which("llama-server")):
+        if candidato and Path(candidato).is_file():
+            return Path(candidato)
+    return proprio
+
+
+EXE_GPU = _exe_llama("gpu")
+EXE_CPU = _exe_llama("cpu")
 MODELOS_DIR = ROOT / "modelos_texto"
 MODELOS_INI = MODELOS_DIR / "modelos.ini"
 LOGS = Path(os.environ["ESTUDIO_LOGS"]) if os.environ.get("ESTUDIO_LOGS") else ROOT / "outputs"
@@ -152,7 +172,7 @@ class ErroTexto(Exception):
 
 
 # ---------------------------------------------------------------- Job do Windows (os filhos fecham com o estúdio)
-class _Job:
+class _JobWindows:
     """Job object com KILL_ON_JOB_CLOSE: tudo o que estiver nele fecha quando o estúdio fechar (ou cair) e
     matar() encerra a árvore inteira (o roteador e os processos de modelo que ele abriu)."""
 
@@ -212,6 +232,54 @@ class _Job:
             self.h = None
 
 
+_VIGIA = (
+    "import os,sys,time,signal\n"
+    "pai,grupo=int(sys.argv[1]),int(sys.argv[2])\n"
+    "def vivo(p):\n"
+    "    try:\n"
+    "        os.kill(p,0)\n"
+    "        return True\n"
+    "    except ProcessLookupError:\n"
+    "        return False\n"
+    "    except PermissionError:\n"
+    "        return True\n"
+    "while vivo(pai) and vivo(grupo):\n"
+    "    time.sleep(2)\n"
+    "if not vivo(pai):\n"
+    "    try:\n"
+    "        os.killpg(grupo,signal.SIGKILL)\n"
+    "    except OSError:\n"
+    "        pass\n")
+
+
+class _JobPosix:
+    """O mesmo contrato do Job do Windows, com grupo de processos: matar() encerra a árvore inteira, e um vigia
+    separado faz o mesmo se o estúdio cair (o macOS não tem KILL_ON_JOB_CLOSE)."""
+
+    def __init__(self):
+        self.grupo = None
+
+    def colocar(self, proc):
+        self.grupo = proc.pid  # o processo foi aberto com start_new_session: ele é líder do próprio grupo
+        try:
+            subprocess.Popen([sys.executable, "-c", _VIGIA, str(os.getpid()), str(proc.pid)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except OSError as exc:
+            print(f"[texto] não consegui abrir o vigia do servidor de texto: {exc}", flush=True)
+
+    def matar(self):
+        if self.grupo:
+            try:
+                os.killpg(self.grupo, signal.SIGKILL)
+            except OSError:
+                pass
+            self.grupo = None
+
+
+_Job = _JobWindows if plataforma.WIN else _JobPosix
+
+
 # ---------------------------------------------------------------- utilidades
 def _ambiente():
     """Variáveis de cache/temporários no E: (o CUDA compila e guarda o cache em CUDA_CACHE_PATH). HF_HOME aponta
@@ -219,7 +287,7 @@ def _ambiente():
     Face (Chatterbox, Whisper...). Nada é baixado: os .gguf ficam em modelos_texto e são indicados no modelos.ini."""
     env = dict(os.environ)
     pastas = {"TEMP": "temp", "TMP": "temp", "CUDA_CACHE_PATH": "cuda", "XDG_CACHE_HOME": "xdg",
-              "LLAMA_CACHE": "llama.cpp", "HF_HOME": r"llama.cpp\hf"}
+              "LLAMA_CACHE": "llama.cpp", "HF_HOME": "llama.cpp/hf"}
     for nome, sub in pastas.items():
         p = CACHE / sub
         try:
@@ -270,12 +338,18 @@ async def _http(metodo, url, timeout=10, **kw):
 
 
 async def vram_mib():
-    """(usada, livre) em MiB pelo nvidia-smi, ou (None, None)."""
+    """(usada, livre) em MiB pelo nvidia-smi (no macOS, pela memória unificada), ou (None, None)."""
+    if not plataforma.WIN:
+        info = plataforma.gpu_unificada() if plataforma.MAC else None
+        if not info:
+            return None, None
+        _, total, livre = info
+        return (total - livre) // 1024 ** 2, livre // 1024 ** 2
     try:
         proc = await asyncio.create_subprocess_exec(
             "nvidia-smi", "--query-gpu=memory.used,memory.free", "--format=csv,noheader,nounits",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW)
+            creationflags=plataforma.NO_WINDOW)
         out, _ = await asyncio.wait_for(proc.communicate(), 8)
         usada, livre = (int(x) for x in out.decode().strip().splitlines()[0].split(","))
         return usada, livre
@@ -301,7 +375,9 @@ def _matar_llama_na_porta(porta):
             continue
         try:
             p = psutil.Process(c.pid)
-            if p.name().lower() != "llama-server.exe" or not (p.exe() or "").lower().startswith(alvo):
+            if p.name().lower() != plataforma.exe("llama-server") or not (
+                    (p.exe() or "").lower().startswith(alvo)
+                    or os.path.realpath(p.exe() or "") in (os.path.realpath(EXE_GPU), os.path.realpath(EXE_CPU))):
                 continue
             for filho in p.children(recursive=True):  # o roteador da placa abre um processo por modelo
                 try:
@@ -568,7 +644,7 @@ class MotorTexto:
         for p in ([papel] if papel else list(MODELOS)):
             m = MODELOS[p]
             if not (MODELOS_DIR / m["pasta"] / m["arquivo"]).is_file():
-                falta.append(f"modelo {m['nome']} (modelos_texto\\{m['pasta']}\\{m['arquivo']})")
+                falta.append(f"modelo {m['nome']} ({Path('modelos_texto') / m['pasta'] / m['arquivo']})")
         return falta
 
     def instalado(self):
@@ -588,8 +664,11 @@ class MotorTexto:
             job.matar()
         try:
             if p.poll() is None:
-                subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True,
-                               creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+                if plataforma.WIN:
+                    subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True,
+                                   creationflags=plataforma.NO_WINDOW, timeout=15)
+                else:
+                    p.kill()
         except Exception:
             pass
         self.proc[onde] = None
@@ -611,7 +690,8 @@ class MotorTexto:
         # sem --sleep-idle-seconds: quem desliga o processador parado é o vigia do estúdio (10 min), e com
         # "manter ligada" o modelo tem que continuar carregado (o llama-server "dormindo" tiraria o modelo da memória)
         return [str(EXE_CPU), "-m", str(pasta / m["arquivo"]), "--mmproj", str(pasta / m["mmproj"]),
-                "-c", "8192", "-np", "1", "-t", "16", "-tb", "24", "--jinja", "-fa", "on",
+                "-c", "8192", "-np", "1", "-t", str(16 if plataforma.WIN else plataforma.threads_cpu()),
+                "-tb", str(24 if plataforma.WIN else plataforma.threads_cpu()), "--jinja", "-fa", "on",
                 "--host", "127.0.0.1", "--port", str(PORTA_CPU), "--no-webui", "-a", "rapido"]
 
     async def _ligar(self, onde):
@@ -656,7 +736,7 @@ class MotorTexto:
                 exe = EXE_GPU if onde == "placa" else EXE_CPU
                 p = subprocess.Popen(self._args(onde), cwd=str(exe.parent), env=_ambiente(), stdout=log,
                                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                     creationflags=subprocess.CREATE_NO_WINDOW)
+                                     **plataforma.sem_janela())
             finally:
                 log.close()
             job = _Job()

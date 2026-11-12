@@ -21,6 +21,8 @@ numa tela só. Foi montado num computador de verdade, fazendo vídeo de verdade:
 >
 > Reserve **50 GB livres** para começar com folga (plataforma + a primeira IA).
 
+> **Mac (Apple Silicon):** siga o [INSTALAR-MAC.md](INSTALAR-MAC.md). O resto deste texto vale para os dois sistemas.
+
 ## Em que pé está
 
 **Este painel está em desenvolvimento e é usado todo dia por quem o escreveu.** Não é um

@@ -45,6 +45,8 @@ import os
 import struct
 from pathlib import Path
 
+import plataforma
+
 AQUI = Path(__file__).resolve().parent
 ARQUIVO = AQUI / "presets.cofre"
 MARCA = b"FORJACOFRE1\n"     # muda se o formato mudar; cliente velho recusa na cara limpa
@@ -202,8 +204,35 @@ def lista():
 GUARDADA = AQUI / "chave_presets.bin"
 
 
+_ETIQUETA_MAC = b"FS1"
+
+
+def _proteger_mac(entrada, proteger):
+    segredo = plataforma.segredo_da_maquina()
+    if not segredo:
+        return None
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+        chave = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"forja-studio/cofre-de-presets/v1",
+                     info=b"chave-guardada").derive(segredo)
+        if proteger:
+            nonce = os.urandom(12)
+            return _ETIQUETA_MAC + nonce + AESGCM(chave).encrypt(nonce, bytes(entrada), _ETIQUETA_MAC)
+        if not entrada.startswith(_ETIQUETA_MAC):
+            return None
+        corpo = entrada[len(_ETIQUETA_MAC):]
+        return AESGCM(chave).decrypt(corpo[:12], corpo[12:], _ETIQUETA_MAC)
+    except Exception:
+        return None
+
+
 def _dpapi(entrada, proteger=True):
-    """CryptProtectData / CryptUnprotectData. None se nao for Windows ou der errado."""
+    """CryptProtectData / CryptUnprotectData. No macOS, AES-GCM com chave presa a esta maquina e a este usuario.
+    None se der errado."""
+    if plataforma.MAC:
+        return _proteger_mac(entrada, proteger)
     if os.name != "nt":
         return None
     import ctypes
@@ -240,6 +269,8 @@ def guardar_chave(chave):
         return False
     try:
         GUARDADA.write_bytes(protegida)
+        if not plataforma.WIN:
+            os.chmod(GUARDADA, 0o600)
         return True
     except OSError:
         return False

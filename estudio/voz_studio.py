@@ -34,6 +34,8 @@ from pathlib import Path
 
 import aiohttp
 
+import plataforma
+
 URL = os.environ.get("ESTUDIO_VOZ_URL") or "http://127.0.0.1:3900"
 MCP = URL.rstrip("/") + "/mcp/"
 PROTOCOLO = "2025-06-18"
@@ -78,6 +80,10 @@ NOMES_IDIOMA = {
 OUTRAS = []
 
 
+def _python_do_backend(proj):
+    return proj / ".venv" / ("Scripts/python.exe" if plataforma.WIN else "bin/python")
+
+
 def achar_backend():
     """A pasta do motor do VoiceStudio instalado, ou None.
 
@@ -89,6 +95,8 @@ def achar_backend():
     ap = os.environ.get("APPDATA")
     if ap:
         tentativas.append(Path(ap) / "VoiceStudio" / "runtime" / "project")
+    if plataforma.MAC:
+        tentativas.append(Path.home() / "Library" / "Application Support" / "VoiceStudio" / "runtime" / "project")
     # instalado AO LADO do projeto -- e onde ele costuma estar
     _irmao = Path(__file__).resolve().parent.parent.parent / "VoiceStudio"
     tentativas.append(_irmao / "runtime" / "project")
@@ -104,7 +112,7 @@ def achar_backend():
         # pelo instalador. Em 14/11/2026 isso derrubava a lista de motores inteira e nenhum
         # ligava. Caminho que nao da para olhar = caminho que nao serve; segue para o proximo.
         try:
-            if (p / ".venv" / "Scripts" / "python.exe").is_file() and (p / "backend" / "main.py").is_file():
+            if _python_do_backend(p).is_file() and (p / "backend" / "main.py").is_file():
                 return p
         except OSError:
             continue
@@ -128,7 +136,7 @@ def ligar(saida_audio=None):
                OMNIVOICE_PORT=porta, VOICESTUDIO_URL=URL, OMNIVOICE_HOST="127.0.0.1",
                OMNIVOICE_MCP_BASE_PATH=str(saida_audio or Path.cwd()))
     try:
-        subprocess.Popen([str(proj / ".venv" / "Scripts" / "python.exe"), "-u",
+        subprocess.Popen([str(_python_do_backend(proj)), "-u",
                           str(proj / "backend" / "main.py")],
                          cwd=str(proj / "backend"), env=amb,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -499,7 +507,7 @@ REF_SEGUNDOS = 25
 
 def _ffmpeg():
     """O ffmpeg do projeto, o do PATH, ou None."""
-    perto = Path(__file__).resolve().parent.parent / "_ferramentas" / "ffmpeg" / "bin" / "ffmpeg.exe"
+    perto = Path(__file__).resolve().parent.parent / "_ferramentas" / "ffmpeg" / "bin" / plataforma.exe("ffmpeg")
     if perto.is_file():
         return str(perto)
     return shutil.which("ffmpeg")
@@ -523,7 +531,7 @@ PAUSAS_MINIMAS = 1          # uma referencia de 25 s de fala de verdade tem ao m
 
 
 def _ffprobe():
-    perto = Path(__file__).resolve().parent.parent / "_ferramentas" / "ffmpeg" / "bin" / "ffprobe.exe"
+    perto = Path(__file__).resolve().parent.parent / "_ferramentas" / "ffmpeg" / "bin" / plataforma.exe("ffprobe")
     if perto.is_file():
         return str(perto)
     return shutil.which("ffprobe")

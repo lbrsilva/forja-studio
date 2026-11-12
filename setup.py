@@ -29,6 +29,9 @@ import sys
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
+WIN = os.name == "nt"
+MAC = sys.platform == "darwin"
+PASTA_COMFY = "ComfyUI_windows_portable" if WIN else "ComfyUI_mac"
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -63,6 +66,19 @@ def conferir_maquina():
     else:
         print(OK + "Python %d.%d.%d" % (v.major, v.minor, v.micro))
 
+    if MAC:
+        chip = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True,
+                              text=True).stdout.strip()
+        mem = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True,
+                                 text=True).stdout.strip() or 0) / 1024 ** 3
+        print(OK + "chip: %s (%.0f GB de memoria unificada)" % (chip, mem))
+        if "Apple" not in chip:
+            cuidado("Mac com processador Intel: sem GPU utilizavel pela ComfyUI, tudo roda no processador.")
+        elif mem < 16:
+            cuidado("Com menos de 16 GB de memoria, as IAs de video nao cabem. "
+                    "A parte de imagem leve funciona.")
+        _checar_disco()
+        return
     try:
         r = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
                            capture_output=True, text=True, timeout=20)
@@ -79,6 +95,10 @@ def conferir_maquina():
         cuidado("Nao achei a nvidia-smi. Sem placa NVIDIA, so o que roda no processador "
                 "vai funcionar -- e vai ser muito lento.")
 
+    _checar_disco()
+
+
+def _checar_disco():
     try:
         livre = shutil.disk_usage(AQUI).free / 1024 ** 3
         print(OK + "espaco livre aqui: %.0f GB" % livre)
@@ -96,10 +116,11 @@ def achar_comfy():
         c = Path(os.environ["ESTUDIO_COMFY_DIR"])
         print(OK + "ESTUDIO_COMFY_DIR aponta para %s" % c)
     else:
-        c = AQUI / "ComfyUI_windows_portable" / "ComfyUI"
+        c = AQUI / PASTA_COMFY / "ComfyUI"
     if not (c / "main.py").is_file():
         falhou("Nao achei a ComfyUI em %s.\n"
-               "       Descompacte a ComfyUI portatil aqui, ou aponte com ESTUDIO_COMFY_DIR." % c)
+               "       %s" % (c, "Rode ./instalar-mac.sh, ou aponte com ESTUDIO_COMFY_DIR." if not WIN else
+                              "Descompacte a ComfyUI portatil aqui, ou aponte com ESTUDIO_COMFY_DIR."))
         return None
     print(OK + "achei em %s" % c)
 
@@ -165,10 +186,13 @@ def instalar_dependencias(comfy):
     if "--conferir" in sys.argv:
         print(OK + "modo conferencia: nao instalei nada")
         return
-    py = (comfy.parent / "python_embeded" / "python.exe") if comfy else None
+    if WIN:
+        py = (comfy.parent / "python_embeded" / "python.exe") if comfy else None
+    else:
+        py = (comfy.parent / "venv" / "bin" / "python") if comfy else None
     if not (py and py.is_file()):
         py = Path(sys.executable)
-        cuidado("Nao achei o python da ComfyUI portatil; vou usar %s." % py.name)
+        cuidado("Nao achei o python da ComfyUI; vou usar %s." % py.name)
     req = AQUI / "requirements.txt"
     if not req.is_file():
         falhou("Nao achei o requirements.txt.")
@@ -190,10 +214,15 @@ def conferir_configuracao():
     if not (est / "server.py").is_file():
         falhou("Nao achei a pasta estudio aqui do lado.")
         return
-    pres = json.loads((est / "presets.json").read_text(encoding="utf-8"))
-    n = sum(len(v) for v in pres.values() if isinstance(v, list))
-    wf = len(list((est / "presets").glob("*.api.json")))
-    print(OK + "%d IAs configuradas, %d workflows ajustados" % (n, wf))
+    if (est / "presets.json").is_file():
+        pres = json.loads((est / "presets.json").read_text(encoding="utf-8"))
+        n = sum(len(v) for v in pres.values() if isinstance(v, list))
+        wf = len(list((est / "presets").glob("*.api.json")))
+        print(OK + "%d IAs configuradas, %d workflows ajustados" % (n, wf))
+    elif (est / "presets.cofre").is_file():
+        print(OK + "configuracao das IAs no cofre (abre com a sua conta, dentro do programa)")
+    else:
+        falhou("Nao achei os presets (estudio/presets.cofre).")
     if (est / "tempos.json").is_file():
         print(OK + "tempos medidos: o painel ja mostra quanto falta na primeira geracao")
 
@@ -264,17 +293,25 @@ def criar_atalho(comfy):
     bastava atualizar a pagina. Os atalhos de agora esperam o estudio responder de verdade.
     """
     titulo(6, "Os atalhos para abrir")
-    principal = AQUI / "Forja Studio.bat"
+    ext = ".bat" if WIN else ".command"
+    principal = AQUI / ("Forja Studio" + ext)
     if not principal.is_file():
-        cuidado("Nao achei o 'Forja Studio.bat' aqui do lado. Da para abrir na mao:\n"
-                "       ComfyUI_windows_portable\\python_embeded\\python.exe estudio\\server.py")
+        cuidado("Nao achei o '%s' aqui do lado. Da para abrir na mao:\n"
+                "       %s" % (principal.name, "ComfyUI_windows_portable\\python_embeded\\python.exe estudio\\server.py"
+                               if WIN else "ComfyUI_mac/venv/bin/python estudio/server.py"))
         return None
-    print(OK + "%-29s abre o painel (espera ficar pronto antes)" % "Forja Studio.bat")
-    for extra, oque in (("Criar o icone na Area de Trabalho.bat", "poe o icone na sua mesa"),
-                        ("IR PARA O LUGAR PADRAO.bat", "leva tudo para C:\\ForjaStudio"),
-                        ("Ligar com o Windows.bat", "abre sozinho quando voce entra no PC"),
-                        ("Nao ligar com o Windows.bat", "desfaz o de cima"),
-                        ("Desligar o estudio.bat", "fecha tudo e libera a placa de video")):
+    print(OK + "%-29s abre o painel (espera ficar pronto antes)" % principal.name)
+    if WIN:
+        extras = (("Criar o icone na Area de Trabalho.bat", "poe o icone na sua mesa"),
+                  ("IR PARA O LUGAR PADRAO.bat", "leva tudo para C:\\ForjaStudio"),
+                  ("Ligar com o Windows.bat", "abre sozinho quando voce entra no PC"),
+                  ("Nao ligar com o Windows.bat", "desfaz o de cima"),
+                  ("Desligar o estudio.bat", "fecha tudo e libera a placa de video"))
+    else:
+        extras = (("Ligar com o Mac.command", "abre sozinho quando voce entra no computador"),
+                  ("Nao ligar com o Mac.command", "desfaz o de cima"),
+                  ("Desligar o estudio.command", "fecha tudo e libera a placa de video / memoria"))
+    for extra, oque in extras:
         if (AQUI / extra).is_file():
             print(OK + "%-29s %s" % (extra, oque))
 
@@ -287,7 +324,7 @@ def criar_atalho(comfy):
     # ve o navegador, mais nada. Quem acha a Area de Trabalho e o atalho.py, que pergunta
     # ao Windows em vez de adivinhar "C:\Users\<nome>\Desktop" - quem usa OneDrive tem ela
     # redirecionada, e num Windows noutro idioma a pasta nem se chama "Desktop".
-    if "--conferir" not in sys.argv and os.name == "nt":
+    if "--conferir" not in sys.argv and (WIN or MAC):
         _icone_na_area_de_trabalho()
     return principal
 
@@ -295,8 +332,11 @@ def criar_atalho(comfy):
 def _de_novo_depois():
     """A frase que diz como pedir o icone mais tarde. Numa constante porque aparece em
     tres lugares, e tres copias de um texto viram tres textos diferentes com o tempo."""
-    print("       Da para pedir ele depois: clique em")
-    print("       'Criar o icone na Area de Trabalho.bat', aqui nesta pasta.")
+    if WIN:
+        print("       Da para pedir ele depois: clique em")
+        print("       'Criar o icone na Area de Trabalho.bat', aqui nesta pasta.")
+    else:
+        print("       Da para pedir ele depois: rode este setup de novo.")
 
 
 def _icone_na_area_de_trabalho():
@@ -332,7 +372,7 @@ def _icone_na_area_de_trabalho():
         _de_novo_depois()
         return
 
-    if (mesa / "Forja Studio.lnk").exists():
+    if (mesa / ("Forja Studio.lnk" if WIN else "Forja Studio.app")).exists():
         print(OK + "o icone do Forja Studio ja esta na Area de Trabalho")
         return
 
@@ -370,7 +410,8 @@ def _icone_na_area_de_trabalho():
     # Falhar aqui nao pode mais ser mudo: o motivo vai para a tela, inteiro.
     cuidado("nao consegui criar o icone.")
     print("       " + (getattr(_atalho, "ultimo_motivo", None) or "Nao sei dizer o motivo."))
-    print("       Da para abrir o estudio pelo 'Forja Studio.bat', aqui da pasta.")
+    print("       Da para abrir o estudio pelo '%s', aqui da pasta."
+          % ("Forja Studio.bat" if WIN else "Forja Studio.command"))
     _de_novo_depois()
 
 
@@ -385,7 +426,7 @@ def main():
     conferir_o_lugar()
     # Onde guardar os 235 GB. So pergunta na PRIMEIRA vez: quem ja escolheu nao quer ser
     # perguntado de novo toda vez que roda o setup so para conferir alguma coisa.
-    if "--conferir" not in sys.argv and not (AQUI / "caminhos.bat").is_file():
+    if "--conferir" not in sys.argv and not (AQUI / ("caminhos.bat" if WIN else "caminhos.sh")).is_file():
         try:
             sys.path.insert(0, str(AQUI))
             import escolher_pasta

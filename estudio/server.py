@@ -51,6 +51,7 @@ import mimetypes
 import os
 import random
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -66,6 +67,8 @@ import aiohttp
 from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # python_embeded não inclui a pasta do script
+import plataforma  # noqa: E402  (o que muda entre Windows e macOS)
+plataforma.completar_path()
 import cofre  # noqa: E402  (os presets e workflows fechados: ver cofre.py)
 import ias  # noqa: E402  (instalar cada IA depois, pela tela: ver ias.py)
 import motor  # noqa: E402  (instalar a ComfyUI pelo botao: ver motor.py)
@@ -116,7 +119,7 @@ def _comfy_dir_inicial():
     except (OSError, ValueError, AttributeError):
         base = ""
     raiz = Path(base) if base else ROOT
-    return raiz / "ComfyUI_windows_portable" / "ComfyUI"
+    return plataforma.comfy_dir(raiz)
 
 
 COMFY_DIR = _comfy_dir_inicial()
@@ -2233,6 +2236,8 @@ PEDIDO_CONTEXTO = (
 
 def py_dos_scripts():
     """O `py` do Windows (tem requests); o python_embeded não acha os módulos dos scripts do fz_clipe."""
+    if not plataforma.WIN:
+        return shutil.which("python3") or sys.executable
     c = shutil.which("py")
     if c:
         return c
@@ -2288,6 +2293,12 @@ async def encerrar_contexto(proc):
         except Exception:
             pass
         try:
+            if not plataforma.WIN:
+                import psutil
+                for p in psutil.process_iter(["cmdline"]):
+                    if "edge_comfy_headless" in " ".join(p.info.get("cmdline") or []):
+                        p.kill()
+                raise OSError("sem powershell")
             await asyncio.create_subprocess_exec(
                 "powershell", "-NoProfile", "-Command",
                 "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object { $_.CommandLine -match "
@@ -2385,7 +2396,7 @@ async def processar_contexto(job):
             destino.mkdir(parents=True, exist_ok=True)
             arquivo = f"h3_contexto_{jid}_00001_.mp4"
             shutil.copy2(final, destino / arquivo)
-            job["saidas"] = [{"no": "h3c", "arquivo": arquivo, "sub": "video\\estudio", "tipo": "output"}]
+            job["saidas"] = [{"no": "h3c", "arquivo": arquivo, "sub": "video/estudio", "tipo": "output"}]
             job["estado"] = "concluido"
             job["fim"] = time.time()
             for k in ("erro", "erro_tecnico", "erro_vigia", "aguardando"):
@@ -2951,6 +2962,16 @@ async def api_sistema(req):
 
 def memoria_ram():
     """RAM e memória virtual (com o arquivo de paginação) pelo próprio Windows, sem instalar nada."""
+    if not plataforma.WIN:
+        try:
+            import psutil
+            gb = 1024 ** 3
+            m, sw = psutil.virtual_memory(), psutil.swap_memory()
+            return {"ram_total_gb": round(m.total / gb, 1), "ram_livre_gb": round(m.available / gb, 1),
+                    "memoria_virtual_total_gb": round((m.total + sw.total) / gb, 1),
+                    "memoria_virtual_livre_gb": round((m.available + sw.free) / gb, 1)}
+        except Exception:
+            return {"ram_total_gb": None, "ram_livre_gb": None}
     try:
         import ctypes
 
@@ -3017,14 +3038,16 @@ LIMITE_LOG = 20 * 1024 * 1024
 LANCADOR = ROOT / "Abrir Estudio.ps1"
 # Sai do COMFY_DIR, e nao da pasta do painel: ate 13/11/2026 o botao "Ligar" procurava o
 # Python da ComfyUI sempre dentro do painel, mesmo com a ComfyUI apontada para outro disco.
-PY_VIDEO = COMFY_DIR.parent / "python_embeded" / "python.exe"
+PY_VIDEO = (COMFY_DIR.parent / "python_embeded" / "python.exe" if plataforma.WIN
+            else COMFY_DIR.parent / "venv" / "bin" / "python")
 # a linha que o lançador usa (se não der para ler o lançador, esta cópia vale)
 ARGS_COMFY_VIDEO_PADRAO = (r"-s ComfyUI\main.py --windows-standalone-build --disable-auto-launch --listen 127.0.0.1 "
-                           r"--port 8188 --fast fp16_accumulation --use-ck-attention")
+                           r"--port 8188 --fast fp16_accumulation --use-ck-attention") if plataforma.WIN else \
+    f"-s {shlex.quote(str(COMFY_DIR / 'main.py'))} --disable-auto-launch --listen 127.0.0.1 --port 8188"
 # o mesmo que _setup\ambiente_E.ps1 (temporários e caches no E:)
 PASTAS_CACHE = (("TEMP", "temp"), ("TMP", "temp"), ("HF_HOME", "huggingface"), ("PIP_CACHE_DIR", "pip"),
                 ("TORCH_HOME", "torch"), ("TRITON_CACHE_DIR", "triton"), ("CUDA_CACHE_PATH", "cuda"),
-                ("UV_CACHE_DIR", "uv"), ("XDG_CACHE_HOME", "xdg"), ("GRADIO_TEMP_DIR", r"temp\gradio"),
+                ("UV_CACHE_DIR", "uv"), ("XDG_CACHE_HOME", "xdg"), ("GRADIO_TEMP_DIR", "temp/gradio"),
                 ("MPLCONFIGDIR", "matplotlib"))
 # A ComfyUI e o coracao: sempre aparece. A musica (14/11/2026) vem no pacote, na pasta
 # painel_musica, e usa a MESMA ComfyUI - entao so existe UM servico a mais, o painel. Ate
@@ -3086,6 +3109,8 @@ def _porta_url(url):
 
 def args_comfy_video():
     """A MESMA linha de comando do lançador "Abrir Estudio.ps1" (lida dele, para as duas nunca ficarem diferentes)."""
+    if not plataforma.WIN:
+        return ARGS_COMFY_VIDEO_PADRAO
     try:
         m = re.search(r"^\s*\$ARGS_COMFY_VIDEO\s*=\s*'([^']+)'", LANCADOR.read_text(encoding="utf-8-sig"), re.M)
         if m:
@@ -3110,10 +3135,13 @@ def ambiente_e(extra=None):
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
     # Console em UTF-8: nós que imprimem chinês/acentos (ex.: Easy-Media) quebravam a geração no cp1252.
     env["PYTHONIOENCODING"] = "utf-8"
+    if plataforma.MAC:
+        env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # operações que o Metal ainda não tem rodam no processador
     ff = ROOT / "_ferramentas" / "ffmpeg" / "bin"
     caminho = env.get("PATH", "")
-    if (ff / "ffmpeg.exe").is_file() and str(ff).lower() not in [x.lower().rstrip("\\") for x in caminho.split(";")]:
-        env["PATH"] = f"{ff};{caminho}"
+    if (ff / plataforma.exe("ffmpeg")).is_file() and str(ff).lower() not in [
+            x.lower().rstrip("\\/") for x in caminho.split(os.pathsep)]:
+        env["PATH"] = f"{ff}{os.pathsep}{caminho}"
     if extra:
         env.update(extra)
     return env
@@ -3216,7 +3244,9 @@ def servico_def(chave):
     Python da ComfyUI e o ambiente do ambiente_do_painel)."""
     if chave == "video":
         d = {"nome": "A ComfyUI de vídeo", "url": COMFY + "/system_stats", "porta": _porta_url(COMFY), "limite": 480,
-             "cmd": f'"{PY_VIDEO}" {args_comfy_video()}', "cwd": COMFY_DIR.parent, "exe": PY_VIDEO,
+             "cmd": f'"{PY_VIDEO}" {args_comfy_video()}' if plataforma.WIN else
+             [str(PY_VIDEO), *shlex.split(args_comfy_video())],
+             "cwd": COMFY_DIR.parent if plataforma.WIN else COMFY_DIR, "exe": PY_VIDEO,
              "saida": "comfy_video_stdout.log", "erro": "comfy_video_stderr.log", "log_novo": True,
              "console_escondido": True, "extra_env": None, "porta_real": 8188}
     else:  # painel_musica
@@ -3259,7 +3289,7 @@ def _processos_python(fresco=False):
     try:
         import psutil
         for p in psutil.process_iter(["pid", "name", "create_time"]):
-            if (p.info.get("name") or "").lower() not in ("python.exe", "pythonw.exe"):
+            if not plataforma.e_python(p.info.get("name")):
                 continue
             try:
                 lista.append((p.info["pid"], p.info.get("create_time") or 0.0, " ".join(p.cmdline())))
@@ -3327,6 +3357,8 @@ def _abrir_processo(d):
         f_saida.flush()
     kw = {"cwd": str(d["cwd"]), "env": ambiente_e(d.get("extra_env")), "stdout": f_saida, "stderr": f_erro,
           "stdin": subprocess.DEVNULL}
+    if not plataforma.WIN:
+        return subprocess.Popen(d["cmd"], start_new_session=True, **kw)
     if d.get("console_escondido"):
         # igual ao Start-Process -WindowStyle Hidden do lançador: console próprio, janela escondida
         si = subprocess.STARTUPINFO()
@@ -3534,11 +3566,14 @@ async def gpu_nvidia_smi():
     if time.time() - _NVSMI["t"] < 10:
         return _NVSMI["d"]
     _NVSMI["t"] = time.time()
+    if plataforma.MAC:
+        _NVSMI["d"] = plataforma.gpu_unificada()
+        return _NVSMI["d"]
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, creationflags=plataforma.NO_WINDOW)
         out, _ = await asyncio.wait_for(proc.communicate(), 4)
         nome, total, livre = [x.strip() for x in out.decode(errors="replace").strip().splitlines()[0].split(",")]
         _NVSMI["d"] = (nome, int(float(total)) * 1024 ** 2, int(float(livre)) * 1024 ** 2)
@@ -3590,8 +3625,9 @@ async def montar_inicio():
     nv = await _seguro(gpu_nvidia_smi(), None, "nvidia-smi")
     if nv and nv[1] and nv[2] is not None:
         gpu, vt, vl = nv[0] or gpu, nv[1], nv[2]
-    e_livre, e_total = _tente(lambda: disco(ROOT.anchor or "E:\\"), (None, None), "disco E:")
-    c_livre, _ = _tente(lambda: disco("C:\\"), (None, None), "disco C:")
+    e_livre, e_total = _tente(lambda: disco(ROOT.anchor or "E:\\") if plataforma.WIN else disco(ROOT),
+                              (None, None), "disco do estúdio")
+    c_livre, _ = _tente(lambda: disco("C:\\") if plataforma.WIN else disco(Path.home()), (None, None), "disco do usuário")
     gb = 1024 ** 3
     ligado = {k: (servicos.get(k) or {}).get("estado") == "ligado" for k in CHAVES_SERVICO}
     sistema = {"gpu": gpu, "vram_total": vt, "vram_livre": vl,
@@ -3682,6 +3718,13 @@ def estado_telegram():
 
 def _processos_hermes():
     """lista os processos do Hermes (para saber se o gateway está no ar)"""
+    if not plataforma.WIN:
+        try:
+            import psutil
+            return [{"cmd": " ".join(p.info.get("cmdline") or [])} for p in psutil.process_iter(["name", "cmdline"])
+                    if p.info.get("name") == "hermes"]
+        except Exception:
+            return []
     try:
         r = subprocess.run(["wmic", "process", "where", "name='hermes.exe'", "get", "CommandLine"],
                            capture_output=True, text=True, errors="replace", timeout=15,
@@ -3691,42 +3734,54 @@ def _processos_hermes():
         return []
 
 
+def _processos_hermes_vivos(palavra):
+    import psutil
+    return [p for p in psutil.process_iter(["name", "cmdline"])
+            if p.info.get("name") == "hermes" and palavra in " ".join(p.info.get("cmdline") or [])]
+
+
 def telegram_ligar():
-    exe = HERMES_DIR / "bin" / "hermes.exe"
+    exe = HERMES_DIR / "bin" / plataforma.exe("hermes")
     if not exe.exists():
-        raise ErroServico("Não achei o hermes.exe em " + str(exe))
+        raise ErroServico("Não achei o hermes em " + str(exe))
     log = HERMES_DIR / "gateway.log"
     with open(log, "ab") as f:
         subprocess.Popen([str(exe), "gateway", "run"], cwd=str(HERMES_DIR), stdout=f, stderr=f,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                         **plataforma.sem_janela())
     TELEGRAM_LIGANDO["desde"] = time.time()
 
 
 def telegram_desligar():
     TELEGRAM_LIGANDO["desde"] = 0.0
-    exe = HERMES_DIR / "bin" / "hermes.exe"
+    exe = HERMES_DIR / "bin" / plataforma.exe("hermes")
     try:
         subprocess.run([str(exe), "gateway", "stop"], cwd=str(HERMES_DIR), timeout=30,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         pass
+    if not plataforma.WIN:
+        for p in _processos_hermes_vivos("gateway"):
+            p.kill()
+        return
     subprocess.run(["taskkill", "/F", "/FI", "IMAGENAME eq hermes.exe", "/FI", "WINDOWTITLE eq *gateway*"],
                    capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def hermes_ligar():
-    exe = HERMES_DIR / "bin" / "hermes.exe"
+    exe = HERMES_DIR / "bin" / plataforma.exe("hermes")
     if not exe.exists():
-        raise ErroServico("Não achei o hermes.exe em " + str(exe))
-    subprocess.Popen([str(exe), "dashboard"], cwd=str(HERMES_DIR),
-                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        raise ErroServico("Não achei o hermes em " + str(exe))
+    subprocess.Popen([str(exe), "dashboard"], cwd=str(HERMES_DIR), **plataforma.sem_janela())
     HERMES_LIGANDO["desde"] = time.time()
 
 
 def hermes_desligar():
     HERMES_LIGANDO["desde"] = 0.0
     bat = HERMES_DIR / "Desligar Hermes.bat"
-    if bat.exists():
+    if not plataforma.WIN:
+        for p in _processos_hermes_vivos("dashboard"):
+            p.kill()
+    elif bat.exists():
         try:
             subprocess.run(["cmd", "/c", str(bat)], cwd=str(HERMES_DIR),
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=30)

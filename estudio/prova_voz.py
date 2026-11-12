@@ -15,6 +15,7 @@ ouvido para julgar se ela está QUEBRADA.
     py prova_voz.py --voz <id>      uma voz específica
 """
 import asyncio
+import os
 import re
 import sys
 import unicodedata
@@ -110,7 +111,8 @@ print(json.dumps({"texto": " ".join(s.text.strip() for s in segs)}, ensure_ascii
 
 
 def ouvir(arquivo):
-    r = subprocess.run(["py", "-3.12", "-c", _OUVIR, str(arquivo)],
+    lancador = ["py", "-3.12"] if os.name == "nt" else [sys.executable]
+    r = subprocess.run([*lancador, "-c", _OUVIR, str(arquivo)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
     linha = [l for l in (r.stdout or "").splitlines() if l.strip().startswith("{")]
     if not linha:

@@ -33,11 +33,14 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 import unicodedata
 from pathlib import Path
+
+import plataforma
 
 # Pasta do canal. O painel guarda a dele em config.json (ajuste "canal_dir");
 # ESTUDIO_CANAL_DIR tem prioridade. Isto aqui e so o chute inicial.
@@ -252,7 +255,7 @@ def escrever_cenas(raiz, pasta, itens):
 def _py():
     """O python que tem o faster_whisper e as bibliotecas do canal é o 3.12 (o 'py' padrão
     virou 3.14). Isso já derrubou o tempos.py antes."""
-    return "py"
+    return "py" if plataforma.WIN else (shutil.which("python3.12") or shutil.which("python3") or sys.executable)
 
 
 # ----------------------------------------------------------------- a fila
@@ -293,9 +296,9 @@ def comecar_fila(raiz, nomes, log):
         "raiz = pathlib.Path(%r)\n"
         "for nome in %r:\n"
         "    print('>>> ' + nome, flush=True)\n"
-        "    subprocess.run(['py', str(raiz / 'fazer_tudo.py'), str(raiz / 'explicativos' / nome)])\n"
+        "    subprocess.run([%r, str(raiz / 'fazer_tudo.py'), str(raiz / 'explicativos' / nome)])\n"
         "print('>>> FIM', flush=True)\n"
-    ) % (str(raiz), list(nomes))
+    ) % (str(raiz), list(nomes), _py())
     log.parent.mkdir(parents=True, exist_ok=True)
     f = open(log, "w", encoding="utf-8")
     _fila.update(proc=subprocess.Popen([_py(), "-c", roteiro], stdout=f, stderr=subprocess.STDOUT,

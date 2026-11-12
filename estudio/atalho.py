@@ -13,9 +13,13 @@ do .lnk na mao: o formato e cheio de detalhe e o Windows ja sabe faze-lo certo.
     python atalho.py --onde     so diz onde ele ficaria
 """
 import os
+import plistlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import plataforma
 
 AQUI = Path(__file__).resolve().parent          # ...\estudio
 RAIZ = AQUI.parent
@@ -31,6 +35,9 @@ def _area_de_trabalho():
     Adivinhar C:\\Users\\<nome>\\Desktop erra em quem usa OneDrive (ela fica
     redirecionada), em Windows noutro idioma e em perfil fora do C:.
     """
+    if not plataforma.WIN:
+        p = Path.home() / "Desktop"
+        return p if p.is_dir() else None
     # o pacote traz este modulo pronto; aqui no projeto ele pode nao estar do lado
     for pasta in (RAIZ, RAIZ / "_github" / "pacote", AQUI):
         if (pasta / "area_de_trabalho.py").is_file():
@@ -67,6 +74,9 @@ def _area_de_trabalho():
 
 def _pythonw():
     """O Python SEM console. Com ele, clicar no icone nao pisca janela preta nenhuma."""
+    if not plataforma.WIN:
+        proprio = plataforma.python_comfy(RAIZ)
+        return proprio if proprio.is_file() else Path(sys.executable)
     # O Python proprio do Forja (o que o instalador .exe traz) vem primeiro: e o unico
     # que a gente sabe que tem as bibliotecas. Depois, o da ComfyUI.
     for base in (RAIZ / "python", RAIZ / "ComfyUI_windows_portable" / "python_embeded"):
@@ -92,6 +102,48 @@ def _ps(script):
         return False, str(e)
 
 
+def _icone_icns(destino):
+    """Converte o icone.ico em .icns com o sips do proprio macOS. False se nao der: o app fica sem icone."""
+    ico = AQUI / "icone.ico"
+    if not ico.is_file():
+        return False
+    try:
+        r = subprocess.run(["/usr/bin/sips", "-s", "format", "icns", str(ico), "--out", str(destino)],
+                           capture_output=True, timeout=30)
+        return r.returncode == 0 and destino.is_file()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _criar_app_mac(mesa):
+    """Um Forja Studio.app que so chama o abrir.py: clicar abre a pagina, nada mais."""
+    abrir = AQUI / "abrir.py"
+    if not abrir.is_file():
+        return None
+    app = mesa / f"{NOME}.app"
+    if app.exists():
+        shutil.rmtree(app)
+    macos, recursos = app / "Contents" / "MacOS", app / "Contents" / "Resources"
+    macos.mkdir(parents=True)
+    recursos.mkdir(parents=True)
+    lancador = macos / "forja"
+    lancador.write_text(
+        "#!/bin/bash\n"
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"\n'
+        f'cd "{RAIZ}"\n'
+        f'exec "{_pythonw()}" "{abrir}"\n', encoding="utf-8")
+    lancador.chmod(0o755)
+    info = {"CFBundleName": NOME, "CFBundleDisplayName": NOME, "CFBundleExecutable": "forja",
+            "CFBundleIdentifier": "local.forjastudio.abrir", "CFBundlePackageType": "APPL",
+            "CFBundleVersion": "1", "LSUIElement": True}
+    if _icone_icns(recursos / "icone.icns"):
+        info["CFBundleIconFile"] = "icone"
+    with open(app / "Contents" / "Info.plist", "wb") as f:
+        plistlib.dump(info, f)
+    subprocess.run(["/usr/bin/touch", str(app)], capture_output=True)
+    return app
+
+
 def criar(mesa=None):
     """Cria o atalho. Devolve o caminho dele, ou None.
 
@@ -100,6 +152,9 @@ def criar(mesa=None):
     """
     global ultimo_motivo
     ultimo_motivo = None
+    if plataforma.MAC:
+        mesa = Path(mesa) if mesa else _area_de_trabalho()
+        return _criar_app_mac(mesa) if mesa and mesa.is_dir() else None
     if os.name != "nt":
         ultimo_motivo = "O icone na Area de Trabalho so existe no Windows."
         return None
@@ -156,11 +211,11 @@ def tirar(mesa=None):
     if not mesa:
         return False
     tirou = False
-    for nome in (f"{NOME}.lnk", f"{NOME}.bat"):     # tira tambem o .bat antigo
+    for nome in (f"{NOME}.lnk", f"{NOME}.bat", f"{NOME}.app"):     # tira tambem o .bat antigo
         p = mesa / nome
         if p.exists():
             try:
-                p.unlink()
+                shutil.rmtree(p) if p.is_dir() else p.unlink()
                 print(f"  tirei: {p}")
                 tirou = True
             except OSError as e:

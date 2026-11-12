@@ -44,6 +44,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import plataforma
+
 AQUI = Path(__file__).resolve().parent
 RAIZ = AQUI.parent
 
@@ -170,7 +172,7 @@ CATALOGO = _achar_catalogo()
 # escolhe outro disco na tela; sozinho, este modulo respeita o ESTUDIO_COMFY_DIR.
 # Ate 13/11/2026 era fixo na pasta do painel - o download ia para o C: mesmo sem espaco.
 MODELOS = (Path(os.environ["ESTUDIO_COMFY_DIR"]) if os.environ.get("ESTUDIO_COMFY_DIR")
-           else RAIZ / "ComfyUI_windows_portable" / "ComfyUI") / "models"
+           else plataforma.comfy_dir(RAIZ)) / "models"
 
 
 def espaco_livre():
