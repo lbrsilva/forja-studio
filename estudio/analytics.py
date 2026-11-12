@@ -107,7 +107,7 @@ def _linha(d, mapa):
     if not r.get("plataforma"):
         r["plataforma"] = "youtube"
     r["plataforma"] = _chave(r["plataforma"]) or "youtube"
-    if r["plataforma"] not in ("youtube", "tiktok", "instagram"):
+    if r["plataforma"] not in ("youtube", "tiktok", "instagram", "facebook"):
         r["plataforma"] = "youtube"
     for campo in ("views", "likes", "comments", "shares", "watch_time", "receita", "seguidores"):
         r[campo] = _num(r.get(campo))

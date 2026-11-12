@@ -27,7 +27,73 @@ PLATAFORMAS = {
     "youtube": "YouTube",
     "tiktok": "TikTok",
     "instagram": "Instagram",
+    "facebook": "Facebook",
 }
+
+ESTILOS = [
+    {"id": "auto", "nome": "Automático", "instrucao": "", "prompt": ""},
+    {"id": "papel", "nome": "Papel", "instrucao": "estética de recorte de papel",
+     "prompt": "paper cutout collage, layered textured paper, soft shadows, handmade look"},
+    {"id": "lapis", "nome": "Lápis", "instrucao": "desenho a lápis",
+     "prompt": "hand-drawn graphite pencil sketch, cross-hatching, white paper, detailed linework"},
+    {"id": "pixel", "nome": "Pixel", "instrucao": "pixel art",
+     "prompt": "pixel art, 16-bit, crisp pixels, limited palette, retro game look"},
+    {"id": "pincel", "nome": "Pincel", "instrucao": "pintura a pincel",
+     "prompt": "expressive brush painting, visible strokes, textured canvas, rich color"},
+    {"id": "palavra", "nome": "Palavra animada", "instrucao": "palavras animadas em destaque",
+     "prompt": "kinetic typography, bold animated words, clean background, graphic design, strong contrast"},
+    {"id": "3d", "nome": "3D", "instrucao": "3D estilizado",
+     "prompt": "3D render, cinematic lighting, stylized characters, depth of field, polished materials"},
+    {"id": "e_se", "nome": "E se...", "instrucao": "gancho 'E se...' com clima de documentário",
+     "prompt": "documentary what-if visual, dramatic reenactment, cinematic realism, archival feeling"},
+    {"id": "novelinha", "nome": "Novelinha", "instrucao": "novelinha com ganchos e coadjuvantes",
+     "prompt": "telenovela still, dramatic lighting, expressive characters, colorful set, cliffhanger mood"},
+    {"id": "anime", "nome": "Anime", "instrucao": "anime",
+     "prompt": "anime style, expressive eyes, dynamic pose, cel shading, detailed background"},
+    {"id": "manga", "nome": "Mangá", "instrucao": "mangá em preto e branco",
+     "prompt": "manga style, black and white inking, screentone, dramatic panel composition"},
+    {"id": "aquarela", "nome": "Aquarela", "instrucao": "aquarela",
+     "prompt": "watercolor painting, soft washes, paper texture, delicate color bleeding"},
+    {"id": "grafite", "nome": "Grafite", "instrucao": "grafite urbano",
+     "prompt": "urban graffiti art, spray paint, bold outlines, street wall texture"},
+    {"id": "quadrinhos", "nome": "Quadrinhos", "instrucao": "quadrinhos",
+     "prompt": "comic book illustration, bold ink outlines, halftone dots, dynamic action"},
+    {"id": "cyberpunk", "nome": "Cyberpunk", "instrucao": "cyberpunk",
+     "prompt": "cyberpunk, neon city, rain reflections, futuristic technology, dramatic contrast"},
+    {"id": "vintage", "nome": "Vintage", "instrucao": "vintage",
+     "prompt": "vintage photography, faded film grain, warm sepia tones, retro atmosphere"},
+    {"id": "noir", "nome": "Noir", "instrucao": "cinema noir",
+     "prompt": "film noir, black and white, hard shadows, venetian blind light, moody mystery"},
+    {"id": "stop_motion", "nome": "Stop motion", "instrucao": "stop motion",
+     "prompt": "stop motion animation still, handmade miniature set, clay textures, tiny scale"},
+    {"id": "neon", "nome": "Neon", "instrucao": "neon",
+     "prompt": "neon lights, glowing outlines, dark background, vivid magenta and cyan palette"},
+    {"id": "origami", "nome": "Origami", "instrucao": "origami",
+     "prompt": "origami paper art, folded geometric shapes, clean background, soft studio light"},
+    {"id": "colagem", "nome": "Colagem", "instrucao": "colagem",
+     "prompt": "mixed media collage, torn paper, magazine cutouts, layered textures"},
+    {"id": "minimalista", "nome": "Minimalista", "instrucao": "minimalista",
+     "prompt": "minimalist illustration, flat shapes, limited palette, generous negative space"},
+    {"id": "terror", "nome": "Terror", "instrucao": "terror",
+     "prompt": "horror atmosphere, low key lighting, unsettling shadows, suspenseful composition"},
+    {"id": "comedia", "nome": "Comédia", "instrucao": "comédia",
+     "prompt": "comedic illustration, exaggerated expressions, bright colors, playful energy"},
+    {"id": "epico", "nome": "Épico", "instrucao": "épico",
+     "prompt": "epic cinematic scale, dramatic sky, vast landscape, heroic composition"},
+    {"id": "documentario", "nome": "Documentário", "instrucao": "documentário",
+     "prompt": "documentary photography, natural light, candid framing, realistic texture"},
+    {"id": "adulto", "nome": "Adulto (18+)", "instrucao": "drama adulto, sensual e elegante, sem nudez explícita",
+     "prompt": "mature adult drama, sensual elegant atmosphere, cinematic lighting, adults only, no explicit nudity"},
+]
+
+
+def estilo_de(canal, escolhido=None):
+    eid = escolhido or ((canal or {}).get("producao") or {}).get("estilo") or "auto"
+    for e in ESTILOS:
+        if e["id"] == eid:
+            return e
+    return ESTILOS[0]
+
 
 FORMATOS_PADRAO = [
     {"id": "youtube-horizontal", "nome": "YouTube horizontal", "plataforma": "youtube",
@@ -39,6 +105,8 @@ FORMATOS_PADRAO = [
     {"id": "instagram-stories", "nome": "Instagram Stories", "plataforma": "instagram",
      "proporcao": "9:16", "largura": 1080, "altura": 1920, "legendas": True},
     {"id": "tiktok", "nome": "TikTok", "plataforma": "tiktok",
+     "proporcao": "9:16", "largura": 1080, "altura": 1920, "legendas": True},
+    {"id": "facebook-video", "nome": "Facebook Reels", "plataforma": "facebook",
      "proporcao": "9:16", "largura": 1080, "altura": 1920, "legendas": True},
 ]
 
@@ -101,6 +169,7 @@ def _canal_padrao(nome, **extra):
         "criado": _agora(),
         "atualizado": _agora(),
         "arquivado": False,
+        "_migracao_facebook": True,
         "cor": "#5B8DEF",
         "voz": {"voz_id": "", "idioma": "pt", "velocidade": 1.0, "pausa": 0.35},
         "producao": {
@@ -109,7 +178,7 @@ def _canal_padrao(nome, **extra):
             "legendas": True,
             "preset_imagem": "z_image_turbo",
             "qualidade": "Normal",
-            "estilo": "",
+            "estilo": "auto",
             "formato_base": "9:16",
             "imagens_por_formato": "auto",
             "falar_cenas": True,
@@ -118,7 +187,7 @@ def _canal_padrao(nome, **extra):
         "publicacao": {
             "automatico": False,
             "horarios": ["06:00"],
-            "plataformas": ["youtube", "tiktok", "instagram"],
+            "plataformas": ["youtube", "tiktok", "instagram", "facebook"],
             "visibilidade": "public",
             "aprovacao_obrigatoria": True,
             "hashtags": [],
@@ -149,13 +218,63 @@ def pasta_producao(cid, pid):
     return _producoes_dir(cid) / re.sub(r"[^a-zA-Z0-9_-]", "", pid)
 
 
+def pasta_retratos(cid):
+    return pasta_canal(cid) / "personagens"
+
+
+def retratos(cid):
+    d = _ler(pasta_retratos(cid) / "retratos.json", {})
+    if not isinstance(d, dict):
+        return {}
+    pasta = pasta_retratos(cid)
+    return {nome: arq for nome, arq in d.items()
+            if isinstance(arq, str) and (pasta / Path(arq).name).is_file()}
+
+
+def salvar_retrato(cid, nome, arquivo):
+    pasta = pasta_retratos(cid)
+    pasta.mkdir(parents=True, exist_ok=True)
+    d = retratos(cid)
+    d[str(nome)] = Path(arquivo).name
+    _gravar(pasta / "retratos.json", d)
+    return d
+
+
 def _canais_brutos():
     d = _ler(ARQ_CANAIS, [])
     return d if isinstance(d, list) else []
 
 
+def _migrar_facebook(c):
+    """Canais antigos ganham o formato e a plataforma Facebook uma vez só."""
+    if c.get("_migracao_facebook"):
+        return False
+    mudou = False
+    formatos = c.get("formatos") or []
+    if not any(f.get("plataforma") == "facebook" for f in formatos):
+        modelo = next((f for f in FORMATOS_PADRAO if f["id"] == "facebook-video"), None)
+        if modelo:
+            formatos.append(dict(modelo, ativo=True))
+            c["formatos"] = formatos
+            mudou = True
+    pub = c.setdefault("publicacao", {})
+    plataformas = pub.setdefault("plataformas", [])
+    if "facebook" not in plataformas:
+        plataformas.append("facebook")
+        mudou = True
+    pub["aprovacao_obrigatoria"] = True
+    c["_migracao_facebook"] = True
+    return True
+
+
 def listar(incluir_arquivados=False):
-    canais = [c for c in _canais_brutos() if incluir_arquivados or not c.get("arquivado")]
+    todos = _canais_brutos()
+    mudou = False
+    for c in todos:
+        mudou = _migrar_facebook(c) or mudou
+    if mudou:
+        _gravar(ARQ_CANAIS, todos)
+    canais = [c for c in todos if incluir_arquivados or not c.get("arquivado")]
     for c in canais:
         pasta = _pasta_canal(c["id"])
         c["_pasta"] = str(pasta)
@@ -170,8 +289,11 @@ def listar(incluir_arquivados=False):
 
 
 def obter(cid):
-    for c in _canais_brutos():
+    todos = _canais_brutos()
+    for c in todos:
         if c.get("id") == cid:
+            if _migrar_facebook(c):
+                _gravar(ARQ_CANAIS, todos)
             return c
     return None
 
@@ -324,6 +446,7 @@ def personagens_disponiveis(cid, limite=40):
         saida.append({"nome": nome,
                       "descricao": str(p.get("descricao") or "").strip()[:800],
                       "visual": str(p.get("visual") or "").strip()[:800],
+                      "papel": str(p.get("papel") or "principal").strip().lower(),
                       "origem": origem, "producao_id": producao_id})
 
     for p in contexto(cid).get("personagens") or []:
@@ -372,9 +495,13 @@ def personagens_validos(lista):
         if not nome or nome.lower() in vistos:
             continue
         vistos.add(nome.lower())
+        papel = str(p.get("papel") or "principal").strip().lower()
+        if papel not in ("principal", "coadjuvante", "figurante"):
+            papel = "principal"
         saida.append({"nome": nome,
                       "descricao": str(p.get("descricao") or "").strip()[:800],
-                      "visual": str(p.get("visual") or "").strip()[:800]})
+                      "visual": str(p.get("visual") or "").strip()[:800],
+                      "papel": papel})
     return saida
 
 
@@ -417,6 +544,8 @@ def estado_credenciais(cid):
             ok = bool(p.get("client_id") and p.get("client_secret") and p.get("refresh_token"))
         elif pid == "tiktok":
             ok = bool(p.get("access_token"))
+        elif pid == "facebook":
+            ok = bool(p.get("page_id") and p.get("access_token"))
         else:
             ok = bool(p.get("access_token") and p.get("ig_user_id"))
         res[pid] = {"rotulo": rotulo, "configurado": ok,

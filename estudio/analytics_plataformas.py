@@ -259,7 +259,49 @@ async def instagram(cfg, cid, canal_dir, dias=30):
     return {"novos": novos}
 
 
-COLETORES = {"youtube": youtube, "tiktok": tiktok, "instagram": instagram}
+async def facebook(cfg, cid, canal_dir, dias=30):
+    token = cfg.get("access_token")
+    page = cfg.get("page_id")
+    if not (token and page):
+        raise ColetaErro("Faltam page_id e access_token da Página do Facebook.")
+    base = "https://graph.facebook.com/v21.0/" + str(page)
+    try:
+        u = await _req("GET", base, params={"fields": "followers_count", "access_token": token})
+        seg = _num(u.get("followers_count"))
+        if seg:
+            analytics.registrar(cid, canal_dir, {
+                "plataforma": "facebook", "titulo": "Seguidores Facebook",
+                "publicado_em": int(time.time()), "tipo": "seguidores", "seguidores": seg,
+            })
+    except ColetaErro as e:
+        if _parece_permissao(e):
+            raise ColetaErro("O Facebook não autorizou a análise. Reconecte com pages_read_engagement.")
+    d = await _req("GET", base + "/videos", params={
+        "fields": "id,title,created_time,permalink_url", "limit": 50, "access_token": token})
+    novos = 0
+    for v in d.get("data") or []:
+        vid = v.get("id") or ""
+        views = 0.0
+        try:
+            ins = await _req("GET", "https://graph.facebook.com/v21.0/" + vid + "/video_insights",
+                             params={"metric": "total_video_views", "access_token": token})
+            for item in ins.get("data") or []:
+                vs = item.get("values") or []
+                if vs:
+                    views = _num(vs[0].get("value"))
+        except ColetaErro:
+            pass
+        analytics.registrar(cid, canal_dir, {
+            "plataforma": "facebook", "producao_id": "fb:" + vid,
+            "titulo": v.get("title") or ("Facebook · " + vid[:8]),
+            "publicado_em": _iso_ts(v.get("created_time")) or int(time.time()), "tipo": "video",
+            "url": v.get("permalink_url") or "", "views": views,
+        })
+        novos += 1
+    return {"novos": novos}
+
+
+COLETORES = {"youtube": youtube, "tiktok": tiktok, "instagram": instagram, "facebook": facebook}
 
 
 async def coletar(canal, canal_dir, dias=30):

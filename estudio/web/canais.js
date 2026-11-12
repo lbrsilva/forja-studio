@@ -32,8 +32,8 @@
   const METAS = { preparando: 'Preparando', voz: 'Gerando voz', imagens: 'Gerando imagens', montagem: 'Montando',
     aguardando_aprovacao: 'Aguardando aprovação', aprovado: 'Aprovado', rejeitado: 'Rejeitado',
     concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
-  const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70' };
-  const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
+  const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70', facebook: '#6250d6' };
+  const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook' };
   const ABAS = [['visao', 'Visão geral'], ['ajustes', 'Ajustes'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['produzir', 'Produzir']];
   const HORAS = ['06:00', '08:00', '09:00', '11:00', '12:00', '15:00', '18:00', '19:00', '20:00', '21:00'];
   const CATEGORIAS_YT = [
@@ -59,6 +59,14 @@
     return lista.map((v) => `<option value="${esc(v)}" ${String(v) === String(atual) ? 'selected' : ''}>${esc(v)}</option>`).join('');
   }
 
+  function estilosDisponiveis() {
+    return (S.estilos && S.estilos.length) ? S.estilos : [
+      { id: 'auto', nome: 'Automático' }, { id: 'papel', nome: 'Papel' }, { id: 'lapis', nome: 'Lápis' },
+      { id: 'pixel', nome: 'Pixel' }, { id: 'pincel', nome: 'Pincel' }, { id: 'palavra', nome: 'Palavra animada' },
+      { id: '3d', nome: '3D' }, { id: 'e_se', nome: 'E se...' }, { id: 'novelinha', nome: 'Novelinha' },
+    ];
+  }
+
   function botaoIA(campo, rotulo = 'Melhorar') {
     return `<button type="button" class="cx-ia" data-acao="ia-campo" data-campo="${esc(campo)}"
       title="Usar a IA local para melhorar este campo">${ic('brilho')}${esc(rotulo)}</button>`;
@@ -68,7 +76,7 @@
     iniciado: false, canais: [], atual: null, dados: null, aba: 'visao',
     plano: null, briefing: '', producao: null, poll: null, analise: null,
     analiseDias: 30, analiseCarregada: false, vozes: null, presets: null, charts: {}, erros: 0,
-    personagensNovos: [], agendarAgora: false, abaFixa: false,
+    personagensNovos: [], agendarAgora: false, abaFixa: false, estilos: [],
   };
 
   async function pedir(url, corpo, metodo) {
@@ -120,6 +128,8 @@
     try {
       const d = await pedir('/api/canais');
       S.canais = d.canais || [];
+      S.estilos = d.estilos || S.estilos;
+      S.plataformas = d.plataformas || {};
       if (!S.atual || !S.canais.some((c) => c.id === S.atual)) {
         let guardado = null;
         try { guardado = localStorage.getItem('forja_canal_atual'); } catch (e) { /* sem armazenamento */ }
@@ -242,6 +252,7 @@
       return `<div class="cx-prod ${esc(p.estado || '')}">
         <div><b>${esc(p.titulo || p.id)}</b>
           <div class="cx-prod-sub">${dataHora(p.criado)} · ${esc(METAS[p.estado] || p.estado || '')}
+            ${p.parte ? ' · Parte ' + p.parte : ''}
             ${p.progresso != null && p.estado !== 'concluido' ? ' · ' + p.progresso + '%' : ''}
             ${p.erro ? ' · ' + esc(p.erro.slice(0, 140)) : ''}</div></div>
         <div class="cx-prod-bts">${seloEstado(p.estado)}
@@ -322,6 +333,12 @@
             <div class="cx-campo"><label for="cxDuracao">Duração mínima (s)</label>
               <select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number((d.producao || {}).duracao_alvo) || 45)}</select>
               <span class="cx-dica">O vídeo pode ficar mais longo, nunca menor.</span></div>
+            <div class="cx-campo"><label for="cxEstilo">Estilo visual</label>
+              <select id="cxEstilo">${estilosDisponiveis().map((e) =>
+                `<option value="${esc(e.id)}" ${((d.producao || {}).estilo || 'auto') === e.id ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label for="cxParte">Série</label>
+              <select id="cxParte"><option value="0">Vídeo único</option><option value="1">Parte 1 de uma série</option></select>
+              <span class="cx-dica">Depois de aprovado, use Próxima parte.</span></div>
             <div class="cx-campo"><span class="cx-rotulo"><label>Formatos a montar</label></span>
               <div class="cx-row" style="gap:12px">${ativos.map((f) =>
                 `<label class="cx-check"><input type="checkbox" data-formato="${esc(f.id)}" checked>${esc(f.nome)}</label>`).join('') || '<span class="fraco">Ative um formato em Ajustes.</span>'}</div>
@@ -330,11 +347,12 @@
           <div class="cx-campo"><div class="cx-rotulo"><label>Personagens</label>
             <span class="cx-dica">Sem marcar = a IA escolhe e repete a aparência</span></div>
             <div class="cx-personagens-uso">${disponiveis.map((p) =>
-              `<label class="cx-check cx-pill" title="${esc(p.descricao || p.origem || '')}">
-                <input type="checkbox" data-personagem="${esc(p.nome)}" ${(S.personagensNovos || []).includes(p.nome) ? 'checked' : ''}>${esc(p.nome)}</label>`).join('')
+              `<label class="cx-check cx-pill cx-pill-pers" title="${esc(p.descricao || p.origem || '')}">
+                ${avatarHtml(p.nome)}<input type="checkbox" data-personagem="${esc(p.nome)}" ${(S.personagensNovos || []).includes(p.nome) ? 'checked' : ''}>${esc(p.nome)}</label>`).join('')
               || '<span class="fraco">Nenhum personagem ainda. A IA cria no roteiro e os próximos vídeos podem reaproveitar.</span>'}</div>
             <div class="cx-acoes" style="justify-content:flex-start">
               <button type="button" class="bt-sec mini" data-acao="gerar-personagens">${ic('brilho')}Gerar personagens com IA</button>
+              <button type="button" class="bt-sec mini" data-acao="gerar-retratos">${ic('imagem')}Gerar retratos</button>
               <span class="cx-dica">Cria novos a partir do que já existe no canal.</span>
             </div>
           </div>
@@ -401,9 +419,27 @@
     </div>`;
   }
 
+  function avatarUrl(nome) {
+    const arq = ((S.dados && S.dados.retratos) || {})[nome];
+    return arq ? '/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato/' + encodeURIComponent(arq) : '';
+  }
+
+  function avatarHtml(nome) {
+    const u = avatarUrl(nome);
+    if (u) return `<img class="cx-avatar" src="${u}" alt="">`;
+    const ini = String(nome || '?').trim().slice(0, 2).toUpperCase();
+    return `<span class="cx-avatar cx-avatar-vazio">${esc(ini)}</span>`;
+  }
+
   function linhaPersonagem(p, i) {
+    const papel = p.papel || 'principal';
     return `<div class="cx-persona" data-persona="${i}">
+      <span class="cx-pers-avatar" title="${esc(p.nome || 'sem nome')}">${avatarHtml(p.nome)}</span>
       <input class="cx-pers-nome" type="text" placeholder="Nome" value="${esc(p.nome || '')}">
+      <select class="cx-pers-papel" aria-label="Papel do personagem">
+        ${[['principal', 'Principal'], ['coadjuvante', 'Coadjuvante'], ['figurante', 'Figurante']].map(([v, r]) =>
+          `<option value="${v}" ${papel === v ? 'selected' : ''}>${r}</option>`).join('')}
+      </select>
       <textarea class="cx-pers-desc" rows="2" placeholder="Quem é, o que quer, como fala">${esc(p.descricao || '')}</textarea>
       <textarea class="cx-pers-visual" rows="2" placeholder="Aparência visual (para a imagem)">${esc(p.visual || '')}</textarea>
       <button type="button" class="ic-bt" data-acao="del-persona" aria-label="Tirar personagem">${ic('lixo')}</button>
@@ -446,6 +482,7 @@
       ${podePublicar ? `<div class="cx-acoes" style="justify-content:flex-start;margin-top:10px">
         <button type="button" class="bt-sec" data-acao="abrir-agendar" data-id="${esc(p.id)}">${ic('relogio')}Agendar</button>
         <button type="button" class="gerar" data-acao="abrir-agendar" data-id="${esc(p.id)}" data-agora="1">${ic('play')}Publicar agora</button>
+        <button type="button" class="bt-sec" data-acao="proxima-parte" data-id="${esc(p.id)}">${ic('mais')}Próxima parte</button>
         ${p.limpeza && p.limpeza.bytes ? `<span class="cx-selo ok">${nf1.format((p.limpeza.bytes || 0) / 1048576)} MB liberados</span>` : ''}
       </div>` : ''}
       ${Object.keys(videos).length ? `<div class="cx-row" style="margin-top:10px">${Object.entries(videos).map(([fid]) =>
@@ -518,7 +555,7 @@
     const t = a.total || {};
     if (!a.tem_dados) {
       return html + `<div class="cx-vazio"><b>Nenhum número ainda</b>
-        Conecte YouTube, TikTok e Instagram em Ajustes. Depois clique em Atualizar agora ou espere a coleta automática.
+        Conecte YouTube, TikTok, Instagram e Facebook em Ajustes. Depois clique em Atualizar agora ou espere a coleta automática.
         <div class="cx-acoes" style="justify-content:center"><button type="button" class="gerar" data-acao="atualizar-analise">${ic('reusar')}Atualizar agora</button></div></div>
         <details class="cx-fallback"><summary>Importar CSV/JSON manualmente</summary>${cartaoImportar()}</details>`;
     }
@@ -731,6 +768,9 @@
               <select id="ajPreset">${opPreset}</select></div>
             <div class="cx-campo"><label for="ajVoz">Voz</label>
               <select id="ajVoz">${opVoz}</select></div>
+            <div class="cx-campo"><label for="ajEstilo">Estilo visual</label>
+              <select id="ajEstilo">${estilosDisponiveis().map((e) =>
+                `<option value="${esc(e.id)}" ${((pr.estilo || 'auto') === e.id) ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}</select></div>
           </div>
           <div class="cx-check-linha">
             <label class="cx-check"><input type="checkbox" id="ajLegendas" ${pr.legendas !== false ? 'checked' : ''}>Legendas nos formatos verticais</label>
@@ -823,6 +863,7 @@
       youtube: 'Google Cloud > APIs e serviços > Credenciais > OAuth do tipo "App para computador". Habilite a YouTube Data API v3 e autorize com youtube.upload e youtube.readonly.',
       tiktok: 'developers.tiktok.com > app com Content Posting API. Autorize a conta e cole o access token. Sem auditoria do app, use "Só eu".',
       instagram: 'Conta profissional ligada a uma Página do Facebook. Token com instagram_content_publish e ig_user_id. O vídeo precisa estar numa URL pública.',
+      facebook: 'Página do Facebook com token de Página. Permissões pages_manage_posts e pages_read_engagement. O vídeo sobe direto, sem URL pública.',
     };
     const campos = {
       youtube: [
@@ -842,6 +883,10 @@
         { k: 'access_token', rot: 'Access token', tipo: 'password', ph: 'Ex.: IGQVJ...' },
         { k: 'ig_user_id', rot: 'IG user id', tipo: 'text', ph: 'Ex.: 17841400000000000' },
         { k: 'video_base_url', rot: 'URL pública da pasta do vídeo', tipo: 'url', ph: 'Ex.: https://meusite.com/videos' },
+      ],
+      facebook: [
+        { k: 'page_id', rot: 'ID da Página', tipo: 'text', ph: 'Ex.: 123456789012345' },
+        { k: 'access_token', rot: 'Access token da Página', tipo: 'password', ph: 'Ex.: EAAB...' },
       ],
     };
     return Object.entries(campos).map(([p, lista]) => {
@@ -866,6 +911,7 @@
     p.hashtags = tags(($('#cxHashtags') || {}).value || '');
     p.personagens = $$('#cxPersonagens .cx-persona').map((el) => ({
       nome: ($('.cx-pers-nome', el) || {}).value || '',
+      papel: ($('.cx-pers-papel', el) || {}).value || 'principal',
       descricao: ($('.cx-pers-desc', el) || {}).value || '',
       visual: ($('.cx-pers-visual', el) || {}).value || '',
     }));
@@ -922,6 +968,8 @@
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/plano', {
         briefing,
         duracao: Number(($('#cxDuracao') || {}).value) || undefined,
+        estilo: ($('#cxEstilo') || {}).value || undefined,
+        parte: Number(($('#cxParte') || {}).value) || 0,
         personagens: personagensEscolhidos(),
         inspiracao,
       });
@@ -945,7 +993,9 @@
     if (bt) { bt.disabled = true; bt.textContent = 'Começando…'; }
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir',
-        { plano, briefing: S.briefing, formatos, inspiracao: inspiracaoAtual() });
+        { plano, briefing: S.briefing, formatos, inspiracao: inspiracaoAtual(),
+          estilo: ($('#cxEstilo') || {}).value || undefined,
+          parte: Number(($('#cxParte') || {}).value) || 0 });
       S.producao = { ...r.producao, plano: r.plano || S.plano };
       mostrar('Produção começou. A voz vem primeiro; depois as imagens e a montagem.', 'ok');
       render();
@@ -968,6 +1018,8 @@
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir', {
         briefing,
         duracao: Number(($('#cxDuracao') || {}).value) || undefined,
+        estilo: ($('#cxEstilo') || {}).value || undefined,
+        parte: Number(($('#cxParte') || {}).value) || 0,
         formatos,
         personagens: personagensEscolhidos(),
         inspiracao,
@@ -1100,6 +1152,24 @@
     } finally { bt.disabled = false; }
   }
 
+  async function proximaParte(pid) {
+    if (!confirm('Gerar a próxima parte com o mesmo elenco e estilo? Ela entra na fila agora.')) return;
+    const bt = $('[data-acao="proxima-parte"][data-id="' + pid + '"]');
+    if (bt) bt.disabled = true;
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/producoes/' +
+        encodeURIComponent(pid) + '/proxima-parte', {});
+      S.producao = { ...r.producao, plano: r.plano };
+      S.plano = r.plano;
+      S.briefing = r.plano && r.plano.titulo ? ('Continuação de ' + r.plano.titulo) : '';
+      render();
+      pollProducao(r.producao.id);
+      mostrar('Próxima parte começou a ser produzida.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui gerar a próxima parte: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
   async function aprovarProducao(pid) {
     if (!confirm('Aprovar este vídeo? As imagens, vozes por cena e temporários serão apagados. Ficam só os vídeos, a legenda e os personagens.')) return;
     try {
@@ -1130,6 +1200,28 @@
     }
   }
 
+  async function gerarRetratos() {
+    const disponiveis = (S.dados && S.dados.personagens_disponiveis) || [];
+    const retratos = (S.dados && S.dados.retratos) || {};
+    const faltam = disponiveis.filter((p) => !retratos[p.nome]);
+    if (!faltam.length) { mostrar('Todos os personagens já têm retrato.', 'ok'); return; }
+    const bt = $('[data-acao="gerar-retratos"]');
+    if (bt) bt.disabled = true;
+    mostrar('Gerando ' + faltam.length + ' retrato(s) com a imagem local…', 'ok');
+    const erros = [];
+    for (const p of faltam) {
+      try {
+        await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato', {
+          nome: p.nome, visual: p.visual, descricao: p.descricao,
+          estilo: ((S.dados.producao || {}).estilo) || 'auto',
+        });
+      } catch (e) { erros.push(p.nome + ': ' + e.message); }
+    }
+    await carregarCanal(false);
+    render();
+    mostrar(erros.length ? 'Retratos gerados com avisos. ' + erros.join(' · ') : 'Retratos gerados.', erros.length ? 'erro' : 'ok');
+  }
+
   async function gerarPersonagens() {
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/gerar', {});
@@ -1145,7 +1237,7 @@
   async function atualizarAnalise() {
     const bt = $('[data-acao="atualizar-analise"]');
     if (bt) bt.disabled = true;
-    mostrar('Coletando números no YouTube, TikTok e Instagram… pode levar alguns segundos.', 'ok');
+    mostrar('Coletando números no YouTube, TikTok, Instagram e Facebook… pode levar alguns segundos.', 'ok');
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/analytics/coletar',
         { dias: S.analiseDias });
@@ -1287,6 +1379,7 @@
         duracao_alvo: Number(($('#ajDuracao') || {}).value) || 45,
         qualidade: ($('#ajQualidade') || {}).value || 'Normal',
         preset_imagem: ($('#ajPreset') || {}).value || 'z_image_turbo',
+        estilo: ($('#ajEstilo') || {}).value || 'auto',
         imagens_por_formato: ($('#ajImagensPorFormato') || {}).value || 'auto',
         legendas: !!($('#ajLegendas') || {}).checked,
         falar_cenas: !!($('#ajFalar') || {}).checked },
@@ -1317,6 +1410,7 @@
       hashtags: tags(($('#ajHashtags') || {}).value || ''),
       personagens: $$('#cxPersonagensAjustes .cx-persona').map((el) => ({
         nome: ($('.cx-pers-nome', el) || {}).value || '',
+        papel: ($('.cx-pers-papel', el) || {}).value || 'principal',
         descricao: ($('.cx-pers-desc', el) || {}).value || '',
         visual: ($('.cx-pers-visual', el) || {}).value || '',
       })).filter((x) => x.nome),
@@ -1416,6 +1510,7 @@
     if (acao === 'produzir') { await produzir(); return; }
     if (acao === 'produzir-direto') { await produzirDireto(); return; }
     if (acao === 'gerar-personagens') { await gerarPersonagens(); return; }
+    if (acao === 'gerar-retratos') { await gerarRetratos(); return; }
     if (acao === 'atualizar-analise') { await atualizarAnalise(); return; }
     if (acao === 'ia-campo') { await melhorarCampo(b); return; }
     if (acao === 'ia-contexto') { await gerarContexto(); return; }
@@ -1494,6 +1589,7 @@
     if (acao === 'abrir-agendar') { preencherAgendar(b.dataset.id, b.dataset.agora === '1'); return; }
     if (acao === 'aprovar-producao') { await aprovarProducao(b.dataset.id); return; }
     if (acao === 'rejeitar-producao') { await rejeitarProducao(b.dataset.id); return; }
+    if (acao === 'proxima-parte') { await proximaParte(b.dataset.id); return; }
     if (acao === 'publicar-agora') {
       try { await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/agenda/' + encodeURIComponent(b.dataset.id), { publicar_agora: true });
         mostrar('Publicando agora. A agenda mostra o resultado.', 'ok'); await carregarCanal(false); render();

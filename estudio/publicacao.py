@@ -100,10 +100,12 @@ def _topo(meta, plataforma, padrao_titulo):
     if plataforma == "tiktok":
         sufixo = " ".join(meta.get("hashtags") or [])
         return {"titulo": _texto(((meta.get("titulo") or padrao_titulo) + " " + sufixo).strip(), 2200)}
-    legenda = _texto(meta.get("descricao") or "", 2100)
-    if tags:
-        legenda = (legenda + "\n\n" + " ".join("#" + t for t in tags[:30])).strip()
-    return {"legenda": legenda}
+    if plataforma in ("instagram", "facebook"):
+        legenda = _texto(meta.get("descricao") or "", 2100)
+        if tags:
+            legenda = (legenda + "\n\n" + " ".join("#" + t for t in tags[:30])).strip()
+        return {"legenda": legenda}
+    return {"legenda": _texto(meta.get("descricao") or "", 2100)}
 
 
 async def _youtube(cfg, video, meta, quando, visibilidade, formato=None):
@@ -226,8 +228,41 @@ async def _instagram(cfg, video, meta, quando, visibilidade, formato=None):
     return {"ok": bool(mid), "id": mid}
 
 
-ADAPTADORES = {"youtube": _youtube, "tiktok": _tiktok, "instagram": _instagram}
-ROTULOS = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}
+async def _facebook(cfg, video, meta, quando, visibilidade, formato=None):
+    token = cfg.get("access_token")
+    page = cfg.get("page_id")
+    if not (token and page):
+        raise PublicacaoErro("Faltam page_id e access_token da Página do Facebook.")
+    info = _topo(meta, "facebook", "Vídeo")
+    dados = Path(video).read_bytes()
+    futuro = int(quando or 0) > int(time.time()) + 600
+    form = aiohttp.FormData()
+    form.add_field("access_token", token)
+    form.add_field("description", info["legenda"] or "")
+    form.add_field("title", _texto(meta.get("titulo") or "Vídeo", 200))
+    if futuro:
+        form.add_field("published", "false")
+        form.add_field("scheduled_publish_time", str(int(quando)))
+    else:
+        form.add_field("published", "true")
+    form.add_field("source", dados, filename=Path(video).name, content_type=_mime(video))
+    async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
+        async with s.post("https://graph.facebook.com/v21.0/" + str(page) + "/videos", data=form) as r:
+            txt = await r.text()
+            try:
+                d = json.loads(txt) if txt else {}
+            except Exception:
+                d = {}
+            if r.status >= 400:
+                e = (d.get("error") or {}).get("message") if isinstance(d.get("error"), dict) else d.get("error")
+                raise PublicacaoErro("Facebook recusou o vídeo: " + str(e or txt)[:300])
+            vid = d.get("id") or ""
+            return {"ok": bool(vid), "id": vid,
+                    "url": ("https://www.facebook.com/" + vid) if vid else "", "agendado": futuro}
+
+
+ADAPTADORES = {"youtube": _youtube, "tiktok": _tiktok, "instagram": _instagram, "facebook": _facebook}
+ROTULOS = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook"}
 
 
 def _configurado(plataforma, cfg):
@@ -236,6 +271,8 @@ def _configurado(plataforma, cfg):
         return bool(cfg.get("client_id") and cfg.get("client_secret") and cfg.get("refresh_token"))
     if plataforma == "tiktok":
         return bool(cfg.get("access_token"))
+    if plataforma == "facebook":
+        return bool(cfg.get("page_id") and cfg.get("access_token"))
     return bool(cfg.get("access_token") and cfg.get("ig_user_id"))
 
 

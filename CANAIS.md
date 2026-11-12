@@ -17,6 +17,19 @@ Rota nova: `#/canais` (menu **Canais**).
   roteiro** para no plano para você revisar.
 - **Personagens**: o canal pode reaproveitar personagens de vídeos anteriores. Na aba
   Produzir, marque os que quer manter; sem marcar, a IA escolhe e repete a aparência.
+  Cada personagem tem papel: principal, coadjuvante ou figurante. **Gerar personagens
+  com IA** cria novos a partir do que já existe, incluindo coadjuvantes para novelinha.
+- **Estilo visual**: escolha por canal ou por vídeo entre Papel, Lápis, Pixel, Pincel,
+  Palavra animada, 3D, E se..., Novelinha, Anime, Mangá, Aquarela, Grafite, Quadrinhos,
+  Cyberpunk, Vintage, Noir, Stop motion, Neon, Origami, Colagem, Minimalista, Terror,
+  Comédia, Épico, Documentário e Adulto (18+, drama sensual sem nudez explícita). O estilo
+  entra nos prompts de imagem e no roteiro.
+- **Retratos**: cada personagem pode ter uma foto de referência gerada pela IA. Se não
+  houver, a tela mostra as iniciais como placeholder. O botão **Gerar retratos** cria as
+  que faltam e usa o mesmo modelo de imagem do canal.
+- **Série em partes**: marque "Parte 1 de uma série" no primeiro vídeo. Depois de
+  aprovado, **Próxima parte** continua com o mesmo elenco, estilo e história, abrindo com
+  recap e fechando com gancho.
 - **Inspiração**: cole a URL de um vídeo do YouTube ou TikTok e clique em **Ler referência**.
   O roteiro usa título e autor como referência de ritmo e clima, sem baixar nem copiar o vídeo.
 - **Análise**: o estúdio lê views, receita, seguidores e engajamento direto das contas
@@ -32,9 +45,8 @@ Rota nova: `#/canais` (menu **Canais**).
   e da descrição. Cada campo tem **Melhorar** para reescrever só ele. No canal novo,
   **Sugerir descrição pelo nome** pede a descrição quando o nome é genérico.
 - **Agenda**: escolha produção, formato, plataformas e data/hora. O servidor publica
-  sozinho no horário, mesmo com a tela fechada (o estúdio precisa estar aberto).
-- **Análise**: importe CSV/JSON das plataformas e veja views, receita, seguidores,
-  engajamento, série diária, melhores horários, plataformas e vídeos que puxaram o canal.
+  sozinho no horário, mesmo com a tela fechada (o estúdio precisa estar aberto). Pode
+  publicar em YouTube, TikTok, Instagram e Facebook no mesmo agendamento.
 - **Ajustes**: contexto do canal, personagens, voz, formatos com tamanho próprio,
   publicação automática, horários e contas das plataformas.
 
@@ -96,7 +108,6 @@ tem agendamento nativo nesta API: o estúdio guarda a hora e envia no momento ce
 
 Precisa de uma conta profissional do Instagram ligada a uma Página do Facebook e do
 Instagram Graph API:
-
 1. Crie um app no Meta for Developers e pegue um token com `instagram_content_publish`
    e `instagram_manage_insights`.
 2. Descubra o `ig_user_id` da conta.
@@ -108,6 +119,19 @@ Instagram Graph API:
 Sem `video_base_url` a publicação no Instagram fica como pendente, com a explicação na
 Agenda. O pacote manual (legenda + caminho do vídeo) é sempre gravado em
 `publicacao/` dentro da produção.
+
+### Facebook
+
+Precisa de uma Página do Facebook e de um token de Página:
+
+1. Crie um app no Meta for Developers com `pages_manage_posts` e
+   `pages_read_engagement`.
+2. Descubra o `page_id` da Página.
+3. Cole `page_id` e `access_token` da Página em Ajustes.
+
+O vídeo sobe direto pelo Graph API, sem URL pública. Publicação futura usa
+`scheduled_publish_time` do Facebook. A análise lê seguidores e vídeos da Página; views por
+vídeo dependem da permissão de insights.
 
 ## Isolamento do histórico
 
@@ -133,6 +157,9 @@ Todas as rotas abaixo ficam em `/api/canais`.
 | GET/POST/DELETE | `/api/canais/{id}` | detalhe / salvar config e contexto / arquivar |
 | GET/POST | `/api/canais/{id}/contexto` | ler / gravar contexto |
 | POST | `/api/canais/{id}/contexto/ia` | gerar contexto inteiro ou melhorar um campo |
+| POST | `/api/canais/{id}/personagens/gerar` | criar personagens novos com IA |
+| POST | `/api/canais/{id}/personagens/retrato` | gerar retrato de um personagem |
+| GET | `/api/canais/{id}/personagens/retrato/{arquivo}` | servir o retrato |
 | POST | `/api/canais/sugerir` | descrição a partir do nome do canal |
 | POST | `/api/inspiracao` | título/autor de um vídeo de referência |
 | POST | `/api/canais/{id}/plano` | briefing -> roteiro |
@@ -140,6 +167,7 @@ Todas as rotas abaixo ficam em `/api/canais`.
 | GET | `/api/canais/{id}/producoes` | lista de produções |
 | GET/POST | `/api/canais/{id}/producoes/{pid}` | andamento / cancelar |
 | POST | `/api/canais/{id}/producoes/{pid}/aprovar` | aprovar (e limpar brutos) ou rejeitar |
+| POST | `/api/canais/{id}/producoes/{pid}/proxima-parte` | gerar a continuação da série |
 | GET | `/api/canais/{id}/producoes/{pid}/video/{formato}` | baixar o vídeo final |
 | GET/POST | `/api/canais/{id}/agenda` | listar / agendar |
 | POST/DELETE | `/api/canais/{id}/agenda/{aid}` | publicar agora / cancelar |

@@ -103,6 +103,9 @@ def criar(canal, plano, briefing, formato_ids=None):
         "estado": "preparando",
         "plano": plano,
         "formatos": escolhidos,
+        "parte": int(plano.get("parte") or 0),
+        "serie_id": plano.get("serie_id") or "",
+        "estilo": plano.get("estilo") or (canal.get("producao") or {}).get("estilo") or "auto",
         "duracao_minima": int(plano.get("duracao_minima") or plano.get("duracao_alvo") or
                               (canal.get("producao") or {}).get("duracao_alvo") or 45),
         "imagens_por_formato": (canal.get("producao") or {}).get("imagens_por_formato") or "auto",
@@ -371,6 +374,7 @@ async def produzir(producao, canal, callbacks):
             nome = str((p or {}).get("nome") or "").strip().lower()
             if nome:
                 visuais[nome] = str((p or {}).get("visual") or "").strip()
+        estilo_prompt = (canais.estilo_de(canal, plano.get("estilo")).get("prompt") or "")
         feito_img = 0
         for proporcao in grupos:
             cenas_dir = pasta / "cenas" / proporcao.replace(":", "x")
@@ -384,7 +388,7 @@ async def produzir(producao, canal, callbacks):
                 destino = cenas_dir / ("cena_%02d.png" % i)
                 if not destino.is_file() or destino.stat().st_size < 1000:
                     _log(producao, "imagem %s %d/%d" % (proporcao, i, len(cenas)), callbacks)
-                    await callbacks["gerar_imagem"](_prompt_com_personagem(cena, visuais),
+                    await callbacks["gerar_imagem"](_prompt_com_personagem(cena, visuais, estilo_prompt),
                                                     proporcao, destino, preset, qualidade)
                 producao["arquivos"]["imagens"].append(str(destino))
                 feito_img += 1
@@ -462,14 +466,16 @@ def _silencio(pasta, duracoes):
     (pasta / "duracoes.txt").write_text("\n".join("%.3f" % d for d in duracoes) + "\n", encoding="utf-8")
 
 
-def _prompt_com_personagem(cena, visuais):
+def _prompt_com_personagem(cena, visuais, estilo_prompt=""):
     prompt = str(cena.get("imagem") or cena.get("fala") or "")
     nome = str(cena.get("personagem") or "").strip().lower()
     visual = visuais.get(nome)
     if not visual and len(visuais) == 1:
         visual = next(iter(visuais.values()))
     if visual and visual.lower()[:24] not in prompt.lower():
-        return (visual + ", " + prompt).strip(", ")
+        prompt = (visual + ", " + prompt).strip(", ")
+    if estilo_prompt and estilo_prompt.lower()[:24] not in prompt.lower():
+        prompt = (prompt.rstrip(", ") + ", " + estilo_prompt).strip(", ")
     return prompt
 
 
@@ -572,6 +578,9 @@ def resumo(producao):
         "legenda": (producao.get("plano") or {}).get("legenda") or "",
         "hashtags": (producao.get("plano") or {}).get("hashtags") or [],
         "duracao_minima": producao.get("duracao_minima"),
+        "parte": producao.get("parte") or 0,
+        "serie_id": producao.get("serie_id") or "",
+        "estilo": producao.get("estilo") or "auto",
         "limpeza": producao.get("limpeza") or {},
         "etapas": etapas,
         "progresso": int(round(100.0 * feito / total)) if total else (100 if producao.get("estado") == "concluido" else 0),

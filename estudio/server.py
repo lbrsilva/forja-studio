@@ -5262,6 +5262,7 @@ def _resumo_canal(c):
     d["agenda"] = canais.agenda_listar(c["id"])
     d["producoes"] = [esteira.resumo(p) for p in canais.lista_producoes(c["id"])]
     d["personagens_disponiveis"] = canais.personagens_disponiveis(c["id"])
+    d["retratos"] = canais.retratos(c["id"])
     d["pasta"] = str(canais.pasta_canal(c["id"]))
     return d
 
@@ -5343,6 +5344,7 @@ async def api_canais(req):
             "canais": [_resumo_canal(c) for c in canais.listar()],
             "plataformas": canais.PLATAFORMAS,
             "formatos_padrao": canais.FORMATOS_PADRAO,
+            "estilos": canais.ESTILOS,
         })
     b = await req.json()
     nome = (b.get("nome") or "").strip()
@@ -5381,6 +5383,50 @@ async def api_canais_sugerir(req):
     except Exception as e:
         raise web.HTTPBadGateway(text="A IA não conseguiu escrever a descrição: " + str(e)[:300])
     return web.json_response({"texto": texto})
+
+
+async def api_canal_retrato(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    nome = str(b.get("nome") or "").strip()
+    if not nome:
+        raise web.HTTPBadRequest(text="Diga o nome do personagem.")
+    existentes = canais.retratos(cid)
+    if existentes.get(nome) and not b.get("forcar"):
+        arq = existentes[nome]
+        return web.json_response({"nome": nome, "arquivo": arq,
+                                  "url": "/api/canais/%s/personagens/retrato/%s" % (cid, arq)})
+    visual = str(b.get("visual") or "").strip()
+    desc = str(b.get("descricao") or "").strip()
+    est = canais.estilo_de(canal, b.get("estilo"))
+    prompt = ("character reference portrait of %s, %s, %s, head and shoulders, clear face, "
+              "neutral background, cinematic lighting, no text, no watermark"
+              % (nome, visual, desc)).strip(", ")
+    if est.get("prompt"):
+        prompt += ", " + est["prompt"]
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", sem_acento(nome).lower()).strip("-")[:60] or "personagem"
+    destino = canais.pasta_retratos(cid) / (slug + ".png")
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        await _gerar_imagem_esteira(prompt, "1:1", destino,
+                                    (canal.get("producao") or {}).get("preset_imagem") or "z_image_turbo",
+                                    (canal.get("producao") or {}).get("qualidade") or "Normal")
+    except Exception as e:
+        raise web.HTTPBadGateway(text="Não consegui gerar o retrato: " + str(e)[:300])
+    canais.salvar_retrato(cid, nome, destino)
+    return web.json_response({"nome": nome, "arquivo": destino.name,
+                              "url": "/api/canais/%s/personagens/retrato/%s" % (cid, destino.name)})
+
+
+async def api_canal_retrato_arquivo(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    nome = Path(req.match_info["nome"]).name
+    arq = canais.pasta_retratos(cid) / nome
+    if not arq.is_file() or not _dentro(arq, canais.pasta_retratos(cid)):
+        raise web.HTTPNotFound()
+    return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
 
 
 async def api_canal_personagens_gerar(req):
@@ -5499,7 +5545,8 @@ async def api_canal_plano(req):
             _pedir_texto, canal, ctx, briefing,
             int(b.get("quantas") or 0),
             int(b.get("duracao") or prod.get("duracao_alvo") or 45),
-            personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao)
+            personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao,
+            estilo=b.get("estilo"), parte=int(b.get("parte") or 0))
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
@@ -5628,16 +5675,54 @@ async def api_canal_produzir(req):
                 _pedir_texto, canal, ctx, briefing,
                 int(b.get("quantas") or 0),
                 int(b.get("duracao") or (canal.get("producao") or {}).get("duracao_alvo") or 45),
-                personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao)
+                personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao,
+                estilo=b.get("estilo"), parte=int(b.get("parte") or 0))
         except Exception as e:
             raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
     elif inspiracao and not plano.get("inspiracao"):
         plano["inspiracao"] = {k: inspiracao.get(k) for k in ("url", "plataforma", "titulo", "autor", "descricao")}
+    if b.get("estilo"):
+        plano["estilo"] = b.get("estilo")
+    if b.get("parte"):
+        plano["parte"] = int(b.get("parte") or 0)
     for i, c in enumerate(plano.get("cenas") or [], 1):
         if not str(c.get("fala") or "").strip():
             raise web.HTTPBadRequest(text="A cena %d está sem fala." % i)
         c["n"] = i
     producao = esteira.criar(canal, plano, briefing, b.get("formatos"))
+    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
+
+
+async def api_canal_proxima_parte(req):
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    canal = _canal_ou_erro(cid)
+    anterior = canais.ler_producao(cid, pid)
+    plano_ant = anterior.get("plano") or {}
+    if not (plano_ant.get("cenas") or []):
+        raise web.HTTPBadRequest(text="Este vídeo não tem roteiro para continuar.")
+    serie_id = anterior.get("serie_id") or anterior.get("id")
+    parte = int(anterior.get("parte") or 1) + 1
+    nomes = [str(p.get("nome")) for p in (plano_ant.get("personagens") or []) if p.get("nome")]
+    base = (anterior.get("briefing") or "").strip()
+    briefing = ((base + " ") if base else "") + (
+        "Continuação da parte anterior. Avance a história, use o mesmo elenco e termine "
+        "com um gancho forte para a próxima parte.")
+    ctx = canais.contexto(cid)
+    try:
+        plano = await roteirista.gerar_plano(
+            _pedir_texto, canal, ctx, briefing, 0,
+            int(anterior.get("duracao_minima") or 45),
+            personagens_fixos=nomes, personagens_disponiveis=canais.personagens_disponiveis(cid),
+            inspiracao=anterior.get("inspiracao") or plano_ant.get("inspiracao"),
+            estilo=anterior.get("estilo") or plano_ant.get("estilo"),
+            parte=parte, serie_anterior={"titulo": plano_ant.get("titulo"),
+                                         "gancho": plano_ant.get("gancho"),
+                                         "legenda": plano_ant.get("legenda")},
+            serie_id=serie_id)
+    except Exception as e:
+        raise web.HTTPBadGateway(text="O roteirista não conseguiu continuar a série: " + str(e)[:300])
+    producao = esteira.criar(canal, plano, briefing, anterior.get("formatos"))
     em_segundo_plano(_rodar_esteira(cid, producao["id"]))
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
@@ -5887,14 +5972,14 @@ async def vigia_analytics():
                 if not ((c.get("analytics") or {}).get("automatico", True)):
                     continue
                 cred = canais.credenciais(cid)
-                if not any(cred.get(p) for p in ("youtube", "tiktok", "instagram")):
+                if not any(cred.get(p) for p in ("youtube", "tiktok", "instagram", "facebook")):
                     continue
                 d = analytics.carregar(cid, canais.pasta_canal(cid))
                 coleta = d.get("coleta") or {}
                 agora = int(time.time())
                 precisa = any(cred.get(p) and
                               (not coleta.get(p) or agora - int(coleta[p].get("quando") or 0) > 1800)
-                              for p in ("youtube", "tiktok", "instagram"))
+                              for p in ("youtube", "tiktok", "instagram", "facebook"))
                 if not precisa:
                     continue
                 COLETANDO.add(cid)
@@ -6026,8 +6111,11 @@ app.add_routes([
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
     web.post("/api/canais/{cid}/contexto/ia", api_canal_contexto_ia),
     web.post("/api/canais/{cid}/personagens/gerar", api_canal_personagens_gerar),
+    web.post("/api/canais/{cid}/personagens/retrato", api_canal_retrato),
+    web.get("/api/canais/{cid}/personagens/retrato/{nome}", api_canal_retrato_arquivo),
     web.post("/api/canais/{cid}/plano", api_canal_plano),
     web.post("/api/canais/{cid}/produzir", api_canal_produzir),
+    web.post("/api/canais/{cid}/producoes/{pid}/proxima-parte", api_canal_proxima_parte),
     web.get("/api/canais/{cid}/producoes", api_canal_producoes),
     web.get("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
     web.post("/api/canais/{cid}/producoes/{pid}", api_canal_producao),

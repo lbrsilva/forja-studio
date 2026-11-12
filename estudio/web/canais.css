@@ -94,7 +94,7 @@
 }
 .cx-hora-add select { padding-right: 34px; background-position: right 10px center; }
 
-.cx-briefing-grade { display: grid; grid-template-columns: minmax(180px, .45fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.cx-briefing-grade { display: grid; grid-template-columns: 150px 170px 170px minmax(0, 1fr); gap: 14px; align-items: start; }
 .cx-personagens-uso { display: flex; gap: 8px; flex-wrap: wrap; }
 .cx-personagens-uso .cx-pill { background: var(--fundo-2); }
 .cx-personagens-uso .cx-pill:has(input:checked) { border-color: var(--acento-borda); background: var(--acento-suave); }
@@ -183,7 +183,7 @@
 
 /* personagens */
 .cx-pers { display: grid; gap: 8px; }
-.cx-persona { display: grid; grid-template-columns: 160px minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 8px; align-items: start; }
+.cx-persona { display: grid; grid-template-columns: 140px 140px minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 8px; align-items: start; }
 .cx-persona textarea { min-height: 62px; font-size: 13px; }
 
 /* produções e agenda */
@@ -267,7 +267,7 @@
   .cx-grid2, .cx-grid3, .canais-form-2, .cx-cred, .cx-briefing-grade { grid-template-columns: 1fr; }
   .cx-cena, .cx-cena-cab { grid-template-columns: 26px minmax(0, 1fr) 36px; }
   .cx-cena .cx-prompt, .cx-cena-cab .cx-prompt-cab { display: none; }
-  .cx-persona { grid-template-columns: 1fr 36px; }
+  .cx-persona { grid-template-columns: 1fr 130px 36px; }
   .cx-persona .cx-pers-desc, .cx-persona .cx-pers-visual { grid-column: 1 / -1; }
   .cx-formato-cab { display: none; }
   .cx-formato { grid-template-columns: 40px minmax(0, 1fr) 40px; gap: 8px;
@@ -317,3 +317,17 @@
   padding: 12px 14px; background: var(--cx-surface); }
 .cx-fallback summary { cursor: pointer; color: var(--fraco); font-size: 13px; font-weight: 600; }
 .cx-fallback[open] summary { margin-bottom: 10px; }
+
+/* retratos dos personagens */
+.cx-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: none;
+  border: 1px solid var(--borda-forte); background: var(--fundo-2); }
+.cx-avatar-vazio { display: inline-grid; place-items: center; color: var(--acento);
+  background: var(--acento-suave); font-size: 10.5px; font-weight: 800; letter-spacing: .02em; }
+.cx-pill-pers { gap: 7px; padding-left: 6px; }
+.cx-pill-pers .cx-avatar { width: 24px; height: 24px; }
+.cx-pers-avatar { display: grid; place-items: center; }
+.cx-persona { grid-template-columns: 44px 130px 120px minmax(0, 1fr) minmax(0, 1fr) 36px; }
+@media (max-width: 860px) {
+  .cx-persona { grid-template-columns: 44px 1fr 120px 36px; }
+  .cx-persona .cx-pers-desc, .cx-persona .cx-pers-visual { grid-column: 1 / -1; }
+}
