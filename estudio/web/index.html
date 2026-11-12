@@ -12,7 +12,7 @@
 <link rel="stylesheet" href="plano.css?v=20261111-polir">
 <link rel="stylesheet" href="conta.css?v=20261103-conta2">
 <link rel="stylesheet" href="configuracoes.css?v=20261112-centro">
-<link rel="stylesheet" href="canais.css?v=20261112-canais1">
+<link rel="stylesheet" href="canais.css?v=20261112-canais3">
 </head>
 <body>
 <a class="pular" id="pular" href="#conteudo">Pular para o conteúdo</a>
@@ -774,7 +774,11 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
       <label class="voz-campo"><span>Nome do canal</span>
         <input id="canalNovoNome" type="text" maxlength="80" placeholder="Ex.: Histórias da Bíblia" required></label>
       <label class="voz-campo"><span>Tema (o que este canal conta)</span>
-        <textarea id="canalNovoTema" rows="3" placeholder="Ex.: histórias bíblicas em 45 segundos, tom de conversa, para quem nunca leu"></textarea></label>
+        <textarea id="canalNovoTema" rows="3" placeholder="Ex.: histórias bíblicas em 45 segundos, narradas como conversa, para quem nunca leu a Bíblia"></textarea></label>
+      <div class="cx-acoes" style="justify-content:flex-start">
+        <button type="button" class="bt-sec mini" data-acao="sugerir-descricao"><span data-ic="brilho"></span>Sugerir descrição pelo nome</button>
+      </div>
+      <p class="nota" id="canalNovoStatus" hidden aria-live="polite"></p>
       <div class="janela-acoes">
         <button type="button" class="bt-sec" id="canalNovoCancelar">Cancelar</button>
         <button type="button" class="gerar" id="canalNovoCriar"><span data-ic="ok"></span>Criar canal</button>
@@ -1120,7 +1124,7 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
 <script src="fila.js?v=20261112-abas"></script>
 <script src="configuracoes.js?v=20261112-ias"></script>
 <script src="canal.js?v=20261030-canal"></script>
-<script src="canais.js?v=20261112-canais1"></script>
+<script src="canais.js?v=20261112-canais3"></script>
 <script src="plano.js?v=20261102-molde2"></script>
 <script src="tudo.js?v=20261102-tudo2"></script>
 </body>

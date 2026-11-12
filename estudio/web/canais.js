@@ -33,11 +33,39 @@
   const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70' };
   const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
   const ABAS = [['visao', 'Visão geral'], ['produzir', 'Produzir'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['ajustes', 'Ajustes']];
+  const HORAS = ['06:00', '08:00', '09:00', '11:00', '12:00', '15:00', '18:00', '19:00', '20:00', '21:00'];
+  const CATEGORIAS_YT = [
+    ['1', 'Filmes e animação'], ['2', 'Automóveis'], ['10', 'Música'], ['15', 'Animais'],
+    ['17', 'Esportes'], ['19', 'Viagens'], ['20', 'Games'], ['22', 'Pessoas e blogs'],
+    ['23', 'Comédia'], ['24', 'Entretenimento'], ['25', 'Notícias'], ['26', 'Como fazer e estilo'],
+    ['27', 'Educação'], ['28', 'Ciência e tecnologia'], ['29', 'Causas sociais'],
+  ];
+
+  function modelosImagem() {
+    const lista = ((S.presets && S.presets.imagem) || []).filter((p) => p && p.id);
+    if (!lista.length) {
+      return [{ id: 'z_image_turbo', nome: 'Z-Image Turbo' }, { id: 'krea2', nome: 'Krea 2 Turbo' },
+        { id: 'qwen_image_2512', nome: 'Qwen-Image 2512' }, { id: 'flux2_dev', nome: 'FLUX.2 dev' },
+        { id: 'ideogram4', nome: 'Ideogram 4' }];
+    }
+    return lista.filter((p) => !['krea2_img2img', 'h3_imagem'].includes(p.id));
+  }
+
+  function opcoesSelect(valores, atual) {
+    const lista = valores.map(String);
+    if (atual != null && atual !== '' && !lista.includes(String(atual))) lista.unshift(String(atual));
+    return lista.map((v) => `<option value="${esc(v)}" ${String(v) === String(atual) ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  }
+
+  function botaoIA(campo, rotulo = 'Melhorar') {
+    return `<button type="button" class="cx-ia" data-acao="ia-campo" data-campo="${esc(campo)}"
+      title="Usar a IA local para melhorar este campo">${ic('brilho')}${esc(rotulo)}</button>`;
+  }
 
   const S = {
     iniciado: false, canais: [], atual: null, dados: null, aba: 'visao',
     plano: null, briefing: '', producao: null, poll: null, analise: null,
-    analiseDias: 30, analiseCarregada: false, vozes: null, charts: {}, erros: 0,
+    analiseDias: 30, analiseCarregada: false, vozes: null, presets: null, charts: {}, erros: 0,
   };
 
   async function pedir(url, corpo, metodo) {
@@ -63,9 +91,20 @@
   // ================================================================ carregar
   async function abrir() {
     montar();
+    const sub = (location.hash.replace(/^#\/?/, '').split('/')[1] || '').trim();
+    if (ABAS.some(([k]) => k === sub)) S.aba = sub;
+    if (!S.presets) carregarPresets();
     if (!S.canais.length) await carregarCanais();
     else if (S.atual) { await carregarCanal(false); render(); }
     else render();
+  }
+
+  async function carregarPresets() {
+    if (S.presets) return;
+    try {
+      S.presets = await pedir('/api/presets');
+      if (S.aba === 'ajustes') render();
+    } catch (e) { S.presets = { imagem: [] }; }
   }
 
   async function carregarCanais() {
@@ -267,16 +306,18 @@
         <div class="cx-form">
           <label><span>Briefing</span><textarea id="cxBriefing" rows="5" placeholder="Ex.: conta a história de Davi e Golias em 45 segundos, com gancho nos 3 primeiros segundos, sem citar violência explícita.">${esc(S.briefing || '')}</textarea></label>
           <div class="cx-grid3">
-            <label><span>Cenas</span><input id="cxQuantas" type="number" min="3" max="12" value="${Number((d.producao || {}).cenas) || 6}"></label>
-            <label><span>Duração alvo (s)</span><input id="cxDuracao" type="number" min="15" max="180" value="${Number((d.producao || {}).duracao_alvo) || 45}"></label>
+            <label><span>Cenas</span><select id="cxQuantas">${opcoesSelect([3, 4, 5, 6, 7, 8, 10, 12], Number((d.producao || {}).cenas) || 6)}</select></label>
+            <label><span>Duração alvo (s)</span><select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number((d.producao || {}).duracao_alvo) || 45)}</select></label>
             <div><span class="fraco" style="font-size:12px;font-weight:600">Formatos a montar</span>
               <div class="cx-row" style="gap:10px;margin-top:6px">${ativos.map((f) =>
                 `<label class="cx-check"><input type="checkbox" data-formato="${esc(f.id)}" checked>${esc(f.nome)}</label>`).join('') || '<span class="fraco">Ative um formato em Ajustes.</span>'}</div></div>
           </div>
           <div class="cx-acoes">
             <button type="button" class="bt-sec" data-acao="novo-canal">${ic('mais')}Outro canal</button>
-            <button type="button" class="gerar" data-acao="gerar-plano">${ic('brilho')}Gerar roteiro</button>
+            <button type="button" class="bt-sec" data-acao="gerar-plano">${ic('brilho')}Só o roteiro</button>
+            <button type="button" class="gerar" data-acao="produzir-direto">${ic('play')}Gerar vídeo completo</button>
           </div>
+          <p class="nota">Gerar vídeo completo faz roteiro, voz, imagens e montagem sem revisão. Só o roteiro deixa você revisar as cenas antes.</p>
         </div>
       </div>
       <div id="cxProgresso">${S.producao ? cartaoProgresso(S.producao) : ''}</div>
@@ -514,116 +555,214 @@
   }
 
   // ------------------------------------------------------------------ ajustes
+  function campoIA(campo, rotulo, controle, dica) {
+    return `<div class="cx-campo"><div class="cx-rotulo"><label>${esc(rotulo)}</label>${botaoIA(campo)}</div>${controle}${dica ? `<span class="cx-dica">${esc(dica)}</span>` : ''}</div>`;
+  }
+
+  function chipHora(h) {
+    return `<span class="cx-hora" data-hora="${esc(h)}">${esc(h)}<button type="button" data-acao="del-hora" data-hora="${esc(h)}" aria-label="Tirar ${esc(h)}">×</button></span>`;
+  }
+
   function telaAjustes() {
     const d = S.dados, ctx = d.contexto || {}, pr = d.producao || {}, pub = d.publicacao || {};
     const formatos = d.formatos || [];
     const vozes = S.vozes || [];
+    const modelos = modelosImagem();
+    const presetAtual = pr.preset_imagem || 'z_image_turbo';
+    const horas = (pub.horarios && pub.horarios.length) ? pub.horarios : ['06:00'];
+    const opPreset = modelos.map((m) => `<option value="${esc(m.id)}" ${m.id === presetAtual ? 'selected' : ''}>${esc(m.nome || m.id)}</option>`).join('')
+      + (modelos.some((m) => m.id === presetAtual) ? '' : `<option value="${esc(presetAtual)}" selected>${esc(presetAtual)}</option>`);
+    const opQualidade = ['Normal', 'Alta', 'Máxima'].map((q) =>
+      `<option ${pr.qualidade === q ? 'selected' : ''}>${q}</option>`).join('');
+    const opIdioma = [['pt', 'Português'], ['en', 'Inglês'], ['es', 'Espanhol']].map(([v, r]) =>
+      `<option value="${v}" ${ctx.idioma === v ? 'selected' : ''}>${r}</option>`).join('');
+    const opVoz = `<option value="">Voz padrão do VoiceStudio</option>` + vozes.map((v) =>
+      `<option value="${esc(v.id)}" ${((d.voz || {}).voz_id === v.id) ? 'selected' : ''}>${esc(v.nome || v.id)}</option>`).join('');
     return `
       <form class="cx-form" id="cxAjustes" onsubmit="return false">
-        <div class="cx-card"><h2>Identidade do canal</h2>
+        <div class="cx-card">
+          <div class="cx-card-cab">
+            <div><h2>Identidade do canal</h2>
+              <p class="fraco">É o que a IA usa para escrever todo roteiro e toda imagem deste canal.</p></div>
+            <button type="button" class="bt-sec" data-acao="ia-contexto">${ic('brilho')}Gerar contexto com IA</button>
+          </div>
+          <p class="nota cx-ia-status" id="cxIaStatus" hidden aria-live="polite"></p>
           <div class="cx-grid3">
-            <label><span>Nome</span><input id="ajNome" type="text" maxlength="80" value="${esc(d.nome || '')}"></label>
-            <label><span>Cor</span><input id="ajCor" type="color" value="${esc(d.cor || '#5B8DEF')}" style="height:40px;padding:4px"></label>
-            <label><span>Idioma</span><select id="ajIdioma"><option value="pt" ${ctx.idioma === 'pt' ? 'selected' : ''}>Português</option>
-              <option value="en" ${ctx.idioma === 'en' ? 'selected' : ''}>Inglês</option><option value="es" ${ctx.idioma === 'es' ? 'selected' : ''}>Espanhol</option></select></label>
+            <div class="cx-campo"><label for="ajNome">Nome</label>
+              <input id="ajNome" type="text" maxlength="80" value="${esc(d.nome || '')}" placeholder="Ex.: Histórias da Bíblia"></div>
+            <div class="cx-campo"><label for="ajCor">Cor do canal</label>
+              <input id="ajCor" type="color" value="${esc(d.cor || '#5B8DEF')}" class="cx-cor"></div>
+            <div class="cx-campo"><label for="ajIdioma">Idioma</label>
+              <select id="ajIdioma">${opIdioma}</select></div>
           </div>
-          <label><span>Tema (o que este canal conta)</span><textarea id="ajTema" rows="3">${esc(ctx.tema || '')}</textarea></label>
+          ${campoIA('tema', 'Tema (o que este canal conta)',
+            `<textarea id="ajTema" rows="3" placeholder="Ex.: histórias bíblicas em 45 segundos, narradas como conversa, para quem nunca leu a Bíblia.">${esc(ctx.tema || '')}</textarea>`,
+            'Se o nome não deixar claro, descreva aqui. A IA usa este texto em tudo.')}
           <div class="cx-grid2">
-            <label><span>Público</span><input id="ajPublico" type="text" value="${esc(ctx.publico || '')}"></label>
-            <label><span>Tom</span><input id="ajTom" type="text" value="${esc(ctx.tom || '')}"></label>
+            ${campoIA('publico', 'Público',
+              `<input id="ajPublico" type="text" value="${esc(ctx.publico || '')}" placeholder="Ex.: jovens de 18 a 30 anos que gostam de histórias curtas.">`)}
+            ${campoIA('tom', 'Tom',
+              `<input id="ajTom" type="text" value="${esc(ctx.tom || '')}" placeholder="Ex.: conversa direta, curiosa, sem sermão.">`)}
           </div>
-          <label><span>Identidade visual (entra nos prompts de imagem)</span><input id="ajVisual" type="text" value="${esc(ctx.identidade_visual || '')}"></label>
+          ${campoIA('identidade_visual', 'Identidade visual (entra nos prompts de imagem)',
+            `<input id="ajVisual" type="text" value="${esc(ctx.identidade_visual || '')}" placeholder="Ex.: luz dourada, deserto, pintura realista, sem texto na imagem.">`)}
           <div class="cx-grid2">
-            <label><span>Regras (uma por linha)</span><textarea id="ajRegras" rows="3">${esc((ctx.regras || []).join('\n'))}</textarea></label>
-            <label><span>Não fazer (uma por linha)</span><textarea id="ajNao" rows="3">${esc((ctx.nao_fazer || []).join('\n'))}</textarea></label>
+            ${campoIA('regras', 'Regras (uma por linha)',
+              `<textarea id="ajRegras" rows="3" placeholder="Ex.: gancho nos 3 primeiros segundos&#10;Ex.: uma ideia por vídeo&#10;Ex.: nunca dividir em parte 1 e parte 2">${esc((ctx.regras || []).join('\n'))}</textarea>`)}
+            ${campoIA('nao_fazer', 'Não fazer (uma por linha)',
+              `<textarea id="ajNao" rows="3" placeholder="Ex.: violência explícita&#10;Ex.: prometer milagre&#10;Ex.: falar mal de outra religião">${esc((ctx.nao_fazer || []).join('\n'))}</textarea>`)}
           </div>
           <div class="cx-grid2">
-            <label><span>Referências (uma por linha)</span><textarea id="ajRef" rows="2">${esc((ctx.referencias || []).join('\n'))}</textarea></label>
-            <label><span>Chamada final</span><input id="ajCta" type="text" value="${esc(ctx.chamada_final || '')}"></label>
+            ${campoIA('referencias', 'Referências (uma por linha)',
+              `<textarea id="ajRef" rows="2" placeholder="Ex.: ritmo de TikTok de história&#10;Ex.: estética de documentário">${esc((ctx.referencias || []).join('\n'))}</textarea>`)}
+            ${campoIA('chamada_final', 'Chamada final',
+              `<input id="ajCta" type="text" value="${esc(ctx.chamada_final || '')}" placeholder="Ex.: comenta qual é a sua maior coragem hoje.">`)}
           </div>
-          <label><span>Hashtags padrão</span><input id="ajHashtags" type="text" value="${esc((ctx.hashtags || []).join(' '))}"></label>
+          ${campoIA('hashtags', 'Hashtags padrão',
+            `<input id="ajHashtags" type="text" value="${esc((ctx.hashtags || []).join(' '))}" placeholder="#historias #fe #coragem #shorts">`)}
         </div>
 
-        <div class="cx-card"><h2>Personagens do canal</h2>
-          <p class="fraco">Eles entram em todo roteiro deste canal, com a mesma aparência. Edite um e os próximos vídeos já saem com ele.</p>
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Personagens do canal</h2>
+            <p class="fraco">Eles entram em todo roteiro deste canal, com a mesma aparência.</p></div>
+            <button type="button" class="bt-sec mini" data-acao="add-persona-ajustes">${ic('mais')}Personagem</button></div>
           <div class="cx-pers" id="cxPersonagensAjustes">${(ctx.personagens || []).map(linhaPersonagem).join('')}</div>
-          <div class="cx-acoes"><button type="button" class="bt-sec mini" data-acao="add-persona-ajustes">${ic('mais')}Personagem</button></div>
         </div>
 
-        <div class="cx-card"><h2>Produção e formatos</h2>
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Produção e formatos</h2>
+            <p class="fraco">Estes valores viram o padrão de todo vídeo deste canal.</p></div></div>
           <div class="cx-grid3">
-            <label><span>Duração alvo (s)</span><input id="ajDuracao" type="number" min="15" max="180" value="${Number(pr.duracao_alvo) || 45}"></label>
-            <label><span>Cenas por vídeo</span><input id="ajCenas" type="number" min="3" max="12" value="${Number(pr.cenas) || 6}"></label>
-            <label><span>Qualidade</span><select id="ajQualidade">${['Normal', 'Alta', 'Máxima'].map((q) =>
-              `<option ${pr.qualidade === q ? 'selected' : ''}>${q}</option>`).join('')}</select></label>
+            <div class="cx-campo"><label for="ajDuracao">Duração alvo</label>
+              <select id="ajDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number(pr.duracao_alvo) || 45)}</select></div>
+            <div class="cx-campo"><label for="ajCenas">Cenas por vídeo</label>
+              <select id="ajCenas">${opcoesSelect([3, 4, 5, 6, 7, 8, 10, 12], Number(pr.cenas) || 6)}</select></div>
+            <div class="cx-campo"><label for="ajQualidade">Qualidade</label>
+              <select id="ajQualidade">${opQualidade}</select></div>
           </div>
           <div class="cx-grid3">
-            <label><span>Modelo de imagem</span><input id="ajPreset" type="text" value="${esc(pr.preset_imagem || 'z_image_turbo')}" placeholder="z_image_turbo"></label>
-            <label><span>Proporção base das imagens</span><select id="ajFormatoBase">${['9:16', '16:9', '1:1'].map((f) =>
-              `<option ${pr.formato_base === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
-            <label><span>Voz</span><select id="ajVoz"><option value="">Voz padrão do VoiceStudio</option>
-              ${vozes.map((v) => `<option value="${esc(v.id)}" ${((d.voz || {}).voz_id === v.id) ? 'selected' : ''}>${esc(v.nome || v.id)}</option>`).join('')}</select></label>
+            <div class="cx-campo"><label for="ajPreset">Modelo de imagem</label>
+              <select id="ajPreset">${opPreset}</select></div>
+            <div class="cx-campo"><label for="ajFormatoBase">Proporção base das imagens</label>
+              <select id="ajFormatoBase">${['9:16', '16:9', '1:1'].map((f) =>
+                `<option ${pr.formato_base === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label for="ajVoz">Voz</label>
+              <select id="ajVoz">${opVoz}</select></div>
           </div>
-          <div class="cx-row" style="margin-top:10px">
+          <div class="cx-check-linha">
             <label class="cx-check"><input type="checkbox" id="ajLegendas" ${pr.legendas !== false ? 'checked' : ''}>Legendas nos formatos verticais</label>
             <label class="cx-check"><input type="checkbox" id="ajFalar" ${pr.falar_cenas !== false ? 'checked' : ''}>Gerar narração por cena</label>
           </div>
-          <h3 style="margin-top:16px">Formatos a montar</h3>
-          <p class="nota">O tamanho é seu: mudar 1080×1920 para outra medida muda o arquivo final. Formatos do mesmo tamanho e com a mesma legenda reaproveitam o mesmo vídeo.</p>
+          <div class="cx-secao-cab"><h3>Formatos a montar</h3>
+            <p class="nota">Mude o tamanho se precisar. Formatos do mesmo tamanho e com a mesma legenda reaproveitam o mesmo vídeo final.</p></div>
+          <div class="cx-formato-cab"><span>Ativo</span><span>Formato</span><span>Tamanho (px)</span><span>Plataforma</span><span>Legendas</span><span></span></div>
           <div class="cx-formatos" id="cxFormatos">${formatos.map(linhaFormato).join('')}</div>
           <div class="cx-acoes"><button type="button" class="bt-sec mini" data-acao="add-formato">${ic('mais')}Formato</button></div>
         </div>
 
-        <div class="cx-card"><h2>Publicação</h2>
-          <div class="cx-row"><label class="cx-check"><input type="checkbox" id="ajAuto" ${pub.automatico ? 'checked' : ''}>Agendar sozinho depois de produzir</label>
-            <label class="cx-check"><span>Horários</span><input id="ajHorarios" type="text" value="${esc((pub.horarios || []).join(', '))}" placeholder="06:00, 18:30" style="max-width:220px"></label>
-            <label class="cx-check"><span>Visibilidade</span><select id="ajVisibilidade">${['public', 'unlisted', 'private'].map((v) =>
-              `<option value="${v}" ${pub.visibilidade === v ? 'selected' : ''}>${v === 'public' ? 'Público' : v === 'unlisted' ? 'Não listado' : 'Privado'}</option>`).join('')}</select></label>
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Publicação</h2>
+            <p class="fraco">O estúdio publica sozinho no horário, mesmo com esta tela fechada. O computador precisa estar ligado.</p></div></div>
+          <div class="cx-grid3">
+            <label class="cx-check cx-check-card"><input type="checkbox" id="ajAuto" ${pub.automatico ? 'checked' : ''}>
+              <span>Agendar sozinho depois de produzir</span></label>
+            <div class="cx-campo"><div class="cx-rotulo"><label>Horários</label><span class="cx-dica">Escolha os horários</span></div>
+              <div class="cx-horarios" id="cxHorarios">${horas.map(chipHora).join('')}
+                <span class="cx-hora-add"><select id="ajHoraNova">${HORAS.filter((h) => !horas.includes(h)).map((h) => `<option>${h}</option>`).join('')}</select>
+                  <button type="button" class="bt-sec mini" data-acao="add-hora" ${HORAS.some((h) => !horas.includes(h)) ? '' : 'disabled'}>${ic('mais')}Adicionar</button></span></div>
+              <input type="hidden" id="ajHorarios" value="${esc(horas.join(', '))}">
+            </div>
+            <div class="cx-campo"><label for="ajVisibilidade">Visibilidade</label>
+              <select id="ajVisibilidade">${['public', 'unlisted', 'private'].map((v) =>
+                `<option value="${v}" ${pub.visibilidade === v ? 'selected' : ''}>${v === 'public' ? 'Público' : v === 'unlisted' ? 'Não listado' : 'Privado'}</option>`).join('')}</select></div>
           </div>
-          <div class="cx-row" style="margin-top:10px">${Object.entries(d.credenciais || {}).map(([k, v]) =>
-            `<label class="cx-check"><input type="checkbox" data-pubplat="${k}" ${(pub.plataformas || []).includes(k) ? 'checked' : ''}>${esc(v.rotulo || Rotulo[k] || k)}</label>`).join('')}</div>
-          <div class="cx-grid2" style="margin-top:10px">
-            <label><span>Meta de receita mensal (R$)</span><input id="ajMeta" type="number" min="0" step="0.01" value="${Number((d.analytics || {}).meta_receita) || 0}"></label>
-            <label><span>Hashtags da agenda</span><input id="ajTagsAgenda" type="text" value="${esc(((d.publicacao || {}).hashtags || []).join(' '))}"></label>
+          <div class="cx-campo"><div class="cx-rotulo"><label>Plataformas</label><span class="cx-dica">Só as marcadas entram na agenda automática</span></div>
+            <div class="cx-plataformas">${Object.entries(d.credenciais || {}).map(([k, v]) =>
+              `<label class="cx-check cx-pill"><input type="checkbox" data-pubplat="${k}" ${(pub.plataformas || []).includes(k) ? 'checked' : ''}>
+                <span class="cx-ponto" style="--i:${Cores[k] || '#3987e5'}"></span>${esc(v.rotulo || Rotulo[k] || k)}</label>`).join('')}</div>
+          </div>
+          <div class="cx-grid2">
+            <div class="cx-campo"><label for="ajMeta">Meta de receita mensal (R$)</label>
+              <input id="ajMeta" type="number" min="0" step="0.01" value="${Number((d.analytics || {}).meta_receita) || 0}" placeholder="Ex.: 1000"></div>
+            <div class="cx-campo"><label for="ajTagsAgenda">Hashtags da agenda</label>
+              <input id="ajTagsAgenda" type="text" value="${esc(((d.publicacao || {}).hashtags || []).join(' '))}" placeholder="#historias #shorts"></div>
           </div>
         </div>
 
-        <div class="cx-card"><h2>Contas das plataformas</h2>
-          <p class="fraco">As chaves ficam só nesta máquina, em <code>canais/segredos.json</code> com permissão 600. A tela nunca mostra o valor de um token de volta.</p>
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Contas das plataformas</h2>
+            <p class="fraco">As chaves ficam só nesta máquina, em <code>canais/segredos.json</code> com permissão 600. A tela nunca mostra um token de volta.</p></div></div>
           <div class="cx-cred">${credenciaisHTML(d.credenciais || {})}</div>
         </div>
 
-        <div class="cx-acoes"><button type="button" class="gerar" data-acao="salvar-ajustes">${ic('ok')}Salvar canal</button></div>
+        <div class="cx-acoes cx-acoes-fim"><button type="button" class="gerar" data-acao="salvar-ajustes">${ic('ok')}Salvar canal</button></div>
       </form>`;
   }
 
   function linhaFormato(f) {
     return `<div class="cx-formato" data-fmt-row data-fid="${esc(f.id || '')}">
-      <label class="cx-check"><input type="checkbox" data-fmt-ativo ${f.ativo !== false ? 'checked' : ''}>
-        <input data-fmt-nome type="text" value="${esc(f.nome || 'Formato')}" aria-label="Nome do formato"></label>
+      <label class="cx-check cx-centro" title="Ativo"><input type="checkbox" data-fmt-ativo ${f.ativo !== false ? 'checked' : ''}></label>
+      <input data-fmt-nome type="text" value="${esc(f.nome || 'Formato')}" aria-label="Nome do formato" placeholder="Ex.: YouTube Shorts">
       <div class="cx-dim"><input data-fmt-largura type="number" min="240" step="2" value="${Number(f.largura) || 1080}" aria-label="Largura">
         <span>×</span><input data-fmt-altura type="number" min="240" step="2" value="${Number(f.altura) || 1920}" aria-label="Altura"></div>
       <select data-fmt-plataforma aria-label="Plataforma">${Object.entries(Rotulo).map(([k, v]) =>
         `<option value="${k}" ${f.plataforma === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-      <label class="cx-check"><input type="checkbox" data-fmt-legendas ${f.legendas !== false ? 'checked' : ''}>legendas</label>
+      <label class="cx-check cx-centro" title="Legendas"><input type="checkbox" data-fmt-legendas ${f.legendas !== false ? 'checked' : ''}></label>
       <button type="button" class="ic-bt" data-acao="del-formato" aria-label="Tirar formato">${ic('lixo')}</button>
     </div>`;
   }
 
-  function credenciaisHTML(cred) {    const campos = {
-      youtube: [['client_id', 'Client ID'], ['client_secret', 'Client secret'], ['refresh_token', 'Refresh token'], ['categoria', 'Categoria (22 = Pessoas e blogs)']],
-      tiktok: [['access_token', 'Access token'], ['privacy_level', 'Privacidade (PUBLIC_TO_EVERYONE ou SELF_ONLY)'], ['disable_comment', 'Desativar comentários (true/false)']],
-      instagram: [['access_token', 'Access token'], ['ig_user_id', 'IG user id'], ['video_base_url', 'URL pública da pasta do vídeo (para Reels)']],
+  function campoCred(p, def, c) {
+    const detalhe = c.detalhe || {};
+    const sensivel = /token|secret|key/i.test(def.k);
+    if (def.tipo === 'check') {
+      return `<label class="cx-check"><input type="checkbox" data-cred-campo="${def.k}" ${String(detalhe[def.k]).toLowerCase() === 'true' ? 'checked' : ''}>${esc(def.rot)}</label>`;
+    }
+    if (def.tipo === 'select') {
+      return `<div class="cx-campo"><label>${esc(def.rot)}</label><select data-cred-campo="${def.k}">${def.opcoes.map(([v, r]) =>
+        `<option value="${esc(v)}" ${String(detalhe[def.k] || def.atual || '') === String(v) ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></div>`;
+    }
+    const valor = sensivel ? '' : (detalhe[def.k] || '');
+    const ph = sensivel && c.configurado && detalhe[def.k] ? 'já configurado' : (def.ph || '');
+    return `<div class="cx-campo"><label>${esc(def.rot)}</label>
+      <input data-cred-campo="${def.k}" type="${def.tipo || 'text'}" value="${esc(valor)}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
+  }
+
+  function credenciaisHTML(cred) {
+    const ajuda = {
+      youtube: 'Google Cloud > APIs e serviços > Credenciais > OAuth do tipo "App para computador". Habilite a YouTube Data API v3 e autorize com youtube.upload e youtube.readonly.',
+      tiktok: 'developers.tiktok.com > app com Content Posting API. Autorize a conta e cole o access token. Sem auditoria do app, use "Só eu".',
+      instagram: 'Conta profissional ligada a uma Página do Facebook. Token com instagram_content_publish e ig_user_id. O vídeo precisa estar numa URL pública.',
+    };
+    const campos = {
+      youtube: [
+        { k: 'client_id', rot: 'Client ID', tipo: 'text', ph: 'Ex.: 1234567890-abc.apps.googleusercontent.com' },
+        { k: 'client_secret', rot: 'Client secret', tipo: 'password', ph: 'Ex.: GOCSPX-...' },
+        { k: 'refresh_token', rot: 'Refresh token', tipo: 'password', ph: 'Ex.: 1//0g...' },
+        { k: 'categoria', rot: 'Categoria do vídeo', tipo: 'select', opcoes: CATEGORIAS_YT, atual: '22' },
+      ],
+      tiktok: [
+        { k: 'access_token', rot: 'Access token', tipo: 'password', ph: 'Ex.: act.example...' },
+        { k: 'privacy_level', rot: 'Privacidade', tipo: 'select', opcoes: [['PUBLIC_TO_EVERYONE', 'Público'], ['SELF_ONLY', 'Só eu']], atual: 'SELF_ONLY' },
+        { k: 'disable_comment', rot: 'Desativar comentários', tipo: 'check' },
+        { k: 'disable_duet', rot: 'Desativar duetos', tipo: 'check' },
+        { k: 'disable_stitch', rot: 'Desativar remixes', tipo: 'check' },
+      ],
+      instagram: [
+        { k: 'access_token', rot: 'Access token', tipo: 'password', ph: 'Ex.: IGQVJ...' },
+        { k: 'ig_user_id', rot: 'IG user id', tipo: 'text', ph: 'Ex.: 17841400000000000' },
+        { k: 'video_base_url', rot: 'URL pública da pasta do vídeo', tipo: 'url', ph: 'Ex.: https://meusite.com/videos' },
+      ],
     };
     return Object.entries(campos).map(([p, lista]) => {
       const c = cred[p] || {};
-      return `<div class="cx-card"><h3>${esc(Rotulo[p] || p)}
-        <span class="cx-selo ${c.configurado ? 'ok' : 'pendente'}">${c.configurado ? 'conectado' : 'não conectado'}</span></h3>
-        <div class="cx-form" data-cred="${p}">${lista.map(([k, rot]) =>
-          `<label><span>${esc(rot)}</span><input data-cred-campo="${k}" type="${/token|secret|key/i.test(k) ? 'password' : 'text'}"
-            value="" placeholder="${c.configurado && c.detalhe && c.detalhe[k] ? 'configurado' : ''}"></label>`).join('')}
-          <div class="cx-acoes"><button type="button" class="bt-sec mini" data-acao="salvar-cred" data-plat="${p}">Salvar ${esc(Rotulo[p] || p)}</button></div>
-        </div></div>`;
+      return `<div class="cx-card cx-cred-card">
+        <div class="cx-cred-cab"><h3>${esc(Rotulo[p] || p)}</h3>
+          <span class="cx-selo ${c.configurado ? 'ok' : 'pendente'}">${c.configurado ? 'conectado' : 'não conectado'}</span></div>
+        <p class="nota">${esc(ajuda[p])}</p>
+        <div class="cx-form" data-cred="${p}">${lista.map((def) => campoCred(p, def, c)).join('')}</div>
+        <div class="cx-acoes"><button type="button" class="bt-sec" data-acao="salvar-cred" data-plat="${p}">Salvar ${esc(Rotulo[p] || p)}</button></div>
+      </div>`;
     }).join('');
   }
 
@@ -666,7 +805,7 @@
     } catch (e) {
       mostrar('Não consegui montar o roteiro: ' + e.message, 'erro');
     } finally {
-      if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('brilho') + 'Gerar roteiro'; }
+      if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('brilho') + 'Só o roteiro'; }
     }
   }
 
@@ -689,6 +828,32 @@
       mostrar('A produção não começou: ' + e.message, 'erro');
     } finally {
       if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('play') + 'Produzir tudo'; }
+    }
+  }
+
+  async function produzirDireto() {
+    const briefing = (($('#cxBriefing') || {}).value || '').trim();
+    if (!briefing) { mostrar('Escreva o briefing antes de gerar o vídeo completo.', 'erro'); return; }
+    const formatos = $$('[data-formato]:checked').map((x) => x.dataset.formato);
+    const bt = $('[data-acao="produzir-direto"]');
+    if (bt) { bt.disabled = true; bt.textContent = 'Começando a produção…'; }
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir', {
+        briefing,
+        quantas: Number(($('#cxQuantas') || {}).value) || undefined,
+        duracao: Number(($('#cxDuracao') || {}).value) || undefined,
+        formatos,
+      });
+      S.briefing = briefing;
+      S.plano = r.plano;
+      S.producao = r.producao;
+      mostrar('Produção completa começou: roteiro, voz, imagens e montagem.', 'ok');
+      render();
+      pollProducao(r.producao.id);
+    } catch (e) {
+      mostrar('A produção não começou: ' + e.message, 'erro');
+    } finally {
+      if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('play') + 'Gerar vídeo completo'; }
     }
   }
 
@@ -793,6 +958,106 @@
     } finally { bt.disabled = false; }
   }
 
+  // ================================================================ contexto com IA
+  const CAMPOS_IA = {
+    tema: '#ajTema', publico: '#ajPublico', tom: '#ajTom', identidade_visual: '#ajVisual',
+    regras: '#ajRegras', nao_fazer: '#ajNao', referencias: '#ajRef',
+    chamada_final: '#ajCta', hashtags: '#ajHashtags',
+  };
+
+  function statusIA(msg, erro) {
+    const el = $('#cxIaStatus');
+    if (!el) return;
+    el.hidden = !msg;
+    el.textContent = msg || '';
+    el.className = 'nota cx-ia-status' + (erro ? ' erro' : '');
+  }
+
+  async function melhorarCampo(botao) {
+    const campo = botao.dataset.campo;
+    const alvo = $(CAMPOS_IA[campo]);
+    if (!alvo) return;
+    botao.disabled = true;
+    statusIA('Lendo o campo com a IA local…');
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/contexto/ia',
+        { campo, texto: alvo.value || '' });
+      alvo.value = r.texto || '';
+      statusIA('Pronto. Revise o texto e clique em Salvar canal.');
+    } catch (e) {
+      statusIA('A IA não conseguiu melhorar: ' + e.message, true);
+    } finally { botao.disabled = false; }
+  }
+
+  async function gerarContexto() {
+    const nome = (($('#ajNome') || {}).value || '').trim();
+    const tema = (($('#ajTema') || {}).value || '').trim();
+    if (!nome) { mostrar('Dê um nome ao canal antes de gerar o contexto.', 'erro'); return; }
+    const base = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+    const generico = ['', 'canal', 'meucanal', 'novocanal', 'teste', 'canal1', 'canal2', 'canal3'].includes(base);
+    if (generico && tema.length < 12) {
+      mostrar('O nome não diz do que o canal trata. Escreva uma descrição no campo Tema antes de gerar.', 'erro');
+      const t = $('#ajTema'); if (t) t.focus();
+      return;
+    }
+    const bt = $('[data-acao="ia-contexto"]');
+    if (bt) bt.disabled = true;
+    statusIA('Gerando o contexto do canal com a IA local… pode levar até um minuto.');
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/contexto/ia',
+        { gerar: true, nome, tema });
+      const c = r.contexto || {};
+      Object.entries(CAMPOS_IA).forEach(([k, sel]) => {
+        const el = $(sel);
+        if (!el || c[k] == null) return;
+        el.value = Array.isArray(c[k]) ? (k === 'hashtags' ? c[k].join(' ') : c[k].join('\n')) : c[k];
+      });
+      if (Array.isArray(c.personagens)) {
+        const cx = $('#cxPersonagensAjustes');
+        if (cx) cx.innerHTML = c.personagens.map(linhaPersonagem).join('');
+        posRender();
+      }
+      statusIA('Contexto gerado. Revise os campos e clique em Salvar canal.');
+    } catch (e) {
+      statusIA('A IA não conseguiu gerar: ' + e.message, true);
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  async function sugerirDescricao() {
+    const nome = (($('#canalNovoNome') || {}).value || '').trim();
+    const texto = (($('#canalNovoTema') || {}).value || '').trim();
+    const status = $('#canalNovoStatus');
+    if (!nome) {
+      if (status) { status.hidden = false; status.textContent = 'Dê um nome ao canal primeiro.'; status.className = 'nota erro'; }
+      return;
+    }
+    const bt = $('[data-acao="sugerir-descricao"]');
+    if (bt) bt.disabled = true;
+    if (status) { status.hidden = false; status.className = 'nota'; status.textContent = 'Escrevendo a descrição com a IA local…'; }
+    try {
+      const r = await pedir('/api/canais/sugerir', { nome, texto });
+      $('#canalNovoTema').value = r.texto || '';
+      if (status) { status.textContent = 'Descrição gerada. Ajuste se quiser.'; }
+    } catch (e) {
+      if (status) { status.textContent = e.message; status.className = 'nota erro'; }
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  function atualizarHoras() {
+    const hidden = $('#ajHorarios');
+    if (!hidden) return;
+    hidden.value = $$('#cxHorarios .cx-hora').map((x) => x.dataset.hora).join(', ');
+    const sel = $('#ajHoraNova');
+    if (!sel) return;
+    const usadas = $$('#cxHorarios .cx-hora').map((x) => x.dataset.hora);
+    const atual = sel.value;
+    const opcoes = HORAS.filter((h) => !usadas.includes(h));
+    sel.innerHTML = opcoes.map((h) => `<option>${h}</option>`).join('');
+    if (opcoes.includes(atual)) sel.value = atual;
+    const add = sel.closest('.cx-hora-add') && sel.closest('.cx-hora-add').querySelector('button');
+    if (add) add.disabled = !opcoes.length;
+  }
+
   // ================================================================ salvar ajustes
   function valoresConfig() {
     const d = S.dados;
@@ -874,6 +1139,10 @@
     if (!form) return;
     const campos = {};
     $$('[data-cred-campo]', form).forEach((el) => {
+      if (el.type === 'checkbox') {
+        campos[el.dataset.credCampo] = el.checked ? 'true' : 'false';
+        return;
+      }
       const v = String(el.value || '').trim();
       if (v) campos[el.dataset.credCampo] = v;
     });
@@ -937,6 +1206,26 @@
     if (acao === 'abrir-agenda') { S.aba = 'agenda'; render(); return; }
     if (acao === 'gerar-plano') { await gerarPlano(); return; }
     if (acao === 'produzir') { await produzir(); return; }
+    if (acao === 'produzir-direto') { await produzirDireto(); return; }
+    if (acao === 'ia-campo') { await melhorarCampo(b); return; }
+    if (acao === 'ia-contexto') { await gerarContexto(); return; }
+    if (acao === 'sugerir-descricao') { await sugerirDescricao(); return; }
+    if (acao === 'add-hora') {
+      const h = ($('#ajHoraNova') || {}).value || '06:00';
+      const atual = $$('#cxHorarios .cx-hora').map((x) => x.dataset.hora);
+      if (!atual.includes(h)) {
+        const add = $('#cxHorarios .cx-hora-add');
+        if (add) add.insertAdjacentHTML('beforebegin', chipHora(h));
+      }
+      atualizarHoras();
+      return;
+    }
+    if (acao === 'del-hora') {
+      const chip = b.closest('.cx-hora');
+      if (chip) chip.remove();
+      atualizarHoras();
+      return;
+    }
     if (acao === 'add-cena') {
       const p = lerPlano();
       p.cenas.push({ n: p.cenas.length + 1, fala: '', imagem: '', personagem: '' });
@@ -1012,6 +1301,8 @@
   function abrirNovoCanal() {
     $('#canalNovoNome').value = '';
     $('#canalNovoTema').value = '';
+    const st = $('#canalNovoStatus');
+    if (st) { st.hidden = true; st.textContent = ''; st.className = 'nota'; }
     $('#dlgCanalNovo').showModal();
     setTimeout(() => $('#canalNovoNome').focus(), 50);
   }
@@ -1080,6 +1371,7 @@
   // ================================================================ ícones
   function posRender() {
     $$('#vCanais [data-ic]').forEach((el) => { if (!el.firstElementChild) el.innerHTML = ic(el.dataset.ic); });
+    if ($('#ajHoraNova')) atualizarHoras();
     // tooltip das barras de horário
     const barras = $('#cxBarrasHoras');
     if (barras) {

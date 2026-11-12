@@ -5364,6 +5364,38 @@ async def api_canal(req):
     return web.json_response(_resumo_canal(c))
 
 
+async def api_canais_sugerir(req):
+    """Descrição do canal a partir do nome (ou melhora da descrição digitada)."""
+    b = await req.json()
+    try:
+        texto = await roteirista.sugerir_descricao(
+            _pedir_texto, b.get("nome") or "", b.get("texto") or "")
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except Exception as e:
+        raise web.HTTPBadGateway(text="A IA não conseguiu escrever a descrição: " + str(e)[:300])
+    return web.json_response({"texto": texto})
+
+
+async def api_canal_contexto_ia(req):
+    """Gera o contexto inteiro ou melhora um campo já digitado. Não grava: a tela revisa."""
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    campo = str(b.get("campo") or "")
+    texto = b.get("texto") or ""
+    ctx = canais.contexto(cid)
+    try:
+        if b.get("gerar") or campo in ("__tudo__", "tudo"):
+            return web.json_response({"contexto": await roteirista.gerar_contexto(_pedir_texto, canal, ctx)})
+        novo = await roteirista.melhorar_campo(_pedir_texto, canal, ctx, campo, texto)
+        return web.json_response({"campo": campo, "texto": novo})
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except Exception as e:
+        raise web.HTTPBadGateway(text="A IA não conseguiu melhorar este campo: " + str(e)[:300])
+
+
 async def api_canal_contexto(req):
     cid = req.match_info["cid"]
     _canal_ou_erro(cid)
@@ -5803,9 +5835,11 @@ app.add_routes([
     web.post("/api/canal/conta", api_canal_conta),
     web.get("/api/canal/fila", api_canal_fila), web.post("/api/canal/fila", api_canal_fila),
     web.get("/api/canais", api_canais), web.post("/api/canais", api_canais),
+    web.post("/api/canais/sugerir", api_canais_sugerir),
     web.get("/api/canais/{cid}", api_canal), web.post("/api/canais/{cid}", api_canal),
     web.delete("/api/canais/{cid}", api_canal),
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
+    web.post("/api/canais/{cid}/contexto/ia", api_canal_contexto_ia),
     web.post("/api/canais/{cid}/plano", api_canal_plano),
     web.post("/api/canais/{cid}/produzir", api_canal_produzir),
     web.get("/api/canais/{cid}/producoes", api_canal_producoes),

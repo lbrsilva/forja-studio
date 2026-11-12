@@ -237,3 +237,162 @@ def texto_legenda(plano):
         partes.append(plano["cta"])
     tags = " ".join(plano.get("hashtags") or [])
     return "\n\n".join(p for p in partes if p) + (("\n\n" + tags) if tags else "")
+
+
+# ------------------------------------------------------------------ contexto do canal com IA
+CAMPOS_TEXTO = {
+    "tema": "o tema e a descrição do canal, em 2 a 4 frases",
+    "publico": "o público do canal, em 1 frase",
+    "tom": "o tom de voz dos vídeos, em 1 frase",
+    "identidade_visual": "a identidade visual para os prompts de imagem, em 1 a 2 frases",
+    "regras": "as regras do canal, uma por linha",
+    "nao_fazer": "o que o canal não deve fazer, uma por linha",
+    "referencias": "as referências de estilo do canal, uma por linha",
+    "chamada_final": "a chamada final dos vídeos, em 1 frase",
+    "hashtags": "as hashtags padrão, separadas por espaço",
+}
+
+
+def _limpar_ia(txt, limite=2000):
+    txt = str(txt or "").strip()
+    txt = re.sub(r"^```(?:[a-z]+)?\s*|\s*```$", "", txt, flags=re.I | re.M).strip()
+    txt = re.sub(r"^(?:texto|resposta|resultado)\s*:\s*", "", txt, flags=re.I).strip()
+    return txt.strip('"').strip("'").strip()[:limite]
+
+
+def _nome_generico(nome):
+    base = re.sub(r"[^a-z]", "", _sem_acento(nome).lower())
+    return base in ("", "canal", "meucanal", "novocanal", "teste", "canal1", "canal2", "canal3")
+
+
+async def sugerir_descricao(pedir_texto, nome, texto=""):
+    nome = _limpar(nome, 80)
+    texto = _limpar(texto, 2000)
+    if not nome:
+        raise ValueError("Dê um nome ao canal.")
+    if _nome_generico(nome) and len(texto) < 12:
+        raise ValueError("O nome não diz do que o canal trata. Escreva uma descrição curta e tente de novo.")
+    pedido = """Você descreve canais de vídeo curto.
+
+Nome do canal: %s
+Descrição atual: %s
+
+Escreva a descrição do canal em 2 a 4 frases, no português do Brasil. Diga o que ele conta,
+para quem, com que tom e o que diferencia esse canal. Se a descrição atual já existir,
+melhore sem mudar a ideia. Não invente fatos externos: nada de números, prêmios, tecnologias,
+parcerias, nomes de igrejas, canais ou empresas. Responda só com o texto, sem título e sem explicação.
+""" % (nome, texto or "(vazia)")
+    res = await pedir_texto("livre", pedido)
+    saida = _limpar_ia((res or {}).get("texto") if isinstance(res, dict) else res, 2000)
+    if not saida:
+        raise ValueError("A IA não devolveu uma descrição.")
+    return saida
+
+
+async def melhorar_campo(pedir_texto, canal, contexto, campo, texto=""):
+    if campo not in CAMPOS_TEXTO:
+        raise ValueError("Campo desconhecido.")
+    texto = _limpar(texto, 3000)
+    limite = 160 if campo in ("publico", "tom", "chamada_final") else 900
+    pedido = """Você melhora a configuração de um canal de vídeos curtos.
+
+Canal: %s
+Campo: %s
+Texto atual: %s
+Contexto já definido: %s
+
+Reescreva o campo no português do Brasil, direto e concreto, sem explicação e sem markdown.
+Se o texto atual estiver vazio, crie do zero a partir do nome e do contexto do canal.
+%s
+Responda só com o texto final.
+""" % (canal.get("nome") or "canal", CAMPOS_TEXTO[campo], texto or "(vazio)",
+       json.dumps({k: contexto.get(k) for k in ("tema", "publico", "tom", "identidade_visual",
+                                                "regras", "nao_fazer", "referencias", "chamada_final")},
+                  ensure_ascii=False),
+       "Uma linha por item." if campo in ("regras", "nao_fazer", "referencias") else
+       ("Separe as hashtags por espaço, cada uma começando com #." if campo == "hashtags" else ""))
+    res = await pedir_texto("livre", pedido)
+    saida = _limpar_ia((res or {}).get("texto") if isinstance(res, dict) else res, limite + 400)
+    if not saida:
+        raise ValueError("A IA não devolveu texto para este campo.")
+    if campo == "hashtags":
+        itens = []
+        for x in re.split(r"[\s,]+", saida):
+            x = re.sub(r"[^#\wÀ-ÿ-]", "", x).strip()
+            if x:
+                itens.append(x if x.startswith("#") else "#" + x)
+        saida = " ".join(dict.fromkeys(itens))[:limite]
+    elif campo in ("regras", "nao_fazer", "referencias"):
+        saida = "\n".join(x.strip(" -•") for x in saida.splitlines() if x.strip())[:limite]
+    else:
+        saida = re.sub(r"\s+", " ", saida).strip()[:limite]
+    return saida
+
+
+async def gerar_contexto(pedir_texto, canal, contexto):
+    nome = _limpar(canal.get("nome"), 80)
+    tema_atual = _limpar(contexto.get("tema"), 2000)
+    if _nome_generico(nome) and len(tema_atual) < 12:
+        raise ValueError("O nome não diz do que o canal trata. Escreva o tema/descrição antes de gerar.")
+    pedido = """Você monta a configuração de um canal de vídeos curtos.
+
+Nome do canal: %s
+Tema/descrição atual: %s
+Contexto atual: %s
+
+Preencha TODOS os campos abaixo, no português do Brasil, coerentes com o nome e o tema.
+Não invente fatos externos: nada de números, prêmios, tecnologias, parcerias ou nomes de
+canais, igrejas e empresas. Em "referencias", descreva estilos (ex.: documentário histórico,
+narrativa curta com gancho) em vez de citar marcas.
+Responda só com JSON, sem markdown:
+{"tema":"2 a 4 frases","publico":"1 frase","tom":"1 frase",
+ "identidade_visual":"1 a 2 frases para prompts de imagem em inglês",
+ "personagens":[{"nome":"Nome","descricao":"quem é e como fala","visual":"aparência em inglês"}],
+ "regras":["regra curta"],"nao_fazer":["o que evitar"],
+ "referencias":["referência de estilo"],
+ "chamada_final":"1 frase","hashtags":["#exemplo"]}
+""" % (nome, tema_atual or "(vazia)", json.dumps({k: contexto.get(k) for k in ("tema", "publico", "tom")},
+                                                ensure_ascii=False))
+    res = await pedir_texto("livre", pedido)
+    bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
+    if not isinstance(bruto, dict):
+        raise ValueError("A IA não devolveu a configuração em JSON. Tente de novo.")
+    saida = {}
+    for k in ("tema", "publico", "tom", "identidade_visual", "chamada_final"):
+        if isinstance(bruto.get(k), str):
+            saida[k] = _limpar(bruto[k], 1200)
+    for k in ("regras", "nao_fazer", "referencias"):
+        v = bruto.get(k)
+        if isinstance(v, str):
+            v = v.splitlines()
+        if isinstance(v, list):
+            saida[k] = [_limpar(x, 220) for x in v if str(x).strip()][:12]
+    v = bruto.get("hashtags")
+    if isinstance(v, str):
+        v = re.split(r"[\s,]+", v)
+    if isinstance(v, list):
+        tags = []
+        for x in v:
+            x = _limpar(x, 40).replace(" ", "")
+            if x:
+                tags.append(x if x.startswith("#") else "#" + x)
+        saida["hashtags"] = tags[:20]
+    v = bruto.get("personagens")
+    if isinstance(v, list):
+        personagens = []
+        for p in v[:8]:
+            if isinstance(p, str):
+                p = {"nome": p}
+            if not isinstance(p, dict):
+                continue
+            nome_p = _limpar(p.get("nome") or p.get("name"), 60)
+            if not nome_p:
+                continue
+            personagens.append({"nome": nome_p,
+                                "descricao": _limpar(p.get("descricao") or p.get("description"), 800),
+                                "visual": _limpar(p.get("visual") or p.get("appearance"), 800)})
+        if personagens:
+            saida["personagens"] = personagens
+    if not any(saida.values()):
+        raise ValueError("A IA não devolveu campos aproveitáveis.")
+    return saida

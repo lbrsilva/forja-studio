@@ -13,6 +13,12 @@ Rota nova: `#/canais` (menu **Canais**).
 - **Produzir**: um briefing em texto vira roteiro com cenas, falas, descrições visuais e
   personagens. Tudo é editável antes de mandar produzir. A esteira gera voz por cena,
   uma imagem por cena e monta o vídeo em todos os formatos ativos do canal.
+  **Gerar vídeo completo** faz roteiro, voz, imagens e montagem em um clique. **Só o
+  roteiro** para no plano para você revisar.
+- **Contexto com IA**: em Ajustes, **Gerar contexto com IA** preenche tema, público, tom,
+  identidade visual, personagens, regras, referências, chamada e hashtags a partir do nome
+  e da descrição. Cada campo tem **Melhorar** para reescrever só ele. No canal novo,
+  **Sugerir descrição pelo nome** pede a descrição quando o nome é genérico.
 - **Agenda**: escolha produção, formato, plataformas e data/hora. O servidor publica
   sozinho no horário, mesmo com a tela fechada (o estúdio precisa estar aberto).
 - **Análise**: importe CSV/JSON das plataformas e veja views, receita, seguidores,
@@ -108,6 +114,8 @@ Todas as rotas abaixo ficam em `/api/canais`.
 | GET/POST | `/api/canais` | listar / criar |
 | GET/POST/DELETE | `/api/canais/{id}` | detalhe / salvar config e contexto / arquivar |
 | GET/POST | `/api/canais/{id}/contexto` | ler / gravar contexto |
+| POST | `/api/canais/{id}/contexto/ia` | gerar contexto inteiro ou melhorar um campo |
+| POST | `/api/canais/sugerir` | descrição a partir do nome do canal |
 | POST | `/api/canais/{id}/plano` | briefing -> roteiro |
 | POST | `/api/canais/{id}/produzir` | plano -> produção em segundo plano |
 | GET | `/api/canais/{id}/producoes` | lista de produções |
