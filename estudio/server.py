@@ -5318,10 +5318,14 @@ def _agendar_automatico(canal, producao):
     quando = _proximo_horario(pub.get("horarios") or ["06:00"])
     meta = _meta_do_plano(canal, plano, quando)
     criados = []
+    existentes = {(a.get("producao_id"), a.get("formato_id")) for a in canais.agenda_listar(canal["id"])
+                  if a.get("estado") != "cancelado"}
     vistos_fora_do_youtube = set()
     for fid, caminho in (producao.get("arquivos", {}).get("videos") or {}).items():
         fmt = canais.formato_por_id(canal, fid)
         if not fmt or fmt.get("plataforma") not in (pub.get("plataformas") or []):
+            continue
+        if (producao["id"], fid) in existentes:
             continue
         plataforma = fmt["plataforma"]
         if plataforma != "youtube" and plataforma in vistos_fora_do_youtube:
@@ -5638,6 +5642,32 @@ async def api_canal_producao(req):
     return web.json_response(esteira.resumo(p))
 
 
+async def api_canal_producao_aprovar(req):
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    p = canais.ler_producao(cid, pid)
+    aprovado = bool(b.get("aprovado", True))
+    if aprovado and not (p.get("arquivos", {}).get("videos") or {}):
+        raise web.HTTPBadRequest(text="Este vídeo ainda não tem arquivo final para aprovar.")
+    p["aprovado_em"] = int(time.time()) if aprovado else 0
+    p["estado"] = "aprovado" if aprovado else "rejeitado"
+    liberado = 0
+    if aprovado and b.get("limpar", True):
+        liberado = esteira.limpar_brutos(canais.pasta_producao(cid, pid))
+        p["arquivos"]["imagens"] = []
+        p["arquivos"]["voz"] = ""
+        p["limpeza"] = {"quando": int(time.time()), "bytes": liberado}
+    canais.gravar_producao(cid, pid, p)
+    if aprovado:
+        for a in canais.agenda_listar(cid):
+            if a.get("producao_id") == pid and a.get("estado") in ("aguardando_aprovacao", "parcial"):
+                canais.agenda_atualizar(a["id"], {"estado": "agendado"})
+        if (canal.get("publicacao") or {}).get("automatico"):
+            _agendar_automatico(canal, p)
+    return web.json_response({**esteira.resumo(p), "bytes_liberados": liberado})
+
+
 async def api_canal_video(req):
     cid, pid, fid = req.match_info["cid"], req.match_info["pid"], req.match_info["fid"]
     _canal_ou_erro(cid)
@@ -5662,6 +5692,9 @@ async def api_canal_agenda(req):
     if not pid:
         raise web.HTTPBadRequest(text="Escolha a produção.")
     p = canais.ler_producao(cid, pid)
+    if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)) and \
+            p.get("estado") not in ("aprovado", "publicado"):
+        raise web.HTTPBadRequest(text="Aprove o vídeo antes de agendar ou publicar.")
     fid = str(b.get("formato_id") or "")
     fmt = canais.formato_por_id(canal, fid)
     if not fmt:
@@ -5696,6 +5729,11 @@ async def _executar_agendamento(aid):
             canais.agenda_atualizar(aid, {"estado": "erro", "erro": "Canal não existe mais."})
             return
         producao = canais.ler_producao(a["canal_id"], a["producao_id"])
+        if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)) and \
+                producao.get("estado") not in ("aprovado", "publicado"):
+            canais.agenda_atualizar(aid, {"estado": "aguardando_aprovacao",
+                                          "erro": "Aprove o vídeo antes de publicar."})
+            return
         fmt = canais.formato_por_id(canal, a["formato_id"]) or {"id": a["formato_id"], "nome": a["formato_id"]}
         canais.agenda_atualizar(aid, {"estado": "executando",
                                       "ultima_tentativa": int(time.time()),
@@ -5753,6 +5791,11 @@ async def api_canal_agenda_item(req):
     if b.get("cancelar"):
         return web.json_response(canais.agenda_atualizar(aid, {"estado": "cancelado"}))
     if b.get("publicar_agora"):
+        canal = _canal_ou_erro(cid)
+        p = canais.ler_producao(cid, a["producao_id"])
+        if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)) and \
+                p.get("estado") not in ("aprovado", "publicado"):
+            raise web.HTTPBadRequest(text="Aprove o vídeo antes de publicar.")
         canais.agenda_atualizar(aid, {"quando": int(time.time()), "estado": "agendado"})
         em_segundo_plano(_executar_agendamento(aid))
         return web.json_response({"ok": True, "aviso": "Publicando agora. Acompanhe o estado na agenda."})
@@ -5908,6 +5951,7 @@ app.add_routes([
     web.get("/api/canais/{cid}/producoes", api_canal_producoes),
     web.get("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
     web.post("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
+    web.post("/api/canais/{cid}/producoes/{pid}/aprovar", api_canal_producao_aprovar),
     web.get("/api/canais/{cid}/producoes/{pid}/video/{fid}", api_canal_video),
     web.get("/api/canais/{cid}/agenda", api_canal_agenda), web.post("/api/canais/{cid}/agenda", api_canal_agenda),
     web.post("/api/canais/{cid}/agenda/{aid}", api_canal_agenda_item),

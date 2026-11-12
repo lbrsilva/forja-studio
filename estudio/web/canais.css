@@ -216,6 +216,16 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--fraco);
   max-height: 180px; overflow: auto; white-space: pre-wrap; }
 
+.cx-aprovacao { margin-top: 12px; border-top: 1px solid var(--borda); padding-top: 12px; }
+.cx-videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0 12px; }
+.cx-video { background: var(--fundo-2); border: 1px solid var(--borda); border-radius: var(--raio-c); padding: 8px; }
+.cx-video video { width: 100%; max-height: 430px; border-radius: 8px; background: #000; }
+.cx-video-rot { display: block; color: var(--fraco); font-size: 11.5px; margin-bottom: 5px; }
+.cx-legenda-aprovar { background: var(--fundo-2); border: 1px solid var(--borda); border-radius: var(--raio-c);
+  padding: 10px 12px; font-size: 13px; margin-bottom: 10px; }
+.cx-legenda-aprovar b { display: block; margin-bottom: 4px; }
+.cx-legenda-aprovar p { margin: 0 0 6px; }
+
 .cx-aviso { border: 1px solid color-mix(in srgb, var(--cx-warn) 45%, var(--borda)); background: color-mix(in srgb, var(--cx-warn) 8%, transparent);
   color: var(--texto); border-radius: var(--raio-c); padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
 .cx-aviso.erro { border-color: color-mix(in srgb, var(--cx-crit) 55%, var(--borda)); background: color-mix(in srgb, var(--cx-crit) 8%, transparent); }

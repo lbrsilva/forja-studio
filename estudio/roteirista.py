@@ -25,10 +25,17 @@ def _limpar(s, limite=1200):
 def _json_do_texto(txt):
     txt = str(txt or "").strip()
     txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt, flags=re.I | re.M).strip()
-    try:
-        return json.loads(txt)
-    except Exception:
-        pass
+    def tentar(s):
+        try:
+            return json.loads(s)
+        except Exception:
+            try:
+                return json.loads(re.sub(r",\s*([}\]])", r"\1", s))
+            except Exception:
+                return None
+    d = tentar(txt)
+    if d is not None:
+        return d
     inicio = txt.find("{")
     if inicio < 0:
         return None
@@ -49,10 +56,7 @@ def _json_do_texto(txt):
         elif ch == "}":
             profundidade -= 1
             if profundidade == 0:
-                try:
-                    return json.loads(txt[inicio:i + 1])
-                except Exception:
-                    return None
+                return tentar(txt[inicio:i + 1])
     return None
 
 
@@ -380,34 +384,7 @@ Responda só com o texto final.
     return saida
 
 
-async def gerar_contexto(pedir_texto, canal, contexto):
-    nome = _limpar(canal.get("nome"), 80)
-    tema_atual = _limpar(contexto.get("tema"), 2000)
-    if _nome_generico(nome) and len(tema_atual) < 12:
-        raise ValueError("O nome não diz do que o canal trata. Escreva o tema/descrição antes de gerar.")
-    pedido = """Você monta a configuração de um canal de vídeos curtos.
-
-Nome do canal: %s
-Tema/descrição atual: %s
-Contexto atual: %s
-
-Preencha TODOS os campos abaixo, no português do Brasil, coerentes com o nome e o tema.
-Não invente fatos externos: nada de números, prêmios, tecnologias, parcerias ou nomes de
-canais, igrejas e empresas. Em "referencias", descreva estilos (ex.: documentário histórico,
-narrativa curta com gancho) em vez de citar marcas.
-Responda só com JSON, sem markdown:
-{"tema":"2 a 4 frases","publico":"1 frase","tom":"1 frase",
- "identidade_visual":"1 a 2 frases para prompts de imagem em inglês",
- "personagens":[{"nome":"Nome","descricao":"quem é e como fala","visual":"aparência em inglês"}],
- "regras":["regra curta"],"nao_fazer":["o que evitar"],
- "referencias":["referência de estilo"],
- "chamada_final":"1 frase","hashtags":["#exemplo"]}
-""" % (nome, tema_atual or "(vazia)", json.dumps({k: contexto.get(k) for k in ("tema", "publico", "tom")},
-                                                ensure_ascii=False))
-    res = await pedir_texto("livre", pedido)
-    bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
-    if not isinstance(bruto, dict):
-        raise ValueError("A IA não devolveu a configuração em JSON. Tente de novo.")
+def _normalizar_contexto(bruto):
     saida = {}
     for k in ("tema", "publico", "tom", "identidade_visual", "chamada_final"):
         if isinstance(bruto.get(k), str):
@@ -444,6 +421,98 @@ Responda só com JSON, sem markdown:
                                 "visual": _limpar(p.get("visual") or p.get("appearance"), 800)})
         if personagens:
             saida["personagens"] = personagens
-    if not any(saida.values()):
-        raise ValueError("A IA não devolveu campos aproveitáveis.")
     return saida
+
+
+def _contexto_em_linhas(txt):
+    """Fallback quando o modelo não fecha o JSON: lê prefixos simples, um por linha."""
+    saida = {}
+    for linha in str(txt or "").splitlines():
+        m = re.match(r"^\s*([A-Za-zÀ-ÿ_ ]{3,32})\s*:\s*(.+)$", linha)
+        if not m:
+            continue
+        chave = re.sub(r"\s+", "_", _sem_acento(m.group(1)).strip().upper())
+        valor = m.group(2).strip()
+        if not valor:
+            continue
+        if chave in ("TEMA", "PUBLICO", "TOM", "VISUAL", "IDENTIDADE_VISUAL", "CHAMADA", "CHAMADA_FINAL"):
+            alvo = {"TEMA": "tema", "PUBLICO": "publico", "TOM": "tom", "VISUAL": "identidade_visual",
+                    "IDENTIDADE_VISUAL": "identidade_visual", "CHAMADA": "chamada_final",
+                    "CHAMADA_FINAL": "chamada_final"}[chave]
+            saida[alvo] = _limpar(valor, 1200)
+        elif chave in ("REGRA", "REGRAS"):
+            saida.setdefault("regras", []).append(_limpar(valor, 220))
+        elif chave in ("NAO_FAZER", "NAO_FAZER_"):
+            saida.setdefault("nao_fazer", []).append(_limpar(valor, 220))
+        elif chave in ("REFERENCIA", "REFERENCIAS"):
+            saida.setdefault("referencias", []).append(_limpar(valor, 220))
+        elif chave in ("HASHTAG", "HASHTAGS"):
+            x = _limpar(valor, 40).replace(" ", "")
+            saida.setdefault("hashtags", []).append(x if x.startswith("#") else "#" + x)
+        elif chave in ("PERSONAGEM", "PERSONAGENS"):
+            partes = [x.strip() for x in re.split(r"\s*\|\s*", valor)]
+            if partes and partes[0]:
+                saida.setdefault("personagens", []).append({
+                    "nome": _limpar(partes[0], 60),
+                    "descricao": _limpar(partes[1] if len(partes) > 1 else "", 800),
+                    "visual": _limpar(partes[2] if len(partes) > 2 else "", 800),
+                })
+    for k in ("regras", "nao_fazer", "referencias", "hashtags", "personagens"):
+        if k in saida:
+            saida[k] = saida[k][:20]
+    return saida
+
+
+async def gerar_contexto(pedir_texto, canal, contexto):
+    nome = _limpar(canal.get("nome"), 80)
+    tema_atual = _limpar(contexto.get("tema"), 2000)
+    if _nome_generico(nome) and len(tema_atual) < 12:
+        raise ValueError("O nome não diz do que o canal trata. Escreva o tema/descrição antes de gerar.")
+    base = """Você monta a configuração de um canal de vídeos curtos.
+
+Nome do canal: %s
+Tema/descrição atual: %s
+Contexto atual: %s
+
+Preencha TODOS os campos abaixo, no português do Brasil, coerentes com o nome e o tema.
+Não invente fatos externos: nada de números, prêmios, tecnologias, parcerias ou nomes de
+canais, igrejas e empresas. Em "referencias", descreva estilos (ex.: documentário histórico,
+narrativa curta com gancho) em vez de citar marcas.
+Mantenha os textos curtos para o JSON caber inteiro.
+""" % (nome, tema_atual or "(vazia)", json.dumps({k: contexto.get(k) for k in ("tema", "publico", "tom")},
+                                                ensure_ascii=False))
+    pedido_json = base + """
+Responda SÓ com este JSON, sem markdown, sem nada antes ou depois:
+{"tema":"2 a 3 frases","publico":"1 frase","tom":"1 frase",
+ "identidade_visual":"1 a 2 frases para prompts de imagem em inglês",
+ "personagens":[{"nome":"Nome","descricao":"quem é e como fala","visual":"aparência em inglês"}],
+ "regras":["regra curta"],"nao_fazer":["o que evitar"],
+ "referencias":["referência de estilo"],
+ "chamada_final":"1 frase","hashtags":["#exemplo"]}
+"""
+    for tentativa in range(2):
+        res = await pedir_texto("contexto", pedido_json if tentativa == 0 else
+                                pedido_json + "\nATENÇÃO: a resposta anterior veio quebrada. Responda APENAS o JSON completo.")
+        bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
+        if isinstance(bruto, dict):
+            saida = _normalizar_contexto(bruto)
+            if saida:
+                return saida
+    pedido_linhas = base + """
+A resposta em JSON não funcionou. Responda em LINHAS, uma por item, exatamente com estes prefixos:
+TEMA: ...
+PUBLICO: ...
+TOM: ...
+VISUAL: ...
+PERSONAGEM: Nome | quem é e como fala | aparência em inglês
+REGRA: ...
+NAO_FAZER: ...
+REFERENCIA: ...
+CHAMADA: ...
+HASHTAG: #exemplo
+"""
+    res = await pedir_texto("contexto", pedido_linhas)
+    saida = _contexto_em_linhas((res or {}).get("texto") if isinstance(res, dict) else res)
+    if any(saida.values()):
+        return saida
+    raise ValueError("A IA não devolveu a configuração em JSON. Tente de novo.")

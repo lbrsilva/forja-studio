@@ -19,6 +19,11 @@ Rota nova: `#/canais` (menu **Canais**).
   Produzir, marque os que quer manter; sem marcar, a IA escolhe e repete a aparência.
 - **Inspiração**: cole a URL de um vídeo do YouTube ou TikTok e clique em **Ler referência**.
   O roteiro usa título e autor como referência de ritmo e clima, sem baixar nem copiar o vídeo.
+- **Aprovação**: com "Exigir aprovação antes de publicar" ligado, o vídeo para em
+  **Aguardando aprovação**. Você assiste, confere legenda e imagens e então escolhe
+  **Aprovar e limpar arquivos**, **Agendar** ou **Publicar agora**. Antes da aprovação,
+  a agenda recusa o vídeo. A aprovação apaga imagens, vozes por cena e temporários;
+  ficam só os vídeos finais, os personagens e os metadados.
 - **Contexto com IA**: em Ajustes, **Gerar contexto com IA** preenche tema, público, tom,
   identidade visual, personagens, regras, referências, chamada e hashtags a partir do nome
   e da descrição. Cada campo tem **Melhorar** para reescrever só ele. No canal novo,
@@ -106,6 +111,8 @@ Agenda. O pacote manual (legenda + caminho do vídeo) é sempre gravado em
 - Voz: `voz/voz_01.wav`, `voz.wav`, `duracoes.txt`
 - Imagens: `cenas/cena_01.png`
 - Vídeos: `saida/final-<formato>.mp4`
+- Aprovados: `personagens.json`, `producao.json`, `saida/` e `publicacao/` ficam; imagens,
+  vozes por cena e temporários são apagados na aprovação.
 - Andamento: `producao.json` (etapas, progresso, log, erro)
 
 Os trabalhos de imagem entram no histórico do estúdio com `oculto: true` e são filtrados
@@ -127,6 +134,7 @@ Todas as rotas abaixo ficam em `/api/canais`.
 | POST | `/api/canais/{id}/produzir` | plano -> produção em segundo plano |
 | GET | `/api/canais/{id}/producoes` | lista de produções |
 | GET/POST | `/api/canais/{id}/producoes/{pid}` | andamento / cancelar |
+| POST | `/api/canais/{id}/producoes/{pid}/aprovar` | aprovar (e limpar brutos) ou rejeitar |
 | GET | `/api/canais/{id}/producoes/{pid}/video/{formato}` | baixar o vídeo final |
 | GET/POST | `/api/canais/{id}/agenda` | listar / agendar |
 | POST/DELETE | `/api/canais/{id}/agenda/{aid}` | publicar agora / cancelar |

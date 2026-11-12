@@ -100,11 +100,11 @@ MODELOS = {
                   # deixa um pouco dos especialistas na RAM (fica mais lento); abaixo disso o 9B roda na placa no lugar
                   "vram_mib": 12800},
 }
-TAREFAS = ("melhorar_prompt", "letra", "roteiro", "traduzir", "descrever_imagem", "livre")
+TAREFAS = ("melhorar_prompt", "letra", "roteiro", "traduzir", "descrever_imagem", "livre", "contexto")
 PAPEL_PADRAO = {"melhorar_prompt": "rapido", "letra": "principal", "roteiro": "principal", "traduzir": "rapido",
-                "descrever_imagem": "rapido", "livre": "principal"}
+                "descrever_imagem": "rapido", "livre": "principal", "contexto": "rapido"}
 MAX_TOKENS = {"melhorar_prompt": 220,   # 70 palavras cabem em ~140; 220 e a rede de seguranca "letra": 1400, "roteiro": 1800, "traduzir": 2500, "descrever_imagem": 500,
-              "livre": 1200}
+              "livre": 1200, "contexto": 3000}
 ENTRADA_MAX = 12000  # caracteres
 
 
@@ -500,6 +500,20 @@ def sistema_livre(fichas_ias):
     ]).strip()
 
 
+def sistema_contexto(contexto):
+    return "\n".join([
+        "Você monta a configuração de um canal de vídeos curtos.",
+        "Responda APENAS com um objeto JSON válido, começando em { e terminando em }.",
+        "Sem markdown, sem cercas de código, sem explicação antes ou depois.",
+        "Mantenha os textos curtos para o JSON caber inteiro: tema 2 a 3 frases, público 1, tom 1, "
+        "identidade visual 1 a 2 frases, no máximo 3 personagens, 4 regras, 4 itens em não fazer, "
+        "3 referências, 1 chamada final e 8 hashtags.",
+        "Nunca invente números, prêmios, tecnologias, parcerias ou nomes de canais, igrejas e empresas.",
+        "As chaves são exatamente: tema, publico, tom, identidade_visual, personagens, regras, "
+        "nao_fazer, referencias, chamada_final, hashtags.",
+    ])
+
+
 def montar_mensagens(tarefa, entrada, contexto, ficha=None, fichas_ias=None, imagem_b64=None, imagem_mime=None):
     if tarefa == "melhorar_prompt":
         sis, usr = sistema_melhorar(ficha, contexto), f"Pedido do usuário:\n{entrada}"
@@ -510,6 +524,8 @@ def montar_mensagens(tarefa, entrada, contexto, ficha=None, fichas_ias=None, ima
         usr = f"Tema:\n{entrada}"
     elif tarefa == "traduzir":
         sis, usr = sistema_traduzir(contexto), entrada
+    elif tarefa == "contexto":
+        sis, usr = sistema_contexto(contexto), entrada
     elif tarefa == "descrever_imagem":
         sis = sistema_descrever(contexto)
         pedido = "Descreva esta imagem." + (f"\nObservação do usuário: {entrada}" if entrada else "")
@@ -537,7 +553,7 @@ def limpar_saida(tarefa, txt):
             t = t[1:-1].strip()
     if tarefa in ("melhorar_prompt", "descrever_imagem"):
         t = re.sub(r"\s*\n+\s*", " ", t).strip()  # um parágrafo só
-    if tarefa in ("letra", "roteiro", "livre"):
+    if tarefa in ("letra", "roteiro", "livre", "contexto"):
         t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
         t = re.sub(r"(?m)^#+\s*", "", t)
         t = re.sub(r"\n{3,}", "\n\n", t).strip()

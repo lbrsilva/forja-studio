@@ -29,7 +29,9 @@
   const linhas = (s) => String(s || '').split(/\n+/).map((x) => x.trim()).filter(Boolean);
   const tags = (s) => String(s || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean)
     .map((x) => (x.startsWith('#') ? x : '#' + x));
-  const METAS = { preparando: 'Preparando', voz: 'Gerando voz', imagens: 'Gerando imagens', montagem: 'Montando', concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
+  const METAS = { preparando: 'Preparando', voz: 'Gerando voz', imagens: 'Gerando imagens', montagem: 'Montando',
+    aguardando_aprovacao: 'Aguardando aprovação', aprovado: 'Aprovado', rejeitado: 'Rejeitado',
+    concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
   const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70' };
   const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
   const ABAS = [['visao', 'Visão geral'], ['produzir', 'Produzir'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['ajustes', 'Ajustes']];
@@ -218,7 +220,8 @@
   }
 
   function seloEstado(e) {
-    const mapa = { concluido: 'ok', erro: 'erro', cancelado: 'pendente', publicado: 'ok',
+    const mapa = { concluido: 'ok', aprovado: 'ok', aguardando_aprovacao: 'agenda', rejeitado: 'erro',
+      erro: 'erro', cancelado: 'pendente', publicado: 'ok',
       agendado: 'agenda', parcial: 'agenda', executando: 'fazendo', aguardando_credenciais: 'pendente' };
     return `<span class="cx-selo ${mapa[e] || 'pendente'}">${esc(METAS[e] || e || '—')}</span>`;
   }
@@ -227,7 +230,9 @@
     const prods = (S.dados.producoes || []);
     if (!prods.length) return '<div class="cx-vazio"><b>Nenhum vídeo produzido neste canal</b>Use a aba Produzir para gerar o primeiro roteiro e montar o vídeo.</div>';
     return '<div class="cx-lista">' + prods.slice(0, 12).map((p) => {
-      const podeAgendar = p.estado === 'concluido' && p.arquivos && Object.keys(p.arquivos.videos || {}).length;
+      const exigeAprov = ((S.dados && S.dados.publicacao) || {}).aprovacao_obrigatoria !== false;
+      const podeAgendar = (p.estado === 'aprovado' || (!exigeAprov && p.estado === 'concluido')) &&
+        p.arquivos && Object.keys(p.arquivos.videos || {}).length;
       return `<div class="cx-prod ${esc(p.estado || '')}">
         <div><b>${esc(p.titulo || p.id)}</b>
           <div class="cx-prod-sub">${dataHora(p.criado)} · ${esc(METAS[p.estado] || p.estado || '')}
@@ -398,8 +403,13 @@
   function cartaoProgresso(p) {
     const et = p.etapas || {};
     const est = p.estado || '';
-    const final = ['concluido', 'erro', 'cancelado'].includes(est);
+    const final = ['concluido', 'aprovado', 'aguardando_aprovacao', 'rejeitado', 'erro', 'cancelado'].includes(est);
     const videos = (p.arquivos && p.arquivos.videos) || {};
+    const plano = p.plano || {};
+    const urlVideo = (fid) => `/api/canais/${encodeURIComponent(S.atual)}/producoes/${encodeURIComponent(p.id)}/video/${encodeURIComponent(fid)}`;
+    const exigeAprov = ((S.dados && S.dados.publicacao) || {}).aprovacao_obrigatoria !== false;
+    const revisao = est === 'aguardando_aprovacao' || (exigeAprov && est === 'concluido');
+    const podePublicar = est === 'aprovado' || (!exigeAprov && est === 'concluido');
     return `<div class="cx-card">
       <div class="cx-row"><h2 style="margin:0">${esc(p.titulo || 'Produção')}</h2>${seloEstado(est)}
         <span class="fraco">${p.progresso || 0}%</span>
@@ -412,8 +422,25 @@
         return `<span class="${cls}"><i></i>${nome}${e.total ? ' · ' + (e.feito || 0) + '/' + e.total : ''}</span>`;
       }).join('')}</div>
       ${est === 'erro' && p.erro ? `<div class="cx-aviso erro" style="margin-top:10px">${esc(p.erro)}</div>` : ''}
-      ${Object.keys(videos).length ? `<div class="cx-row" style="margin-top:10px">${Object.entries(videos).map(([fid, cam]) =>
-        `<a class="bt-sec mini" href="/api/canais/${encodeURIComponent(S.atual)}/producoes/${encodeURIComponent(p.id)}/video/${encodeURIComponent(fid)}" target="_blank" rel="noopener">${ic('baixar')}${esc(fid)}</a>`).join('')}</div>` : ''}
+      ${revisao ? `<div class="cx-aprovacao">
+        <p class="nota">Assista antes de publicar. Ao aprovar, imagens e áudios intermediários são apagados; ficam só os vídeos, a legenda e os personagens.</p>
+        <div class="cx-videos">${Object.entries(videos).map(([fid]) =>
+          `<div class="cx-video"><span class="cx-video-rot">${esc(fid)}</span>
+            <video controls preload="metadata" src="${urlVideo(fid)}"></video></div>`).join('')}</div>
+        ${(plano.legenda || (plano.hashtags || []).length) ? `<div class="cx-legenda-aprovar">
+          <b>Legenda</b><p>${esc(plano.legenda || '')}</p>
+          <p class="fraco">${esc((plano.hashtags || []).join(' '))}</p></div>` : ''}
+        <div class="cx-acoes">
+          <button type="button" class="bt-sec" data-acao="rejeitar-producao" data-id="${esc(p.id)}">Rejeitar</button>
+          <button type="button" class="gerar" data-acao="aprovar-producao" data-id="${esc(p.id)}">${ic('ok')}Aprovar e limpar arquivos</button>
+        </div></div>` : ''}
+      ${podePublicar ? `<div class="cx-acoes" style="justify-content:flex-start;margin-top:10px">
+        <button type="button" class="bt-sec" data-acao="abrir-agendar" data-id="${esc(p.id)}">${ic('relogio')}Agendar</button>
+        <button type="button" class="gerar" data-acao="abrir-agendar" data-id="${esc(p.id)}" data-agora="1">${ic('play')}Publicar agora</button>
+        ${p.limpeza && p.limpeza.bytes ? `<span class="cx-selo ok">${nf1.format((p.limpeza.bytes || 0) / 1048576)} MB liberados</span>` : ''}
+      </div>` : ''}
+      ${Object.keys(videos).length ? `<div class="cx-row" style="margin-top:10px">${Object.entries(videos).map(([fid]) =>
+        `<a class="bt-sec mini" href="${urlVideo(fid)}" target="_blank" rel="noopener">${ic('baixar')}${esc(fid)}</a>`).join('')}</div>` : ''}
       ${p.log && p.log.length ? `<pre class="cx-log">${esc(p.log.slice(-12).join('\n'))}</pre>` : ''}
     </div>`;
   }
@@ -687,9 +714,11 @@
         <div class="cx-card">
           <div class="cx-card-cab"><div><h2>Publicação</h2>
             <p class="fraco">O estúdio publica sozinho no horário, mesmo com esta tela fechada. O computador precisa estar ligado.</p></div></div>
-          <div class="cx-grid3">
-            <label class="cx-check cx-check-card"><input type="checkbox" id="ajAuto" ${pub.automatico ? 'checked' : ''}>
-              <span>Agendar sozinho depois de produzir</span></label>
+          <div class="cx-check-linha" style="margin-bottom:12px">
+            <label class="cx-check"><input type="checkbox" id="ajAprovacao" ${pub.aprovacao_obrigatoria !== false ? 'checked' : ''}>Exigir aprovação antes de publicar</label>
+            <label class="cx-check"><input type="checkbox" id="ajAuto" ${pub.automatico ? 'checked' : ''}>Agendar sozinho depois de aprovar</label>
+          </div>
+          <div class="cx-grid2">
             <div class="cx-campo"><div class="cx-rotulo"><label>Horários</label><span class="cx-dica">Escolha os horários</span></div>
               <div class="cx-horarios" id="cxHorarios">${horas.map(chipHora).join('')}
                 <span class="cx-hora-add"><select id="ajHoraNova">${HORAS.filter((h) => !horas.includes(h)).map((h) => `<option>${h}</option>`).join('')}</select>
@@ -880,7 +909,7 @@
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir',
         { plano, briefing: S.briefing, formatos, inspiracao: inspiracaoAtual() });
-      S.producao = r.producao;
+      S.producao = { ...r.producao, plano: r.plano || S.plano };
       mostrar('Produção começou. A voz vem primeiro; depois as imagens e a montagem.', 'ok');
       render();
       pollProducao(r.producao.id);
@@ -908,7 +937,7 @@
       });
       S.briefing = briefing;
       S.plano = r.plano;
-      S.producao = r.producao;
+      S.producao = { ...r.producao, plano: r.plano };
       mostrar('Produção completa começou: roteiro, voz, imagens e montagem.', 'ok');
       render();
       pollProducao(r.producao.id);
@@ -927,13 +956,15 @@
         S.producao = d;
         const cx = $('#cxProgresso');
         if (cx) cx.innerHTML = cartaoProgresso(d);
-        if (['concluido', 'erro', 'cancelado'].includes(d.estado)) {
+        if (['concluido', 'aprovado', 'aguardando_aprovacao', 'rejeitado', 'erro', 'cancelado'].includes(d.estado)) {
           pararPoll();
           S.analiseCarregada = false;
           await carregarCanal(false);
           carregarAnalise(false);
           render();
-          if (d.estado === 'concluido') mostrar('Vídeo pronto. Os arquivos estão na lista abaixo e na aba Agenda.', 'ok');
+          if (d.estado === 'aguardando_aprovacao') mostrar('Vídeo montado. Assista e aprove antes de publicar.', 'ok');
+          else if (d.estado === 'aprovado') mostrar('Vídeo aprovado.', 'ok');
+          else if (d.estado === 'concluido') mostrar('Vídeo pronto. Agende ou publique agora.', 'ok');
         }
       } catch (e) {
         S.erros = (S.erros || 0) + 1;
@@ -945,25 +976,31 @@
   function pararPoll() { if (S.poll) { clearInterval(S.poll); S.poll = null; } }
 
   // ================================================================ agenda
-  function preencherAgendar(pid) {
-    const prods = (S.dados.producoes || []).filter((p) => p.estado === 'concluido' &&
+  function preencherAgendar(pid, agora = false) {
+    S.agendarAgora = !!agora;
+    const prods = (S.dados.producoes || []).filter((p) => ['aprovado', 'concluido'].includes(p.estado) &&
       Object.keys((p.arquivos || {}).videos || {}).length);
     const selP = $('#agendarProducao'), selF = $('#agendarFormato'), plats = $('#agendarPlataformas');
     if (!prods.length) {
-      $('#agendarSub').textContent = 'Nenhuma produção concluída com vídeo pronto. Produza primeiro.';
+      $('#agendarSub').textContent = 'Nenhum vídeo aprovado com arquivo final. Aprove o vídeo antes de publicar.';
       selP.innerHTML = ''; selF.innerHTML = ''; plats.innerHTML = '';
       $('#agendarCriar').disabled = true;
+      $('#agendarCriar').innerHTML = ic('relogio') + 'Agendar';
       return;
     }
     $('#agendarCriar').disabled = false;
+    $('#agendarCriar').innerHTML = agora ? ic('play') + 'Publicar agora' : ic('relogio') + 'Agendar';
     selP.innerHTML = prods.map((p) => `<option value="${esc(p.id)}" ${p.id === pid ? 'selected' : ''}>${esc(p.titulo || p.id)}</option>`).join('');
-    $('#agendarSub').textContent = 'Escolha o formato, as plataformas e a hora. O vídeo final de cada formato é publicado como está.';
+    $('#agendarSub').textContent = agora
+      ? 'Confira o formato e as plataformas. Ao confirmar, o vídeo vai para publicação imediatamente.'
+      : 'Escolha o formato, as plataformas e a hora. O vídeo final de cada formato é publicado como está.';
     preencherFormatosAgendar();
-    $('#agendarQuando').value = dtInput();
+    $('#agendarQuando').value = agora ? dtInput(Math.floor(Date.now() / 1000)) : dtInput();
     const p = prods.find((x) => x.id === (pid || selP.value)) || prods[0];
     $('#agendarTituloIn').value = p.titulo || '';
-    $('#agendarDescricao').value = (S.plano && S.plano.legenda) || '';
-    $('#agendarHashtags').value = ((S.plano && S.plano.hashtags) || []).join(' ');
+    const plano = p.plano || p;
+    $('#agendarDescricao').value = plano.legenda || '';
+    $('#agendarHashtags').value = (plano.hashtags || []).join(' ');
     $('#dlgAgendar').showModal();
   }
 
@@ -1001,7 +1038,7 @@
     const bt = $('#agendarCriar');
     bt.disabled = true;
     try {
-      await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/agenda', {
+      const item = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/agenda', {
         producao_id: $('#agendarProducao').value,
         formato_id: $('#agendarFormato').value,
         plataformas: plataformas,
@@ -1010,14 +1047,50 @@
         descricao: $('#agendarDescricao').value,
         hashtags: tags($('#agendarHashtags').value),
       });
+      if (S.agendarAgora && item && item.id) {
+        await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/agenda/' + encodeURIComponent(item.id),
+          { publicar_agora: true });
+      }
+      const eraAgora = S.agendarAgora;
+      S.agendarAgora = false;
       $('#dlgAgendar').close();
       await carregarCanal(false);
       S.aba = 'agenda';
       render();
-      mostrar('Publicação agendada.', 'ok');
+      mostrar(eraAgora ? 'Publicando agora. Acompanhe o estado na agenda.' : 'Publicação agendada.', 'ok');
     } catch (e) {
       mostrar('Não consegui agendar: ' + e.message, 'erro');
     } finally { bt.disabled = false; }
+  }
+
+  async function aprovarProducao(pid) {
+    if (!confirm('Aprovar este vídeo? As imagens, vozes por cena e temporários serão apagados. Ficam só os vídeos, a legenda e os personagens.')) return;
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/producoes/' + encodeURIComponent(pid) + '/aprovar',
+        { aprovado: true, limpar: true });
+      S.producao = (S.producao && S.producao.id === pid) ? { ...S.producao, ...r } : r;
+      S.analiseCarregada = false;
+      await carregarCanal(false);
+      carregarAnalise(false);
+      render();
+      mostrar('Vídeo aprovado.' + (r.bytes_liberados ? ' ' + nf1.format(r.bytes_liberados / 1048576) + ' MB liberados.' : ''), 'ok');
+    } catch (e) {
+      mostrar('Não consegui aprovar: ' + e.message, 'erro');
+    }
+  }
+
+  async function rejeitarProducao(pid) {
+    if (!confirm('Rejeitar este vídeo? Ele não será publicado e você pode gerar outro.')) return;
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/producoes/' + encodeURIComponent(pid) + '/aprovar',
+        { aprovado: false });
+      S.producao = r;
+      await carregarCanal(false);
+      render();
+      mostrar('Vídeo rejeitado. Nada foi publicado.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui rejeitar: ' + e.message, 'erro');
+    }
   }
 
   // ================================================================ contexto com IA
@@ -1152,6 +1225,7 @@
       formatos,
       publicacao: { ...(d.publicacao || {}),
         automatico: !!($('#ajAuto') || {}).checked,
+        aprovacao_obrigatoria: !!($('#ajAprovacao') || {}).checked,
         horarios: String(($('#ajHorarios') || {}).value || '').split(',').map((x) => x.trim()).filter(Boolean),
         plataformas: $$('[data-pubplat]:checked').map((x) => x.dataset.pubplat),
         visibilidade: ($('#ajVisibilidade') || {}).value || 'public',
@@ -1231,7 +1305,11 @@
     $('#canaisNovo') && $('#canaisNovo').addEventListener('click', abrirNovoCanal);
     $('#canalNovoCancelar') && $('#canalNovoCancelar').addEventListener('click', () => $('#dlgCanalNovo').close());
     $('#canalNovoCriar') && $('#canalNovoCriar').addEventListener('click', criarCanal);
-    $('#agendarCancelar') && $('#agendarCancelar').addEventListener('click', () => $('#dlgAgendar').close());
+    $('#agendarCancelar') && $('#agendarCancelar').addEventListener('click', () => {
+      S.agendarAgora = false;
+      $('#agendarCriar').innerHTML = ic('relogio') + 'Agendar';
+      $('#dlgAgendar').close();
+    });
     $('#agendarCriar') && $('#agendarCriar').addEventListener('click', agendar);
     $('#agendarProducao') && $('#agendarProducao').addEventListener('change', () => {
       preencherFormatosAgendar();
@@ -1342,7 +1420,9 @@
       await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/producoes/' + encodeURIComponent(b.dataset.id), { cancelar: true });
       mostrar('Cancelamento pedido.', 'ok'); return;
     }
-    if (acao === 'abrir-agendar') { preencherAgendar(b.dataset.id); return; }
+    if (acao === 'abrir-agendar') { preencherAgendar(b.dataset.id, b.dataset.agora === '1'); return; }
+    if (acao === 'aprovar-producao') { await aprovarProducao(b.dataset.id); return; }
+    if (acao === 'rejeitar-producao') { await rejeitarProducao(b.dataset.id); return; }
     if (acao === 'publicar-agora') {
       try { await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/agenda/' + encodeURIComponent(b.dataset.id), { publicar_agora: true });
         mostrar('Publicando agora. A agenda mostra o resultado.', 'ok'); await carregarCanal(false); render();

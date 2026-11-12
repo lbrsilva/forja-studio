@@ -120,6 +120,7 @@ def _canal_padrao(nome, **extra):
             "horarios": ["06:00"],
             "plataformas": ["youtube", "tiktok", "instagram"],
             "visibilidade": "public",
+            "aprovacao_obrigatoria": True,
             "hashtags": [],
         },
         "analytics": {"moeda": "BRL", "meta_receita": 0},

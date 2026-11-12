@@ -417,9 +417,13 @@ async def produzir(producao, canal, callbacks):
             if chave in arquivo_por_chave:
                 producao["arquivos"]["videos"][f["id"]] = arquivo_por_chave[chave]
         _etapa(producao, "montagem", "ok", len(distintos), len(distintos))
-        producao["estado"] = "concluido"
         producao["fim"] = int(time.time())
-        _log(producao, "vídeo pronto", callbacks)
+        if bool((canal.get("publicacao") or {}).get("aprovacao_obrigatoria", True)):
+            producao["estado"] = "aguardando_aprovacao"
+            _log(producao, "vídeo montado. Aguardando aprovação para publicar.", callbacks)
+        else:
+            producao["estado"] = "concluido"
+            _log(producao, "vídeo pronto", callbacks)
     except Exception as exc:
         producao["estado"] = "erro"
         producao["erro"] = str(exc)[:600]
@@ -516,6 +520,46 @@ def _garantir_minimo_voz(pasta, duracoes, minimo, callbacks=None):
     return d
 
 
+def _tamanho_arvore(p):
+    total = 0
+    try:
+        if p.is_file():
+            return p.stat().st_size
+        for x in p.rglob("*"):
+            if x.is_file():
+                total += x.stat().st_size
+    except OSError:
+        pass
+    return total
+
+
+def limpar_brutos(pasta):
+    """Depois da aprovação, deixa só os vídeos, os personagens e os metadados.
+
+    Some com imagens, vozes por cena, áudio juntado, temporários e textos intermediários.
+    `producao.json` e `personagens.json` ficam: são pequenos e mantêm o histórico do canal.
+    """
+    pasta = Path(pasta)
+    alvos = [pasta / "cenas", pasta / "voz", pasta / "tmp",
+             pasta / "voz.wav", pasta / "pausa.wav", pasta / "silencio_final.wav",
+             pasta / "voz_com_minimo.wav", pasta / "lista_voz.txt", pasta / "lista_final.txt",
+             pasta / "duracoes.txt", pasta / "roteiro.json", pasta / "narracao.txt",
+             pasta / "cenas.txt", pasta / "legendas.txt"]
+    liberado = 0
+    for alvo in alvos:
+        if not alvo.exists():
+            continue
+        liberado += _tamanho_arvore(alvo)
+        try:
+            if alvo.is_dir():
+                shutil.rmtree(alvo, ignore_errors=True)
+            else:
+                alvo.unlink()
+        except OSError as exc:
+            print("[esteira] não consegui apagar %s: %s" % (alvo, exc), flush=True)
+    return liberado
+
+
 def resumo(producao):
     etapas = producao.get("etapas") or {}
     total = feito = 0
@@ -529,6 +573,10 @@ def resumo(producao):
         "criado": producao.get("criado"),
         "fim": producao.get("fim"),
         "erro": producao.get("erro"),
+        "legenda": (producao.get("plano") or {}).get("legenda") or "",
+        "hashtags": (producao.get("plano") or {}).get("hashtags") or [],
+        "duracao_minima": producao.get("duracao_minima"),
+        "limpeza": producao.get("limpeza") or {},
         "etapas": etapas,
         "progresso": int(round(100.0 * feito / total)) if total else (100 if producao.get("estado") == "concluido" else 0),
         "arquivos": producao.get("arquivos"),
