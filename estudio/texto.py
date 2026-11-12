@@ -100,13 +100,13 @@ MODELOS = {
                   # deixa um pouco dos especialistas na RAM (fica mais lento); abaixo disso o 9B roda na placa no lugar
                   "vram_mib": 12800},
 }
-TAREFAS = ("melhorar_prompt", "letra", "roteiro", "canal_roteiro", "canal_personagens", "traduzir",
-           "descrever_imagem", "livre", "contexto")
+TAREFAS = ("melhorar_prompt", "letra", "roteiro", "canal_roteiro", "canal_personagens", "canal_pautas",
+           "traduzir", "descrever_imagem", "livre", "contexto")
 PAPEL_PADRAO = {"melhorar_prompt": "rapido", "letra": "principal", "roteiro": "principal", "canal_roteiro": "principal",
-                "canal_personagens": "rapido", "traduzir": "rapido", "descrever_imagem": "rapido",
-                "livre": "principal", "contexto": "rapido"}
+                "canal_personagens": "rapido", "canal_pautas": "principal", "traduzir": "rapido",
+                "descrever_imagem": "rapido", "livre": "principal", "contexto": "rapido"}
 MAX_TOKENS = {"melhorar_prompt": 220,   # 70 palavras cabem em ~140; 220 e a rede de seguranca "letra": 1400, "roteiro": 1800, "traduzir": 2500, "descrever_imagem": 500,
-              "livre": 1200, "contexto": 3000, "canal_roteiro": 3000, "canal_personagens": 1600}
+              "livre": 1200, "contexto": 3000, "canal_roteiro": 3000, "canal_personagens": 1600, "canal_pautas": 2000}
 ENTRADA_MAX = 12000  # caracteres
 
 
@@ -502,6 +502,11 @@ def sistema_livre(fichas_ias):
     ]).strip()
 
 
+def sistema_canal_pautas(contexto):
+    return ("Você sugere pautas para canais de vídeo. Responda apenas com o JSON array pedido, "
+            "sem markdown e sem explicação.")
+
+
 def sistema_canal_personagens(contexto):
     return ("Você cria personagens para canais de vídeo. Responda apenas com o JSON array pedido, "
             "sem markdown e sem explicação.")
@@ -538,6 +543,8 @@ def montar_mensagens(tarefa, entrada, contexto, ficha=None, fichas_ias=None, ima
         sis, usr = sistema_canal_roteiro(contexto), entrada
     elif tarefa == "canal_personagens":
         sis, usr = sistema_canal_personagens(contexto), entrada
+    elif tarefa == "canal_pautas":
+        sis, usr = sistema_canal_pautas(contexto), entrada
     elif tarefa == "traduzir":
         sis, usr = sistema_traduzir(contexto), entrada
     elif tarefa == "contexto":
@@ -569,7 +576,7 @@ def limpar_saida(tarefa, txt):
             t = t[1:-1].strip()
     if tarefa in ("melhorar_prompt", "descrever_imagem"):
         t = re.sub(r"\s*\n+\s*", " ", t).strip()  # um parágrafo só
-    if tarefa in ("letra", "roteiro", "canal_roteiro", "canal_personagens", "livre", "contexto"):
+    if tarefa in ("letra", "roteiro", "canal_roteiro", "canal_personagens", "canal_pautas", "livre", "contexto"):
         t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
         t = re.sub(r"(?m)^#+\s*", "", t)
         t = re.sub(r"\n{3,}", "\n\n", t).strip()

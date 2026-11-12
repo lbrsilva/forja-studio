@@ -32,9 +32,16 @@ Rota nova: `#/canais` (menu **Canais**).
   recap e fechando com gancho.
 - **Inspiração**: cole a URL de um vídeo do YouTube ou TikTok e clique em **Ler referência**.
   O roteiro usa título e autor como referência de ritmo e clima, sem baixar nem copiar o vídeo.
-- **Análise**: o estúdio lê views, receita, seguidores e engajamento direto das contas
-  conectadas, atualiza sozinho a cada 30 minutos e também pelo botão **Atualizar agora**.
-  O CSV/JSON manual fica como reserva quando uma plataforma não liberar a permissão.
+- **Cortes e refazer**: na aba Cortes, cole a URL de um vídeo próprio ou com permissão.
+  O estúdio baixa, transcreve, permite **refazer** mantendo o texto (trocando voz, imagens
+  e montagem) ou **gerar cortes** 9:16 legendados. A transcrição usa faster-whisper local
+  e o download usa yt-dlp.
+- **Playbooks**: em Ajustes, aplique um pacote pronto (Dark, True crime, Finanças,
+  Histórias, Infantil, Educativo) com tema, tom, visual, estilo e regras.
+- **Pautas**: em Produzir, **Sugerir pautas** usa o contexto e os vídeos que já
+  performaram para propor títulos, ângulos e ganchos.
+- **ROI**: a análise mostra retenção, CTR, custo estimado, lucro e margem. Configure o
+  custo por hora de placa e humana em Ajustes.
 - **Aprovação**: o vídeo sempre para em **Aguardando aprovação**. Você assiste, confere
   legenda e imagens e então escolhe **Aprovar e limpar arquivos**, **Agendar** ou
   **Publicar agora**. Antes da aprovação, a agenda recusa o vídeo. A aprovação apaga
@@ -158,8 +165,15 @@ Todas as rotas abaixo ficam em `/api/canais`.
 | GET/POST | `/api/canais/{id}/contexto` | ler / gravar contexto |
 | POST | `/api/canais/{id}/contexto/ia` | gerar contexto inteiro ou melhorar um campo |
 | POST | `/api/canais/{id}/personagens/gerar` | criar personagens novos com IA |
+| POST | `/api/canais/{id}/personagens/gerar` | criar personagens novos com IA |
 | POST | `/api/canais/{id}/personagens/retrato` | gerar retrato de um personagem |
 | GET | `/api/canais/{id}/personagens/retrato/{arquivo}` | servir o retrato |
+| POST | `/api/canais/{id}/pautas` | sugerir pautas |
+| POST | `/api/canais/{id}/playbook` | aplicar playbook |
+| POST | `/api/canais/{id}/video/analisar` | baixar e transcrever vídeo de referência |
+| POST | `/api/canais/{id}/video/refazer` | refazer mantendo o texto |
+| POST | `/api/canais/{id}/video/cortes` | escolher e cortar melhores momentos |
+| GET | `/api/canais/{id}/referencias/{rid}/{arquivo}` | servir corte ou vídeo de referência |
 | POST | `/api/canais/sugerir` | descrição a partir do nome do canal |
 | POST | `/api/inspiracao` | título/autor de um vídeo de referência |
 | POST | `/api/canais/{id}/plano` | briefing -> roteiro |

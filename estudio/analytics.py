@@ -156,6 +156,9 @@ def _registro(base):
         "watch_time": float(base.get("watch_time") or 0),
         "receita": float(base.get("receita") or 0),
         "seguidores": float(base.get("seguidores") or 0),
+        "retencao": float(base.get("retencao") or 0),
+        "ctr": float(base.get("ctr") or 0),
+        "impressoes": float(base.get("impressoes") or 0),
         "tipo": base.get("tipo") or "video",
         "atualizado": int(time.time()),
     }
@@ -255,8 +258,16 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
         "watch_time": sum(float(v.get("watch_time") or 0) for v in base_total),
         "receita": sum(float(v.get("receita") or 0) for v in base_total),
         "seguidores": sum(float(v.get("seguidores") or 0) for v in janela),
-        "videos": len([v for v in janela if v.get("tipo") == "video"]) or len(base_total),
+        "impressoes": sum(float(v.get("impressoes") or 0) for v in base_total),
+        "videos": len([v for v in janela if v.get("tipo") == "video"]) or
+        (0 if any(v.get("tipo") == "dia" for v in base_total) else len(base_total)),
     }
+    views_total = sum(float(v.get("views") or 0) for v in base_total)
+    imp_total = sum(float(v.get("impressoes") or 0) for v in base_total)
+    total["retencao"] = round(sum(float(v.get("retencao") or 0) * float(v.get("views") or 0)
+                                  for v in base_total) / views_total, 4) if views_total else 0
+    total["ctr"] = round(sum(float(v.get("ctr") or 0) * float(v.get("impressoes") or 0)
+                             for v in base_total) / imp_total, 4) if imp_total else 0
     total["engagement"] = round((total["likes"] + total["comments"] + total["shares"]) / total["views"], 4) \
         if total["views"] else 0
 
@@ -325,6 +336,19 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
                     "views": round(x["views"])} for x in sorted(meses.values(), key=lambda x: x["mes"])][-6:]
 
     meta_receita = float(((canal or {}).get("analytics") or {}).get("meta_receita") or 0)
+    custo_placa = float(((canal or {}).get("analytics") or {}).get("custo_hora_placa") or 0)
+    custo_humano = float(((canal or {}).get("analytics") or {}).get("custo_hora_humana") or 0)
+    custo = 0.0
+    try:
+        import canais
+        for p in canais.lista_producoes(canal_id):
+            ini, fim = int(p.get("iniciado") or 0), int(p.get("fim") or 0)
+            if ini and fim and fim >= corte:
+                horas = max(0, fim - ini) / 3600.0
+                custo += horas * (custo_placa + custo_humano)
+    except Exception:
+        pass
+    lucro = total["receita"] - custo
     dados_em = 0
     for v in videos:
         dados_em = max(dados_em, int(v.get("atualizado") or 0))
@@ -336,6 +360,9 @@ def dashboard(canal_id, canal_dir, dias=30, canal=None):
         "total": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in total.items()},
         "meta_receita": meta_receita,
         "progresso_meta": round(total["receita"] / meta_receita, 4) if meta_receita else 0,
+        "custo_estimado": round(custo, 2),
+        "lucro_estimado": round(lucro, 2),
+        "margem": round(lucro / total["receita"], 4) if total["receita"] else 0,
         "serie": serie,
         "por_plataforma": plataformas,
         "horas": horas,

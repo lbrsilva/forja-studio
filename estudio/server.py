@@ -81,6 +81,7 @@ import esteira  # noqa: E402  (plano -> voz, imagens e montagem por formato)
 import publicacao  # noqa: E402  (YouTube, TikTok e Instagram)
 import analytics  # noqa: E402  (retorno por canal, plataforma e horário)
 import analytics_plataformas  # noqa: E402  (coleta automática nas plataformas)
+import video_refazer  # noqa: E402  (baixar, transcrever, refazer e cortar vídeo)
 
 # o registro do Windows às vezes diz que .js é text/plain; a interface precisa dos tipos certos
 for _tipo, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("font/woff2", ".woff2"),
@@ -5345,6 +5346,7 @@ async def api_canais(req):
             "plataformas": canais.PLATAFORMAS,
             "formatos_padrao": canais.FORMATOS_PADRAO,
             "estilos": canais.ESTILOS,
+            "playbooks": [{"id": p["id"], "nome": p["nome"]} for p in canais.PLAYBOOKS],
         })
     b = await req.json()
     nome = (b.get("nome") or "").strip()
@@ -5427,6 +5429,141 @@ async def api_canal_retrato_arquivo(req):
     if not arq.is_file() or not _dentro(arq, canais.pasta_retratos(cid)):
         raise web.HTTPNotFound()
     return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
+
+
+def _ref_dir(cid, rid):
+    return canais.pasta_canal(cid) / "referencias" / Path(rid).name
+
+
+async def api_canal_video_analisar(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    url = str(b.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise web.HTTPBadRequest(text="Cole a URL de um vídeo.")
+    rid = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
+    pasta = _ref_dir(cid, rid)
+    idioma = b.get("idioma") or "auto"
+    if idioma == "auto":
+        idioma = None
+    try:
+        d = await asyncio.to_thread(video_refazer.analisar, url, pasta, idioma)
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui analisar o vídeo: " + str(exc)[:400])
+    segs = d.get("segmentos") or []
+    return web.json_response({
+        "id": rid, "url": url, "duracao": d.get("duracao"),
+        "texto": (d.get("texto") or "")[:4000],
+        "texto_total": len(d.get("texto") or ""),
+        "segmentos": segs[:600],
+        "total_segmentos": len(segs),
+    })
+
+
+async def api_canal_video_refazer(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    rid = str(b.get("id") or "")
+    arq = _ref_dir(cid, rid) / "referencia.json"
+    if not arq.is_file():
+        raise web.HTTPBadRequest(text="Analise o vídeo primeiro.")
+    d = json.loads(arq.read_text(encoding="utf-8"))
+    ctx = canais.contexto(cid)
+    try:
+        if (b.get("modo") or "manter") == "melhorar" or (b.get("instrucoes") or "").strip():
+            plano = await video_refazer.plano_melhorado(
+                _pedir_texto, canal, ctx, d.get("segmentos") or [],
+                b.get("instrucoes") or "", b.get("estilo"),
+                fiel=((b.get("modo") or "manter") == "manter"))
+        else:
+            plano = video_refazer.plano_do_texto(
+                canal, ctx, d.get("segmentos") or [], b.get("estilo"))
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui montar o roteiro: " + str(exc)[:300])
+    producao = esteira.criar(canal, plano, "Refazer: " + str(d.get("url") or ""), b.get("formatos"))
+    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
+
+
+async def api_canal_video_cortes(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    rid = str(b.get("id") or "")
+    arq = _ref_dir(cid, rid) / "referencia.json"
+    if not arq.is_file():
+        raise web.HTTPBadRequest(text="Analise o vídeo primeiro.")
+    d = json.loads(arq.read_text(encoding="utf-8"))
+    segs = d.get("segmentos") or []
+    ctx = canais.contexto(cid)
+    try:
+        escolhas = await video_refazer.selecionar_cortes(
+            _pedir_texto, segs, int(b.get("quantidade") or 5), ctx)
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui escolher os cortes: " + str(exc)[:300])
+    pasta = _ref_dir(cid, rid) / "cortes"
+    pasta.mkdir(parents=True, exist_ok=True)
+    formato = b.get("formato") or "9:16"
+    saida = []
+    for i, c in enumerate(escolhas, 1):
+        destino = pasta / ("corte-%02d.mp4" % i)
+        try:
+            await asyncio.to_thread(video_refazer.cortar, d.get("video"), c["inicio"], c["fim"],
+                                    destino, segs, formato)
+        except Exception as exc:
+            raise web.HTTPBadGateway(text="Falha ao cortar o trecho %d: %s" % (i, str(exc)[:300]))
+        saida.append({**c, "arquivo": destino.name,
+                      "url": "/api/canais/%s/referencias/%s/cortes/%s" % (cid, rid, destino.name)})
+    return web.json_response({"cortes": saida, "id": rid})
+
+
+async def api_canal_referencia_arquivo(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    rid = Path(req.match_info["rid"]).name
+    resto = Path(req.match_info["arquivo"])
+    arq = _ref_dir(cid, rid) / resto
+    base = _ref_dir(cid, rid)
+    if not arq.is_file() or not _dentro(arq, base):
+        raise web.HTTPNotFound()
+    return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
+
+
+async def api_canal_pautas(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    try:
+        b = await req.json()
+    except ValueError:
+        b = {}
+    ctx = canais.contexto(cid)
+    try:
+        top = analytics.dashboard(cid, canais.pasta_canal(cid), 90, canal).get("top") or []
+    except Exception:
+        top = []
+    try:
+        pautas = await roteirista.sugerir_pautas(
+            _pedir_texto, canal, ctx, top, int(b.get("quantas") or 8))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except Exception as e:
+        raise web.HTTPBadGateway(text="Não consegui sugerir pautas: " + str(e)[:300])
+    return web.json_response({"pautas": pautas})
+
+
+async def api_canal_playbook(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    pb = canais.playbook_de(str(b.get("playbook") or ""))
+    if not pb:
+        raise web.HTTPBadRequest(text="Playbook desconhecido.")
+    canais.gravar_contexto(cid, pb.get("contexto") or {})
+    if pb.get("producao"):
+        canais.atualizar(cid, {"producao": pb["producao"]})
+    return web.json_response(_resumo_canal(canais.obter(cid)))
 
 
 async def api_canal_personagens_gerar(req):
@@ -6111,6 +6248,12 @@ app.add_routes([
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
     web.post("/api/canais/{cid}/contexto/ia", api_canal_contexto_ia),
     web.post("/api/canais/{cid}/personagens/gerar", api_canal_personagens_gerar),
+    web.post("/api/canais/{cid}/pautas", api_canal_pautas),
+    web.post("/api/canais/{cid}/video/analisar", api_canal_video_analisar),
+    web.post("/api/canais/{cid}/video/refazer", api_canal_video_refazer),
+    web.post("/api/canais/{cid}/video/cortes", api_canal_video_cortes),
+    web.get("/api/canais/{cid}/referencias/{rid}/{arquivo:.+}", api_canal_referencia_arquivo),
+    web.post("/api/canais/{cid}/playbook", api_canal_playbook),
     web.post("/api/canais/{cid}/personagens/retrato", api_canal_retrato),
     web.get("/api/canais/{cid}/personagens/retrato/{nome}", api_canal_retrato_arquivo),
     web.post("/api/canais/{cid}/plano", api_canal_plano),

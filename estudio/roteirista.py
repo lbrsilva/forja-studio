@@ -561,6 +561,53 @@ Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdow
     return saida
 
 
+async def sugerir_pautas(pedir_texto, canal, contexto, top_videos=None, quantas=8):
+    top = [str((v or {}).get("titulo") or "") for v in (top_videos or [])][:8]
+    pedido = """Você sugere pautas para um canal de vídeos curtos.
+
+Canal: %s
+Tema: %s
+Público: %s
+Tom: %s
+Estilo: %s
+Vídeos que já performaram: %s
+
+Sugira %d pautas NOVAS, diferentes das que já existem, com:
+- titulo: chamada curta;
+- angulo: o recorte ou a pergunta central;
+- gancho: a primeira frase;
+- formato: curto, série, explicativo, história ou reação;
+- serie: nome da série ou vazio;
+- motivo: por que essa pauta pode prender.
+Não invente notícia, número ou acusação. Responda SÓ com JSON, sem markdown:
+[{"titulo":"...","angulo":"...","gancho":"...","formato":"curto","serie":"","motivo":"..."}]
+""" % (canal.get("nome") or "canal", contexto.get("tema") or "", contexto.get("publico") or "",
+       contexto.get("tom") or "", canais.estilo_de(canal, None).get("nome") or "",
+       ", ".join(top) or "(nenhum)", max(3, min(15, int(quantas or 8))))
+    res = await pedir_texto("canal_pautas", pedido)
+    bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
+    if isinstance(bruto, dict):
+        bruto = bruto.get("pautas") or []
+    if not isinstance(bruto, list):
+        raise ValueError("A IA não devolveu pautas. Tente de novo.")
+    saida = []
+    for x in bruto:
+        if not isinstance(x, dict):
+            continue
+        titulo = _limpar(x.get("titulo") or x.get("title"), 120)
+        if not titulo:
+            continue
+        saida.append({"titulo": titulo,
+                      "angulo": _limpar(x.get("angulo") or x.get("angle"), 400),
+                      "gancho": _limpar(x.get("gancho") or x.get("hook"), 300),
+                      "formato": _limpar(x.get("formato") or x.get("format") or "curto", 40),
+                      "serie": _limpar(x.get("serie") or x.get("series"), 80),
+                      "motivo": _limpar(x.get("motivo") or x.get("reason"), 400)})
+    if not saida:
+        raise ValueError("A IA não devolveu pautas aproveitáveis.")
+    return saida[:15]
+
+
 async def gerar_contexto(pedir_texto, canal, contexto):
     nome = _limpar(canal.get("nome"), 80)
     tema_atual = _limpar(contexto.get("tema"), 2000)

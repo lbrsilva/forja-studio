@@ -34,7 +34,7 @@
     concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
   const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70', facebook: '#6250d6' };
   const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook' };
-  const ABAS = [['visao', 'Visão geral'], ['ajustes', 'Ajustes'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['produzir', 'Produzir']];
+  const ABAS = [['visao', 'Visão geral'], ['ajustes', 'Ajustes'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['cortes', 'Cortes'], ['produzir', 'Produzir']];
   const HORAS = ['06:00', '08:00', '09:00', '11:00', '12:00', '15:00', '18:00', '19:00', '20:00', '21:00'];
   const CATEGORIAS_YT = [
     ['1', 'Filmes e animação'], ['2', 'Automóveis'], ['10', 'Música'], ['15', 'Animais'],
@@ -76,7 +76,8 @@
     iniciado: false, canais: [], atual: null, dados: null, aba: 'visao',
     plano: null, briefing: '', producao: null, poll: null, analise: null,
     analiseDias: 30, analiseCarregada: false, vozes: null, presets: null, charts: {}, erros: 0,
-    personagensNovos: [], agendarAgora: false, abaFixa: false, estilos: [],
+    personagensNovos: [], agendarAgora: false, abaFixa: false, estilos: [], playbooks: [], pautas: [],
+    referencia: null, cortes: [], cortesStatus: '',
   };
 
   async function pedir(url, corpo, metodo) {
@@ -129,6 +130,7 @@
       const d = await pedir('/api/canais');
       S.canais = d.canais || [];
       S.estilos = d.estilos || S.estilos;
+      S.playbooks = d.playbooks || S.playbooks;
       S.plataformas = d.plataformas || {};
       if (!S.atual || !S.canais.some((c) => c.id === S.atual)) {
         let guardado = null;
@@ -183,6 +185,7 @@
     S.atual = id;
     try { localStorage.setItem('forja_canal_atual', id); } catch (e) { /* sem armazenamento */ }
     S.plano = null; S.producao = null; S.analise = null; S.inspiracao = null;
+    S.referencia = null; S.cortes = []; S.cortesStatus = '';
     pararPoll();
     await carregarCanal();
     render();
@@ -233,6 +236,7 @@
     else if (S.aba === 'produzir') el.innerHTML = telaProduzir();
     else if (S.aba === 'agenda') el.innerHTML = telaAgenda();
     else if (S.aba === 'analise') el.innerHTML = telaAnalise();
+    else if (S.aba === 'cortes') el.innerHTML = telaCortes();
     else el.innerHTML = telaAjustes();
   }
 
@@ -324,6 +328,17 @@
     const disponiveis = d.personagens_disponiveis || [];
     const insp = S.inspiracao || {};
     return `
+      <div class="cx-card">
+        <div class="cx-card-cab"><div><h2>Pautas</h2>
+          <p class="fraco">Sugestões a partir do contexto do canal e do que já performou. Use uma para preencher o briefing.</p></div>
+          <button type="button" class="bt-sec" data-acao="sugerir-pautas">${ic('brilho')}Sugerir pautas</button></div>
+        ${S.pautas.length ? `<div class="cx-lista">${S.pautas.map((p, i) =>
+          `<div class="cx-prod"><div><b>${esc(p.titulo)}</b>
+            <div class="cx-prod-sub">${esc(p.angulo || '')} ${p.serie ? '· série ' + esc(p.serie) : ''}</div>
+            <div class="cx-prod-sub">${esc(p.gancho || '')}</div></div>
+            <button type="button" class="bt-sec mini" data-acao="usar-pauta" data-i="${i}">Usar</button></div>`).join('')}</div>`
+          : '<p class="nota">Nenhuma pauta sugerida ainda.</p>'}
+      </div>
       <div class="cx-card">
         <h2>Do briefing ao vídeo</h2>
         <p class="fraco">Escreva o que você quer postar. A IA local monta roteiro, falas, cenas e personagens com base no contexto deste canal. O número de cenas é calculado pela duração e pelo roteiro.</p>
@@ -569,6 +584,14 @@
         <div class="k-nota">ganhos no período</div></div>
       <div class="cx-kpi"><div class="k-rotulo">Engajamento</div><div class="k-valor">${pct(t.engagement)}</div>
         <div class="k-nota">curtidas + comentários + shares / views</div></div>
+      <div class="cx-kpi"><div class="k-rotulo">Retenção</div><div class="k-valor">${pct(t.retencao)}</div>
+        <div class="k-nota">média ponderada por views</div></div>
+      <div class="cx-kpi"><div class="k-rotulo">CTR</div><div class="k-valor">${pct(t.ctr)}</div>
+        <div class="k-nota">${nf.format(t.impressoes || 0)} impressões</div></div>
+      <div class="cx-kpi"><div class="k-rotulo">Custo estimado</div><div class="k-valor">${money(a.custo_estimado)}</div>
+        <div class="k-nota">produção no período</div></div>
+      <div class="cx-kpi"><div class="k-rotulo">Lucro estimado</div><div class="k-valor">${money(a.lucro_estimado)}</div>
+        <div class="k-nota">margem ${pct(a.margem)}</div></div>
     </div>`;
     html += `<div class="cx-grid2">
       <div class="cx-card"><div class="cx-chart-tit"><h3>Visualizações por dia</h3><span>${S.analiseDias} dias</span></div>
@@ -678,6 +701,124 @@
     return `<span class="cx-hora" data-hora="${esc(h)}">${esc(h)}<button type="button" data-acao="del-hora" data-hora="${esc(h)}" aria-label="Tirar ${esc(h)}">×</button></span>`;
   }
 
+  function telaCortes() {
+    const r = S.referencia;
+    return `
+      <div class="cx-card">
+        <div class="cx-card-cab"><div><h2>Vídeo de referência</h2>
+          <p class="fraco">Baixa, transcreve e permite refazer mantendo o texto ou gerar cortes. Use vídeo próprio ou com permissão.</p></div></div>
+        <div class="cx-form">
+          <label><span>URL do vídeo</span>
+            <input id="cxRefUrl" type="url" value="${esc((r && r.url) || '')}" placeholder="https://www.youtube.com/watch?v=..."></label>
+          <div class="cx-grid2">
+            <label><span>Idioma do áudio</span><select id="cxRefIdioma">
+              <option value="auto">Detectar sozinho</option><option value="pt">Português</option>
+              <option value="en">Inglês</option><option value="es">Espanhol</option></select></label>
+          </div>
+          <div class="cx-acoes"><button type="button" class="gerar" data-acao="analisar-video">${ic('baixar')}Analisar vídeo</button></div>
+          <p class="nota" id="cxRefStatus">${esc(S.cortesStatus || 'O download e a transcrição podem levar alguns minutos em vídeos longos.')}</p>
+        </div>
+      </div>
+      ${r ? `<div class="cx-grid2">
+        <div class="cx-card">
+          <h3>Refazer vídeo</h3>
+          <p class="fraco">Mantém o texto falado e troca voz, imagens e montagem. Duração: ${nf1.format(r.duracao || 0)} s.</p>
+          <div class="cx-form">
+            <label><span>Modo</span><select id="cxRefModo">
+              <option value="manter">Manter o texto</option>
+              <option value="melhorar">Melhorar o texto</option></select></label>
+            <label><span>Instruções pontuais</span>
+              <textarea id="cxRefInstr" rows="3" placeholder="Ex.: deixe o gancho mais forte, corte a repetição do meio, mantenha o final."></textarea></label>
+            <label><span>Estilo</span><select id="cxRefEstilo">${estilosDisponiveis().map((e) =>
+              `<option value="${esc(e.id)}" ${((S.dados.producao || {}).estilo || 'auto') === e.id ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}</select></label>
+            <div class="cx-acoes"><button type="button" class="gerar" data-acao="refazer-video">${ic('play')}Gerar vídeo refeito</button></div>
+          </div>
+        </div>
+        <div class="cx-card">
+          <h3>Cortes</h3>
+          <p class="fraco">Escolhe melhores momentos, corta em 9:16 e legenda.</p>
+          <div class="cx-form">
+            <label><span>Quantos cortes</span><select id="cxCortesQtd">${opcoesSelect([3, 5, 8, 10], 5)}</select></label>
+            <div class="cx-acoes"><button type="button" class="gerar" data-acao="gerar-cortes">${ic('play')}Gerar cortes</button></div>
+          </div>
+          ${S.cortes.length ? `<div class="cx-lista" style="margin-top:12px">${S.cortes.map((c) =>
+            `<div class="cx-prod"><div><b>${esc(c.titulo || 'Corte')}</b>
+              <div class="cx-prod-sub">${nf1.format(c.inicio)}s a ${nf1.format(c.fim)}s · ${esc(c.motivo || '')}</div>
+              <video controls preload="metadata" src="${c.url}" style="width:100%;max-width:320px;border-radius:8px;margin-top:6px"></video></div>
+              <a class="bt-sec mini" href="${c.url}" target="_blank" rel="noopener">${ic('baixar')}Baixar</a></div>`).join('')}</div>`
+            : '<p class="nota" style="margin-top:10px">Nenhum corte gerado ainda.</p>'}
+        </div>
+      </div>` : ''}`;
+  }
+
+  async function analisarVideo() {
+    const url = (($('#cxRefUrl') || {}).value || '').trim();
+    const status = $('#cxRefStatus');
+    if (!url) { if (status) status.textContent = 'Cole a URL primeiro.'; return; }
+    const bt = $('[data-acao="analisar-video"]');
+    if (bt) bt.disabled = true;
+    S.cortesStatus = 'Baixando e transcrevendo o vídeo… pode levar alguns minutos.';
+    if (status) status.textContent = S.cortesStatus;
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/analisar',
+        { url, idioma: ($('#cxRefIdioma') || {}).value || 'auto' });
+      S.referencia = r;
+      S.cortes = [];
+      S.cortesStatus = 'Vídeo analisado: ' + nf1.format(r.duracao || 0) + ' s, ' + (r.total_segmentos || 0) + ' trechos.';
+      render();
+      mostrar('Vídeo analisado. Escolha refazer ou gerar cortes.', 'ok');
+    } catch (e) {
+      S.cortesStatus = 'Falhou: ' + e.message;
+      if (status) status.textContent = S.cortesStatus;
+      mostrar('Não consegui analisar: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  async function refazerVideo() {
+    if (!S.referencia) return;
+    const bt = $('[data-acao="refazer-video"]');
+    if (bt) bt.disabled = true;
+    const formatos = ((S.dados && S.dados.formatos) || []).filter((f) => f.ativo !== false).map((f) => f.id);
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/refazer', {
+        id: S.referencia.id,
+        modo: ($('#cxRefModo') || {}).value || 'manter',
+        instrucoes: ($('#cxRefInstr') || {}).value || '',
+        estilo: ($('#cxRefEstilo') || {}).value || undefined,
+        formatos,
+      });
+      S.producao = { ...r.producao, plano: r.plano };
+      S.plano = r.plano;
+      S.aba = 'produzir';
+      render();
+      pollProducao(r.producao.id);
+      mostrar('Vídeo refeito começou a ser produzido.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui refazer: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  async function gerarCortes() {
+    if (!S.referencia) return;
+    const bt = $('[data-acao="gerar-cortes"]');
+    if (bt) bt.disabled = true;
+    S.cortesStatus = 'Escolhendo e cortando os melhores momentos…';
+    const status = $('#cxRefStatus');
+    if (status) status.textContent = S.cortesStatus;
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/cortes', {
+        id: S.referencia.id,
+        quantidade: Number(($('#cxCortesQtd') || {}).value) || 5,
+      });
+      S.cortes = r.cortes || [];
+      S.cortesStatus = S.cortes.length + ' corte(s) gerado(s).';
+      render();
+      mostrar('Cortes prontos.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui cortar: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
   function telaAjustes() {
     const d = S.dados, ctx = d.contexto || {}, pr = d.producao || {}, pub = d.publicacao || {};
     const formatos = d.formatos || [];
@@ -695,6 +836,14 @@
       `<option value="${esc(v.id)}" ${((d.voz || {}).voz_id === v.id) ? 'selected' : ''}>${esc(v.nome || v.id)}</option>`).join('');
     return `
       <form class="cx-form" id="cxAjustes" onsubmit="return false">
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Playbook do canal</h2>
+            <p class="fraco">Aplica um pacote pronto de tema, tom, visual, estilo e regras. Depois você pode editar tudo.</p></div>
+            <button type="button" class="bt-sec" data-acao="aplicar-playbook">${ic('ok')}Aplicar</button></div>
+          <div class="cx-campo"><label for="ajPlaybook">Playbook</label>
+            <select id="ajPlaybook">${(S.playbooks || []).map((p) =>
+              `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('')}</select></div>
+        </div>
         <div class="cx-card">
           <div class="cx-card-cab">
             <div><h2>Identidade do canal</h2>
@@ -817,6 +966,12 @@
           <div class="cx-card-cab"><div><h2>Análise</h2>
             <p class="fraco">A coleta usa as mesmas contas conectadas para publicar. Sem a permissão de análise, a plataforma mostra o motivo e você ainda pode importar CSV.</p></div></div>
           <label class="cx-check"><input type="checkbox" id="ajAnaliseAuto" ${((d.analytics || {}).automatico !== false) ? 'checked' : ''}>Atualizar automaticamente a cada 30 minutos</label>
+          <div class="cx-grid2" style="margin-top:12px">
+            <div class="cx-campo"><label for="ajCustoPlaca">Custo por hora de placa (R$)</label>
+              <input id="ajCustoPlaca" type="number" min="0" step="0.01" value="${Number((d.analytics || {}).custo_hora_placa) || 0}" placeholder="Ex.: 2,50"></div>
+            <div class="cx-campo"><label for="ajCustoHumano">Custo por hora humana (R$)</label>
+              <input id="ajCustoHumano" type="number" min="0" step="0.01" value="${Number((d.analytics || {}).custo_hora_humana) || 0}" placeholder="Ex.: 30,00"></div>
+          </div>
         </div>
 
         <div class="cx-card">
@@ -1234,6 +1389,44 @@
     }
   }
 
+  async function aplicarPlaybook() {
+    const pb = ($('#ajPlaybook') || {}).value;
+    if (!pb) return;
+    if (!confirm('Aplicar este playbook? O tema, o tom, o visual, as regras e o estilo atuais serão substituídos. Personagens, voz e contas ficam.')) return;
+    try {
+      await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/playbook', { playbook: pb });
+      await carregarCanal(false);
+      S.aba = 'ajustes';
+      render();
+      mostrar('Playbook aplicado. Revise e salve se quiser ajustar.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui aplicar o playbook: ' + e.message, 'erro');
+    }
+  }
+
+  async function sugerirPautas() {
+    const bt = $('[data-acao="sugerir-pautas"]');
+    if (bt) bt.disabled = true;
+    mostrar('Sugerindo pautas com a IA local…', 'ok');
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/pautas', { quantas: 8 });
+      S.pautas = r.pautas || [];
+      render();
+      mostrar(S.pautas.length + ' pauta(s) sugerida(s).', 'ok');
+    } catch (e) {
+      mostrar('Não consegui sugerir pautas: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  function usarPauta(i) {
+    const p = (S.pautas || [])[i];
+    const campo = $('#cxBriefing');
+    if (!p || !campo) return;
+    campo.value = [p.titulo, p.angulo, p.gancho].filter(Boolean).join('. ');
+    campo.focus();
+    mostrar('Pauta colocada no briefing. Ajuste o que quiser e gere o roteiro.', 'ok');
+  }
+
   async function atualizarAnalise() {
     const bt = $('[data-acao="atualizar-analise"]');
     if (bt) bt.disabled = true;
@@ -1392,7 +1585,9 @@
         visibilidade: ($('#ajVisibilidade') || {}).value || 'public',
         hashtags: tags(($('#ajTagsAgenda') || {}).value || '') },
       analytics: { ...(d.analytics || {}), meta_receita: Number(($('#ajMeta') || {}).value) || 0,
-        automatico: !!($('#ajAnaliseAuto') || {}).checked },
+        automatico: !!($('#ajAnaliseAuto') || {}).checked,
+        custo_hora_placa: Number(($('#ajCustoPlaca') || {}).value) || 0,
+        custo_hora_humana: Number(($('#ajCustoHumano') || {}).value) || 0 },
     };
   }
 
@@ -1511,6 +1706,12 @@
     if (acao === 'produzir-direto') { await produzirDireto(); return; }
     if (acao === 'gerar-personagens') { await gerarPersonagens(); return; }
     if (acao === 'gerar-retratos') { await gerarRetratos(); return; }
+    if (acao === 'sugerir-pautas') { await sugerirPautas(); return; }
+    if (acao === 'usar-pauta') { usarPauta(Number(b.dataset.i)); return; }
+    if (acao === 'aplicar-playbook') { await aplicarPlaybook(); return; }
+    if (acao === 'analisar-video') { await analisarVideo(); return; }
+    if (acao === 'refazer-video') { await refazerVideo(); return; }
+    if (acao === 'gerar-cortes') { await gerarCortes(); return; }
     if (acao === 'atualizar-analise') { await atualizarAnalise(); return; }
     if (acao === 'ia-campo') { await melhorarCampo(b); return; }
     if (acao === 'ia-contexto') { await gerarContexto(); return; }

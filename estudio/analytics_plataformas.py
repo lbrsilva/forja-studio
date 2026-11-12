@@ -116,16 +116,29 @@ async def youtube(cfg, cid, canal_dir, dias=30):
     ini = fim - timedelta(days=max(1, dias) - 1)
     base = "https://youtubeanalytics.googleapis.com/v2/reports"
     params = {"ids": "channel==MINE", "startDate": ini.isoformat(), "endDate": fim.isoformat(),
-              "metrics": "views,estimatedMinutesWatched,likes,comments,shares,subscribersGained,estimatedRevenue",
               "dimensions": "day", "sort": "day"}
-    try:
-        d = await _req("GET", base, headers=h, params=params)
-    except ColetaErro as e:
-        if _parece_permissao(e):
-            raise ColetaErro("O YouTube não autorizou a análise. Reconecte a conta com o escopo "
-                             "yt-analytics.readonly.")
-        params["metrics"] = "views,estimatedMinutesWatched,likes,comments,shares,subscribersGained"
-        d = await _req("GET", base, headers=h, params=params)
+    metricas_dia = [
+        "views,estimatedMinutesWatched,likes,comments,shares,subscribersGained,estimatedRevenue,"
+        "averageViewDuration,averageViewPercentage,impressions,impressionClickThroughRate",
+        "views,estimatedMinutesWatched,likes,comments,shares,subscribersGained,"
+        "averageViewDuration,averageViewPercentage,impressions,impressionClickThroughRate",
+        "views,estimatedMinutesWatched,likes,comments,shares,subscribersGained,"
+        "averageViewDuration,averageViewPercentage",
+        "views,estimatedMinutesWatched,likes,comments,shares,subscribersGained",
+    ]
+    d, ultimo_erro = None, None
+    for metricas in metricas_dia:
+        params["metrics"] = metricas
+        try:
+            d = await _req("GET", base, headers=h, params=params)
+            break
+        except ColetaErro as e:
+            if _parece_permissao(e):
+                raise ColetaErro("O YouTube não autorizou a análise. Reconecte a conta com o escopo "
+                                 "yt-analytics.readonly.")
+            ultimo_erro = e
+    if d is None:
+        raise ultimo_erro or ColetaErro("O YouTube não devolveu as métricas do canal.")
     col = [x.get("name") for x in d.get("columnHeaders") or []]
     novos = 0
     for row in d.get("rows") or []:
@@ -139,19 +152,32 @@ async def youtube(cfg, cid, canal_dir, dias=30):
             "watch_time": _num(m.get("estimatedMinutesWatched")) * 60,
             "seguidores": _num(m.get("subscribersGained")),
             "receita": _num(m.get("estimatedRevenue")),
+            "retencao": _num(m.get("averageViewPercentage")) / 100.0,
+            "ctr": _num(m.get("impressionClickThroughRate")) / 100.0,
+            "impressoes": _num(m.get("impressions")),
         })
         novos += 1
 
     p2 = {"ids": "channel==MINE", "startDate": ini.isoformat(), "endDate": fim.isoformat(),
-          "metrics": "views,estimatedMinutesWatched,likes,comments,shares,estimatedRevenue",
           "dimensions": "video", "sort": "-views", "maxResults": 50}
-    try:
-        d2 = await _req("GET", base, headers=h, params=p2)
-    except ColetaErro as e:
-        if _parece_permissao(e):
-            raise
-        p2["metrics"] = "views,estimatedMinutesWatched,likes,comments,shares"
-        d2 = await _req("GET", base, headers=h, params=p2)
+    metricas_video = [
+        "views,estimatedMinutesWatched,likes,comments,shares,estimatedRevenue,"
+        "averageViewDuration,averageViewPercentage",
+        "views,estimatedMinutesWatched,likes,comments,shares,averageViewDuration,averageViewPercentage",
+        "views,estimatedMinutesWatched,likes,comments,shares",
+    ]
+    d2, ultimo_erro = None, None
+    for metricas in metricas_video:
+        p2["metrics"] = metricas
+        try:
+            d2 = await _req("GET", base, headers=h, params=p2)
+            break
+        except ColetaErro as e:
+            if _parece_permissao(e):
+                raise
+            ultimo_erro = e
+    if d2 is None:
+        raise ultimo_erro or ColetaErro("O YouTube não devolveu as métricas por vídeo.")
     col2 = [x.get("name") for x in d2.get("columnHeaders") or []]
     rows2 = d2.get("rows") or []
     ids = [str(r[0]) for r in rows2 if r]
@@ -168,6 +194,7 @@ async def youtube(cfg, cid, canal_dir, dias=30):
             "likes": _num(m.get("likes")), "comments": _num(m.get("comments")),
             "shares": _num(m.get("shares")), "watch_time": _num(m.get("estimatedMinutesWatched")) * 60,
             "receita": _num(m.get("estimatedRevenue")),
+            "retencao": _num(m.get("averageViewPercentage")) / 100.0,
         })
         novos += 1
     return {"novos": novos}

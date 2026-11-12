@@ -30,8 +30,104 @@ PLATAFORMAS = {
     "facebook": "Facebook",
 }
 
-ESTILOS = [
-    {"id": "auto", "nome": "Automático", "instrucao": "", "prompt": ""},
+PLAYBOOKS = [
+    {
+        "id": "dark", "nome": "Dark / mistério",
+        "contexto": {
+            "tema": "casos, arquivos e histórias sombrias contadas como investigação",
+            "publico": "adultos que gostam de mistério, true crime e histórias de bastidor",
+            "tom": "baixo, controlado, com pausas e revelação no fim",
+            "identidade_visual": "noir cinematográfico, sombras duras, luz baixa, névoa, detalhes de arquivo",
+            "regras": ["gancho nos 3 primeiros segundos", "uma revelação por episódio",
+                       "fonte ou documento citado quando houver fato real"],
+            "nao_fazer": ["acusar pessoa real sem prova", "usar tragédia como choque",
+                          "violência explícita", "inventar diálogo ou fala"],
+            "chamada_final": "o que você faria no lugar dele?",
+            "hashtags": ["#misterio", "#dark", "#casosreais", "#historias"],
+        },
+        "producao": {"estilo": "noir", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+    },
+    {
+        "id": "true_crime", "nome": "True crime",
+        "contexto": {
+            "tema": "casos reais com linha do tempo, evidências e consequências",
+            "publico": "adultos interessados em investigação e direito",
+            "tom": "jornalístico, sóbrio, sem sensacionalismo",
+            "identidade_visual": "documentário, arquivo, mapas, luz natural, reconstrução discreta",
+            "regras": ["cite a fonte", "separe fato de hipótese", "respeite vítimas e famílias"],
+            "nao_fazer": ["condenar sem sentença", "expor menores", "detalhes gráficos"],
+            "chamada_final": "o caso merecia outra investigação?",
+            "hashtags": ["#truecrime", "#investigacao", "#casosreais"],
+        },
+        "producao": {"estilo": "documentario", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+    },
+    {
+        "id": "financas", "nome": "Finanças e negócios",
+        "contexto": {
+            "tema": "dinheiro, negócios, decisões e armadilhas do cotidiano",
+            "publico": "adultos que querem entender dinheiro sem promessa fácil",
+            "tom": "direto, didático, com exemplo concreto",
+            "identidade_visual": "limpo, gráficos, escritório, luz neutra, tipografia forte",
+            "regras": ["explique o número", "não prometa retorno", "diga quando é opinião"],
+            "nao_fazer": ["prometer enriquecimento", "esconder risco", "recomendar investimento sem contexto"],
+            "chamada_final": "qual decisão você tomaria?",
+            "hashtags": ["#financas", "#negocios", "#dinheiro"],
+        },
+        "producao": {"estilo": "minimalista", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+    },
+    {
+        "id": "historias", "nome": "Histórias e narrativa",
+        "contexto": {
+            "tema": "histórias curtas com personagem, conflito e virada",
+            "publico": "pessoas que gostam de narrativa rápida",
+            "tom": "envolvente, emocional, com gancho e consequência",
+            "identidade_visual": "cinematográfico, cores quentes, close e plano aberto alternados",
+            "regras": ["um conflito por vídeo", "coadjuvantes quando a cena pedir", "final com pergunta"],
+            "nao_fazer": ["explicar a moral o tempo todo", "personagem sem desejo", "final sem consequência"],
+            "chamada_final": "o que você faria no lugar dela?",
+            "hashtags": ["#historia", "#narrativa", "#novelinha"],
+        },
+        "producao": {"estilo": "novelinha", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+    },
+    {
+        "id": "infantil", "nome": "Infantil",
+        "contexto": {
+            "tema": "histórias e descobertas para crianças",
+            "publico": "crianças de 4 a 9 anos e famílias",
+            "tom": "alegre, simples, repetitivo na medida certa",
+            "identidade_visual": "cores vivas, formas grandes, personagens expressivos, sem medo excessivo",
+            "regras": ["frases curtas", "uma ideia por cena", "final feliz ou aprendizado"],
+            "nao_fazer": ["violência", "medo intenso", "conteúdo adulto", "ironia"],
+            "chamada_final": "qual foi a sua parte favorita?",
+            "hashtags": ["#infantil", "#historias", "#criancas"],
+        },
+        "producao": {"estilo": "3d", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": True},
+    },
+    {
+        "id": "educativo", "nome": "Educativo / explicação",
+        "contexto": {
+            "tema": "explicações curtas de um conceito, com exemplo e aplicação",
+            "publico": "pessoas curiosas que querem entender rápido",
+            "tom": "claro, direto, sem jargão",
+            "identidade_visual": "ilustração limpa, tipografia, diagramas, cores controladas",
+            "regras": ["uma pergunta por vídeo", "explique com exemplo", "resuma no fim"],
+            "nao_fazer": ["encher de termos técnicos", "prometer domínio em 1 minuto", "informação sem fonte"],
+            "chamada_final": "qual assunto você quer ver no próximo?",
+            "hashtags": ["#explicado", "#aprender", "#curiosidades"],
+        },
+        "producao": {"estilo": "minimalista", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": True},
+    },
+]
+
+
+def playbook_de(pid):
+    for p in PLAYBOOKS:
+        if p["id"] == pid:
+            return p
+    return None
+
+
+ESTILOS = [    {"id": "auto", "nome": "Automático", "instrucao": "", "prompt": ""},
     {"id": "papel", "nome": "Papel", "instrucao": "estética de recorte de papel",
      "prompt": "paper cutout collage, layered textured paper, soft shadows, handmade look"},
     {"id": "lapis", "nome": "Lápis", "instrucao": "desenho a lápis",
