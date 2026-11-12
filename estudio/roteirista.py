@@ -56,13 +56,16 @@ def _json_do_texto(txt):
     return None
 
 
-def _pedido(canal, contexto, briefing, quantas, duracao):
+def _pedido(canal, contexto, briefing, max_cenas, duracao, personagens_fixos=None,
+            personagens_disponiveis=None, inspiracao=None):
+    fixos = [p for p in (personagens_fixos or []) if str(p).strip()]
+    disponiveis = personagens_disponiveis or contexto.get("personagens") or []
     ctx = {
         "tema": contexto.get("tema") or "",
         "publico": contexto.get("publico") or "",
         "tom": contexto.get("tom") or "",
         "idioma": contexto.get("idioma") or "pt",
-        "personagens": contexto.get("personagens") or [],
+        "personagens_disponiveis": disponiveis,
         "identidade_visual": contexto.get("identidade_visual") or "",
         "regras": contexto.get("regras") or [],
         "nao_fazer": contexto.get("nao_fazer") or [],
@@ -70,6 +73,21 @@ def _pedido(canal, contexto, briefing, quantas, duracao):
     }
     formatos = ", ".join(sorted({f"{f['proporcao']} ({f['nome']})"
                                  for f in (canal.get("formatos") or []) if f.get("ativo", True)}))
+    if fixos:
+        regra_personagens = ("- Use EXATAMENTE estes personagens: %s. Não crie outros. "
+                             "Escreva o nome do personagem em cada cena em que ele aparece."
+                             % ", ".join(fixos))
+    else:
+        regra_personagens = ("- Você pode usar os personagens que já existem no canal ou criar novos. "
+                             "Escolha os que fizerem sentido e mantenha o MESMO personagem com a MESMA "
+                             "aparência em todas as cenas em que ele aparecer.")
+    ref = ""
+    if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
+        ref = ("\nREFERÊNCIA DE ESTILO (inspire-se no ritmo e no clima, nunca copie):\n"
+               "- %s%s\n%s\n" % (
+                   inspiracao.get("titulo") or inspiracao.get("url"),
+                   (" de " + inspiracao["autor"]) if inspiracao.get("autor") else "",
+                   inspiracao.get("descricao") or inspiracao.get("texto") or ""))
     return """Você é o roteirista de um canal. Escreva UM vídeo curto a partir do briefing.
 
 CONTEXTO FIXO DO CANAL (tudo aqui manda mais que o briefing):
@@ -77,15 +95,15 @@ CONTEXTO FIXO DO CANAL (tudo aqui manda mais que o briefing):
 
 BRIEFING DESTE VÍDEO:
 %s
-
+%s
 REGRAS DE SAÍDA:
-- %d cenas, cada uma com uma fala curta (1 a 2 frases, até 30 palavras).
+- Escolha o número de cenas que a duração pedir, não um número fixo. Cada cena deve render
+  de 4 a 9 segundos de fala. Use no máximo %d cenas.
+- A soma das falas precisa dar PELO MENOS %d segundos. Se faltar, acrescente frases ou cenas.
 - A primeira cena é o gancho: prende nos primeiros 3 segundos, sem "olá" e sem apresentação.
 - Cada cena tem uma descrição visual EM INGLÊS, de um objeto, lugar ou pessoa EM AÇÃO.
   Nada de texto escrito dentro da imagem; nada de marca d'água.
-- Se houver personagens no contexto, use os mesmos nomes e mantenha a aparência descrita.
-- Duração alvo: cerca de %d segundos no total.
-- Formatos de destino: %s.
+%s
 - A legenda do post deve ter 1 a 2 frases e um convite claro no fim.
 - Hashtags curtas, sem espaço, começando com #.
 
@@ -94,12 +112,14 @@ Responda SÓ com este JSON, sem explicação e sem markdown:
  "personagens":[{"nome":"...","descricao":"...","visual":"..."}],
  "cenas":[{"n":1,"fala":"...","imagem":"english visual description","personagem":"Nome ou vazio"}],
  "legenda":"...","hashtags":["#..."],"cta":"...","observacoes":"..."}
-""" % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, quantas, duracao, formatos or "9:16",
-       duracao)
+""" % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, ref, max_cenas, duracao,
+       regra_personagens, duracao)
 
 
-def _normalizar(canal, contexto, bruto, briefing, quantas, duracao):
+def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
+                personagens_fixos=None, personagens_disponiveis=None):
     d = bruto if isinstance(bruto, dict) else {}
+    max_cenas = max(3, min(24, int(max_cenas or 12)))
     cenas_brutas = d.get("cenas") or d.get("scenes") or d.get("roteiro") or []
     cenas = []
     for i, c in enumerate(cenas_brutas if isinstance(cenas_brutas, list) else [], 1):
@@ -115,12 +135,14 @@ def _normalizar(canal, contexto, bruto, briefing, quantas, duracao):
             imagem = _imagem_de_apoio(contexto, fala)
         cenas.append({"n": len(cenas) + 1, "fala": fala, "imagem": imagem,
                       "personagem": _limpar(c.get("personagem") or c.get("character"), 60)})
-        if len(cenas) >= max(3, min(12, quantas)):
+        if len(cenas) >= max_cenas:
             break
 
     if not cenas:
-        cenas = _cenas_do_briefing(contexto, briefing, quantas)
+        cenas = _cenas_do_briefing(contexto, briefing, duracao, max_cenas)
 
+    disponiveis = {str(p.get("nome") or "").strip().lower(): p
+                   for p in (personagens_disponiveis or []) if isinstance(p, dict) and p.get("nome")}
     personagens = []
     for p in (d.get("personagens") or d.get("characters") or []):
         if isinstance(p, str):
@@ -130,11 +152,28 @@ def _normalizar(canal, contexto, bruto, briefing, quantas, duracao):
         nome = _limpar(p.get("nome") or p.get("name"), 60)
         if not nome:
             continue
+        base = disponiveis.get(nome.lower()) or {}
         personagens.append({"nome": nome,
-                            "descricao": _limpar(p.get("descricao") or p.get("description"), 800),
-                            "visual": _limpar(p.get("visual") or p.get("aparência") or p.get("appearance"), 800)})
+                            "descricao": _limpar(p.get("descricao") or p.get("description") or base.get("descricao"), 800),
+                            "visual": _limpar(p.get("visual") or p.get("aparência") or p.get("appearance") or base.get("visual"), 800)})
     if not personagens:
         personagens = [dict(p) for p in (contexto.get("personagens") or [])]
+
+    fixos = [str(n).strip() for n in (personagens_fixos or []) if str(n).strip()]
+    if fixos:
+        mapa = {p["nome"].lower(): p for p in personagens}
+        mapa.update({k: v for k, v in disponiveis.items() if k not in mapa})
+        escolhidos = []
+        for nome in fixos:
+            base = mapa.get(nome.lower()) or {"nome": nome, "descricao": "", "visual": ""}
+            escolhidos.append({"nome": base.get("nome") or nome,
+                               "descricao": _limpar(base.get("descricao"), 800),
+                               "visual": _limpar(base.get("visual"), 800)})
+        personagens = escolhidos
+        nomes = {p["nome"].lower() for p in personagens}
+        for c in cenas:
+            if c.get("personagem") and c["personagem"].lower() not in nomes:
+                c["personagem"] = ""
 
     hashtags = []
     for h in (d.get("hashtags") or []):
@@ -154,6 +193,7 @@ def _normalizar(canal, contexto, bruto, briefing, quantas, duracao):
         "tom": _limpar(d.get("tom") or contexto.get("tom"), 200),
         "duracao_estimada": round(total, 1),
         "duracao_alvo": duracao,
+        "duracao_minima": duracao,
         "personagens": personagens,
         "cenas": cenas,
         "legenda": _limpar(d.get("legenda") or d.get("caption") or d.get("descricao"), 2000),
@@ -177,18 +217,21 @@ def _imagem_de_apoio(contexto, fala):
             % (base, fala[:180])).strip(", ")
 
 
-def _cenas_do_briefing(contexto, briefing, quantas):
+def _cenas_do_briefing(contexto, briefing, duracao, max_cenas=24):
     texto = _limpar(briefing, 20000)
     partes = [p.strip() for p in re.split(r"(?<=[.!?;])\s+|\n+", texto) if p.strip()]
     if not partes:
         partes = [texto or "Uma ideia em uma cena."]
-    alvo = max(3, min(12, int(quantas or 6)))
+    alvo = max(3, min(int(max_cenas or 24), int(duracao / 6) or 3))
     if len(partes) > alvo:
         passo = len(partes) / alvo
         partes = [partes[int(i * passo)] for i in range(alvo)]
-    elif len(partes) < 3:
-        while len(partes) < 3:
-            partes.append(partes[-1] if partes else texto or "Uma ideia em uma cena.")
+    while len(partes) < alvo:
+        idx = max(range(len(partes)), key=lambda i: len(partes[i]))
+        corte = re.split(r"(?<=[,:])\s+|\s+(?=e\s|mas\s|porque\s)", partes[idx], maxsplit=1)
+        if len(corte) < 2:
+            break
+        partes[idx:idx + 1] = [x.strip() for x in corte if x.strip()]
     cenas = []
     for i, fala in enumerate(partes, 1):
         cenas.append({"n": i, "fala": _limpar(fala, 500),
@@ -196,23 +239,31 @@ def _cenas_do_briefing(contexto, briefing, quantas):
     return cenas
 
 
-async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=6, duracao=45):
+async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, duracao=45,
+                      personagens_fixos=None, personagens_disponiveis=None, inspiracao=None):
     briefing = _limpar(briefing, 12000)
     if not briefing:
         raise ValueError("Escreva o que você quer postar.")
-    quantas = max(3, min(12, int(quantas or 6)))
     duracao = max(15, min(180, int(duracao or 45)))
+    if quantas:
+        max_cenas = max(3, min(24, int(quantas)))
+    else:
+        max_cenas = max(3, min(24, int(duracao / 5) + 1))
     aviso = ""
     bruto = None
     try:
-        res = await pedir_texto("roteiro", _pedido(canal, contexto, briefing, quantas, duracao))
+        res = await pedir_texto("roteiro", _pedido(canal, contexto, briefing, max_cenas, duracao,
+                                                   personagens_fixos, personagens_disponiveis, inspiracao))
         txt = (res or {}).get("texto") if isinstance(res, dict) else str(res or "")
         bruto = _json_do_texto(txt)
         if bruto is None:
             aviso = "A IA não devolveu um JSON limpo; usei o briefing para montar as cenas."
     except Exception as e:
         aviso = "A IA de texto não respondeu (%s). Montei as cenas a partir do briefing." % str(e)[:120]
-    plano = _normalizar(canal, contexto, bruto, briefing, quantas, duracao)
+    plano = _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
+                        personagens_fixos, personagens_disponiveis)
+    if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
+        plano["inspiracao"] = {k: inspiracao.get(k) for k in ("url", "plataforma", "titulo", "autor", "descricao")}
     if aviso:
         plano["motor"] = "fallback"
         plano["observacoes"] = (plano.get("observacoes") + " " + aviso).strip()

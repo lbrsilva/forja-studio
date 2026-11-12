@@ -88,6 +88,8 @@ def criar(canal, plano, briefing, formato_ids=None):
         json.dumps(plano.get("personagens") or [], ensure_ascii=False, indent=1), encoding="utf-8")
     ativos = {f["id"] for f in canais.formatos_ativos(canal)}
     escolhidos = [f for f in (formato_ids or []) if f in ativos] or list(ativos)
+    lista_formatos = [f for f in canais.formatos_ativos(canal) if f["id"] in escolhidos]
+    reps = canais.formatos_distintos({"formatos": lista_formatos})
     producao = {
         "id": pid,
         "canal_id": canal["id"],
@@ -101,10 +103,14 @@ def criar(canal, plano, briefing, formato_ids=None):
         "estado": "preparando",
         "plano": plano,
         "formatos": escolhidos,
+        "duracao_minima": int(plano.get("duracao_minima") or plano.get("duracao_alvo") or
+                              (canal.get("producao") or {}).get("duracao_alvo") or 45),
+        "imagens_por_formato": (canal.get("producao") or {}).get("imagens_por_formato") or "auto",
+        "inspiracao": plano.get("inspiracao") or {},
         "etapas": {
             "voz": {"estado": "pendente", "feito": 0, "total": len(plano.get("cenas") or [])},
             "imagens": {"estado": "pendente", "feito": 0, "total": len(plano.get("cenas") or [])},
-            "montagem": {"estado": "pendente", "feito": 0, "total": len(escolhidos)},
+            "montagem": {"estado": "pendente", "feito": 0, "total": len(reps)},
         },
         "arquivos": {"voz": "", "imagens": [], "videos": {}},
         "log": [],
@@ -208,7 +214,7 @@ def _base_filtro(larg, alt, quadros, dentro):
             f"s={larg}x{alt}:fps={FPS}[v0]")
 
 
-def montar_video(pasta, plano, duracoes, formato, callbacks=None):
+def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=None):
     pasta = Path(pasta)
     larg = int(formato.get("largura") or 1080)
     alt = int(formato.get("altura") or 1920)
@@ -219,7 +225,8 @@ def montar_video(pasta, plano, duracoes, formato, callbacks=None):
         shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True, exist_ok=True)
     cenas = [c for c in (plano.get("cenas") or []) if c.get("fala")]
-    imagens = sorted((pasta / "cenas").glob("cena_*.png"))
+    origem = Path(imagens_dir) if imagens_dir else (pasta / "cenas")
+    imagens = sorted(origem.glob("cena_*.png"))
     if len(imagens) < len(cenas):
         raise RuntimeError("Faltam imagens: %d de %d cenas." % (len(imagens), len(cenas)))
     if len(duracoes) < len(cenas):
@@ -339,35 +346,13 @@ async def produzir(producao, canal, callbacks):
         if falar_cenas:
             _concatenar_voz(pasta, arquivos, duracoes)
         else:
+            duracoes = _ajustar_duracoes(duracoes, producao.get("duracao_minima"))
             _silencio(pasta, duracoes)
         producao["arquivos"]["voz"] = str(pasta / "voz.wav")
         _etapa(producao, "voz", "ok", len(cenas), len(cenas))
+        if falar_cenas:
+            duracoes = _garantir_minimo_voz(pasta, duracoes, producao.get("duracao_minima"), callbacks)
         producao["estado"] = "imagens"
-        _etapa(producao, "imagens", "rodando", 0, len(cenas))
-        _gravar({"canal_id": cid, "id": pid}, producao)
-
-        formato_base = (canal.get("producao") or {}).get("formato_base") or "9:16"
-        preset = (canal.get("producao") or {}).get("preset_imagem") or "z_image_turbo"
-        qualidade = (canal.get("producao") or {}).get("qualidade") or "Normal"
-        cenas_dir = pasta / "cenas"
-        cenas_dir.mkdir(parents=True, exist_ok=True)
-        for i, cena in enumerate(cenas, 1):
-            if _cancelado(producao, callbacks):
-                producao["estado"] = "cancelado"
-                _etapa(producao, "imagens", "cancelado")
-                _gravar({"canal_id": cid, "id": pid}, producao)
-                return producao
-            destino = cenas_dir / ("cena_%02d.png" % i)
-            if not destino.is_file() or destino.stat().st_size < 1000:
-                _log(producao, "imagem %d/%d" % (i, len(cenas)), callbacks)
-                await callbacks["gerar_imagem"](cena.get("imagem") or cena.get("fala"),
-                                                formato_base, destino, preset, qualidade)
-            producao["arquivos"]["imagens"].append(str(destino))
-            _etapa(producao, "imagens", "rodando", i, len(cenas))
-            _gravar({"canal_id": cid, "id": pid}, producao)
-        _etapa(producao, "imagens", "ok", len(cenas), len(cenas))
-        producao["estado"] = "montagem"
-        _gravar({"canal_id": cid, "id": pid}, producao)
 
         escolhidos = [f for f in canais.formatos_ativos(canal) if f["id"] in (producao.get("formatos") or [])]
         if not escolhidos:
@@ -375,6 +360,40 @@ async def produzir(producao, canal, callbacks):
         quer_legendas = bool((canal.get("producao") or {}).get("legendas", True))
         if not quer_legendas:
             escolhidos = [dict(f, legendas=False) for f in escolhidos]
+        grupos = canais.grupos_de_imagem(canal, escolhidos, producao.get("imagens_por_formato"))
+        preset = (canal.get("producao") or {}).get("preset_imagem") or "z_image_turbo"
+        qualidade = (canal.get("producao") or {}).get("qualidade") or "Normal"
+        total_imagens = len(cenas) * len(grupos)
+        _etapa(producao, "imagens", "rodando", 0, total_imagens)
+        _gravar({"canal_id": cid, "id": pid}, producao)
+        visuais = {}
+        for p in plano.get("personagens") or []:
+            nome = str((p or {}).get("nome") or "").strip().lower()
+            if nome:
+                visuais[nome] = str((p or {}).get("visual") or "").strip()
+        feito_img = 0
+        for proporcao in grupos:
+            cenas_dir = pasta / "cenas" / proporcao.replace(":", "x")
+            cenas_dir.mkdir(parents=True, exist_ok=True)
+            for i, cena in enumerate(cenas, 1):
+                if _cancelado(producao, callbacks):
+                    producao["estado"] = "cancelado"
+                    _etapa(producao, "imagens", "cancelado")
+                    _gravar({"canal_id": cid, "id": pid}, producao)
+                    return producao
+                destino = cenas_dir / ("cena_%02d.png" % i)
+                if not destino.is_file() or destino.stat().st_size < 1000:
+                    _log(producao, "imagem %s %d/%d" % (proporcao, i, len(cenas)), callbacks)
+                    await callbacks["gerar_imagem"](_prompt_com_personagem(cena, visuais),
+                                                    proporcao, destino, preset, qualidade)
+                producao["arquivos"]["imagens"].append(str(destino))
+                feito_img += 1
+                _etapa(producao, "imagens", "rodando", feito_img, total_imagens)
+                _gravar({"canal_id": cid, "id": pid}, producao)
+        _etapa(producao, "imagens", "ok", total_imagens, total_imagens)
+        producao["estado"] = "montagem"
+        _gravar({"canal_id": cid, "id": pid}, producao)
+
         distintos = canais.formatos_distintos({"formatos": escolhidos})
         _etapa(producao, "montagem", "rodando", 0, len(distintos))
         arquivo_por_chave = {}
@@ -385,16 +404,16 @@ async def produzir(producao, canal, callbacks):
                 _gravar({"canal_id": cid, "id": pid}, producao)
                 return producao
             _log(producao, "montagem %s" % fmt.get("nome"), callbacks)
-            saida = montar_video(pasta, plano, duracoes, fmt, callbacks)
-            chave = (int(fmt.get("largura") or 1080), int(fmt.get("altura") or 1920),
-                     bool(fmt.get("legendas", True)))
+            proporcao = _proporcao_do_grupo(producao, fmt, grupos)
+            imagens_dir = pasta / "cenas" / proporcao.replace(":", "x")
+            saida = montar_video(pasta, plano, duracoes, fmt, callbacks, imagens_dir=imagens_dir)
+            chave = canais.chave_formato(fmt)
             arquivo_por_chave[chave] = str(saida)
             producao["arquivos"]["videos"][fmt["id"]] = str(saida)
             _etapa(producao, "montagem", "rodando", i, len(distintos))
             _gravar({"canal_id": cid, "id": pid}, producao)
         for f in escolhidos:
-            chave = (int(f.get("largura") or 1080), int(f.get("altura") or 1920),
-                     bool(f.get("legendas", True)))
+            chave = canais.chave_formato(f)
             if chave in arquivo_por_chave:
                 producao["arquivos"]["videos"][f["id"]] = arquivo_por_chave[chave]
         _etapa(producao, "montagem", "ok", len(distintos), len(distintos))
@@ -441,6 +460,60 @@ def _silencio(pasta, duracoes):
     _rodar([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
             "-t", "%.3f" % total, "-c:a", "pcm_s16le", str(pasta / "voz.wav")], timeout=120)
     (pasta / "duracoes.txt").write_text("\n".join("%.3f" % d for d in duracoes) + "\n", encoding="utf-8")
+
+
+def _prompt_com_personagem(cena, visuais):
+    prompt = str(cena.get("imagem") or cena.get("fala") or "")
+    nome = str(cena.get("personagem") or "").strip().lower()
+    visual = visuais.get(nome)
+    if not visual and len(visuais) == 1:
+        visual = next(iter(visuais.values()))
+    if visual and visual.lower()[:24] not in prompt.lower():
+        return (visual + ", " + prompt).strip(", ")
+    return prompt
+
+
+def _proporcao_do_grupo(producao, fmt, grupos):
+    modo = producao.get("imagens_por_formato") or "auto"
+    if modo in ("9:16", "16:9", "1:1") and modo in grupos:
+        return modo
+    if modo == "unico":
+        return next(iter(grupos))
+    p = canais.proporcao_de(fmt)
+    return p if p in grupos else next(iter(grupos))
+
+
+def _ajustar_duracoes(duracoes, minimo):
+    d = list(duracoes or [])
+    try:
+        minimo = float(minimo or 0)
+    except (TypeError, ValueError):
+        minimo = 0.0
+    total = sum(d)
+    if minimo and d and total < minimo:
+        d[-1] += minimo - total
+    return d
+
+
+def _garantir_minimo_voz(pasta, duracoes, minimo, callbacks=None):
+    """A duração alvo é um piso: se a fala sair menor, o último quadro segura até o mínimo."""
+    d = _ajustar_duracoes(duracoes, minimo)
+    falta = sum(d) - sum(duracoes)
+    if falta <= 0.01:
+        return d
+    p = Path(pasta)
+    sil = p / "silencio_final.wav"
+    _rodar([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+            "-t", "%.3f" % falta, "-c:a", "pcm_s16le", str(sil)], timeout=120)
+    lista = p / "lista_final.txt"
+    lista.write_text("file 'voz.wav'\nfile 'silencio_final.wav'\n", encoding="utf-8")
+    tmp = p / "voz_com_minimo.wav"
+    _rodar([FFMPEG, "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lista),
+            "-c:a", "pcm_s16le", str(tmp)], cwd=str(p), timeout=600)
+    tmp.replace(p / "voz.wav")
+    (p / "duracoes.txt").write_text("\n".join("%.3f" % x for x in d) + "\n", encoding="utf-8")
+    _log({}, "duração ajustada para o mínimo de %.1f s" % sum(d), callbacks)
+    return d
 
 
 def resumo(producao):

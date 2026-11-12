@@ -163,7 +163,7 @@
     if (id === S.atual) return;
     S.atual = id;
     try { localStorage.setItem('forja_canal_atual', id); } catch (e) { /* sem armazenamento */ }
-    S.plano = null; S.producao = null; S.analise = null;
+    S.plano = null; S.producao = null; S.analise = null; S.inspiracao = null;
     pararPoll();
     await carregarCanal();
     render();
@@ -299,21 +299,38 @@
   function telaProduzir() {
     const d = S.dados;
     const ativos = (d.formatos || []).filter((f) => f.ativo !== false);
+    const disponiveis = d.personagens_disponiveis || [];
+    const insp = S.inspiracao || {};
     return `
       <div class="cx-card">
         <h2>Do briefing ao vídeo</h2>
-        <p class="fraco">Escreva o que você quer postar. A IA local monta o roteiro, as falas, as cenas e as descrições dos personagens com base no contexto deste canal. Você revisa e manda produzir.</p>
+        <p class="fraco">Escreva o que você quer postar. A IA local monta roteiro, falas, cenas e personagens com base no contexto deste canal. O número de cenas é calculado pela duração e pelo roteiro.</p>
         <div class="cx-form">
           <label><span>Briefing</span><textarea id="cxBriefing" rows="5" placeholder="Ex.: conta a história de Davi e Golias em 45 segundos, com gancho nos 3 primeiros segundos, sem citar violência explícita.">${esc(S.briefing || '')}</textarea></label>
-          <div class="cx-grid3">
-            <label><span>Cenas</span><select id="cxQuantas">${opcoesSelect([3, 4, 5, 6, 7, 8, 10, 12], Number((d.producao || {}).cenas) || 6)}</select></label>
-            <label><span>Duração alvo (s)</span><select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number((d.producao || {}).duracao_alvo) || 45)}</select></label>
-            <div><span class="fraco" style="font-size:12px;font-weight:600">Formatos a montar</span>
-              <div class="cx-row" style="gap:10px;margin-top:6px">${ativos.map((f) =>
-                `<label class="cx-check"><input type="checkbox" data-formato="${esc(f.id)}" checked>${esc(f.nome)}</label>`).join('') || '<span class="fraco">Ative um formato em Ajustes.</span>'}</div></div>
+          <div class="cx-briefing-grade">
+            <div class="cx-campo"><label for="cxDuracao">Duração mínima (s)</label>
+              <select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number((d.producao || {}).duracao_alvo) || 45)}</select>
+              <span class="cx-dica">O vídeo pode ficar mais longo, nunca menor.</span></div>
+            <div class="cx-campo"><span class="cx-rotulo"><label>Formatos a montar</label></span>
+              <div class="cx-row" style="gap:12px">${ativos.map((f) =>
+                `<label class="cx-check"><input type="checkbox" data-formato="${esc(f.id)}" checked>${esc(f.nome)}</label>`).join('') || '<span class="fraco">Ative um formato em Ajustes.</span>'}</div>
+              <span class="cx-dica">Imagens automáticas: uma por proporção ativa. 9:16 e 16:9 não são o mesmo arquivo.</span></div>
+          </div>
+          <div class="cx-campo"><div class="cx-rotulo"><label>Personagens</label>
+            <span class="cx-dica">Sem marcar = a IA escolhe e repete a aparência</span></div>
+            <div class="cx-personagens-uso">${disponiveis.map((p) =>
+              `<label class="cx-check cx-pill" title="${esc(p.descricao || p.origem || '')}">
+                <input type="checkbox" data-personagem="${esc(p.nome)}">${esc(p.nome)}</label>`).join('')
+              || '<span class="fraco">Nenhum personagem ainda. A IA cria no roteiro e os próximos vídeos podem reaproveitar.</span>'}</div>
+          </div>
+          <div class="cx-campo"><div class="cx-rotulo"><label for="cxInspiracaoUrl">Vídeo de inspiração</label>
+            <button type="button" class="cx-ia" data-acao="ler-inspiracao">${ic('brilho')}Ler referência</button></div>
+            <input id="cxInspiracaoUrl" type="url" value="${esc(insp.url || '')}" placeholder="Cole a URL do YouTube ou TikTok">
+            <p class="nota" id="cxInspiracaoStatus">${insp.titulo
+              ? 'Referência: ' + esc(insp.titulo) + (insp.autor ? ' de ' + esc(insp.autor) : '')
+              : 'Opcional. O roteiro se inspira no ritmo e no clima, sem copiar o vídeo.'}</p>
           </div>
           <div class="cx-acoes">
-            <button type="button" class="bt-sec" data-acao="novo-canal">${ic('mais')}Outro canal</button>
             <button type="button" class="bt-sec" data-acao="gerar-plano">${ic('brilho')}Só o roteiro</button>
             <button type="button" class="gerar" data-acao="produzir-direto">${ic('play')}Gerar vídeo completo</button>
           </div>
@@ -333,6 +350,8 @@
       <div class="cx-row"><h2 style="margin:0">Roteiro</h2>
         <span class="cx-selo">${p.motor === 'fallback' ? 'montado do briefing' : 'IA local'}</span>
         <span class="cx-selo">${nf1.format(p.duracao_estimada || 0)} s estimados</span>
+        ${p.duracao_minima && Number(p.duracao_estimada || 0) < Number(p.duracao_minima)
+          ? `<span class="cx-selo">segura até ${p.duracao_minima} s se faltar</span>` : ''}
         <button type="button" class="bt-sec mini cx-right" data-acao="gerar-plano">${ic('brilho')}Gerar de novo</button></div>
       <p class="nota" style="margin:6px 0 12px">${esc(p.observacoes || 'Confira as falas e a descrição visual de cada cena antes de produzir.')}</p>
       <div class="cx-grid2">
@@ -633,19 +652,24 @@
           <div class="cx-card-cab"><div><h2>Produção e formatos</h2>
             <p class="fraco">Estes valores viram o padrão de todo vídeo deste canal.</p></div></div>
           <div class="cx-grid3">
-            <div class="cx-campo"><label for="ajDuracao">Duração alvo</label>
-              <select id="ajDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number(pr.duracao_alvo) || 45)}</select></div>
-            <div class="cx-campo"><label for="ajCenas">Cenas por vídeo</label>
-              <select id="ajCenas">${opcoesSelect([3, 4, 5, 6, 7, 8, 10, 12], Number(pr.cenas) || 6)}</select></div>
+            <div class="cx-campo"><label for="ajDuracao">Duração mínima (s)</label>
+              <select id="ajDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number(pr.duracao_alvo) || 45)}</select>
+              <span class="cx-dica">O vídeo pode passar; nunca fica menor.</span></div>
             <div class="cx-campo"><label for="ajQualidade">Qualidade</label>
               <select id="ajQualidade">${opQualidade}</select></div>
+            <div class="cx-campo"><label for="ajImagensPorFormato">Imagens por formato</label>
+              <select id="ajImagensPorFormato">${[
+                ['auto', 'Automático (uma por proporção)'],
+                ['unico', 'Uma só (reaproveita com desfoque)'],
+                ['9:16', 'Só 9:16'],
+                ['16:9', 'Só 16:9'],
+                ['1:1', 'Só 1:1'],
+              ].map(([v, r]) => `<option value="${v}" ${((pr.imagens_por_formato || 'auto') === v) ? 'selected' : ''}>${r}</option>`).join('')}</select>
+              <span class="cx-dica">Automático gera uma imagem para cada proporção ativa.</span></div>
           </div>
           <div class="cx-grid3">
             <div class="cx-campo"><label for="ajPreset">Modelo de imagem</label>
               <select id="ajPreset">${opPreset}</select></div>
-            <div class="cx-campo"><label for="ajFormatoBase">Proporção base das imagens</label>
-              <select id="ajFormatoBase">${['9:16', '16:9', '1:1'].map((f) =>
-                `<option ${pr.formato_base === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
             <div class="cx-campo"><label for="ajVoz">Voz</label>
               <select id="ajVoz">${opVoz}</select></div>
           </div>
@@ -654,7 +678,7 @@
             <label class="cx-check"><input type="checkbox" id="ajFalar" ${pr.falar_cenas !== false ? 'checked' : ''}>Gerar narração por cena</label>
           </div>
           <div class="cx-secao-cab"><h3>Formatos a montar</h3>
-            <p class="nota">Mude o tamanho se precisar. Formatos do mesmo tamanho e com a mesma legenda reaproveitam o mesmo vídeo final.</p></div>
+            <p class="nota">Padrão: 1080x1920 no vertical e 1920x1080 no horizontal, suficiente para celular e YouTube sem 4K. Formatos da mesma proporção e legenda reaproveitam o mesmo arquivo.</p></div>
           <div class="cx-formato-cab"><span>Ativo</span><span>Formato</span><span>Tamanho (px)</span><span>Plataforma</span><span>Legendas</span><span></span></div>
           <div class="cx-formatos" id="cxFormatos">${formatos.map(linhaFormato).join('')}</div>
           <div class="cx-acoes"><button type="button" class="bt-sec mini" data-acao="add-formato">${ic('mais')}Formato</button></div>
@@ -788,6 +812,39 @@
     return p;
   }
 
+  function personagensEscolhidos() {
+    return $$('[data-personagem]:checked').map((x) => x.dataset.personagem);
+  }
+
+  function inspiracaoAtual() {
+    const url = (($('#cxInspiracaoUrl') || {}).value || '').trim();
+    if (S.inspiracao && S.inspiracao.url === url) return S.inspiracao;
+    return null;
+  }
+
+  async function lerInspiracao() {
+    const url = (($('#cxInspiracaoUrl') || {}).value || '').trim();
+    const status = $('#cxInspiracaoStatus');
+    if (!url) { if (status) status.textContent = 'Cole a URL primeiro.'; return; }
+    const bt = $('[data-acao="ler-inspiracao"]');
+    if (bt) bt.disabled = true;
+    if (status) status.textContent = 'Lendo a referência…';
+    try {
+      const r = await pedir('/api/inspiracao', { url });
+      S.inspiracao = r;
+      if (status) status.textContent = 'Referência: ' + (r.titulo || url) + (r.autor ? ' de ' + r.autor : '');
+    } catch (e) {
+      S.inspiracao = null;
+      if (status) { status.textContent = e.message; status.className = 'nota erro'; }
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  async function garantirInspiracao() {
+    const url = (($('#cxInspiracaoUrl') || {}).value || '').trim();
+    if (url && (!S.inspiracao || S.inspiracao.url !== url)) await lerInspiracao();
+    return inspiracaoAtual();
+  }
+
   async function gerarPlano() {
     const briefing = (($('#cxBriefing') || {}).value || '').trim();
     if (!briefing) { mostrar('Escreva o briefing antes de gerar o roteiro.', 'erro'); return; }
@@ -795,9 +852,12 @@
     const bt = $('[data-acao="gerar-plano"]');
     if (bt) { bt.disabled = true; bt.textContent = 'Lendo o briefing…'; }
     try {
+      const inspiracao = await garantirInspiracao();
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/plano', {
-        briefing, quantas: Number(($('#cxQuantas') || {}).value) || undefined,
+        briefing,
         duracao: Number(($('#cxDuracao') || {}).value) || undefined,
+        personagens: personagensEscolhidos(),
+        inspiracao,
       });
       S.plano = r.plano;
       mostrar('Roteiro pronto. Revise as cenas e mande produzir.', 'ok');
@@ -819,7 +879,7 @@
     if (bt) { bt.disabled = true; bt.textContent = 'Começando…'; }
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir',
-        { plano, briefing: S.briefing, formatos });
+        { plano, briefing: S.briefing, formatos, inspiracao: inspiracaoAtual() });
       S.producao = r.producao;
       mostrar('Produção começou. A voz vem primeiro; depois as imagens e a montagem.', 'ok');
       render();
@@ -838,11 +898,13 @@
     const bt = $('[data-acao="produzir-direto"]');
     if (bt) { bt.disabled = true; bt.textContent = 'Começando a produção…'; }
     try {
+      const inspiracao = await garantirInspiracao();
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir', {
         briefing,
-        quantas: Number(($('#cxQuantas') || {}).value) || undefined,
         duracao: Number(($('#cxDuracao') || {}).value) || undefined,
         formatos,
+        personagens: personagensEscolhidos(),
+        inspiracao,
       });
       S.briefing = briefing;
       S.plano = r.plano;
@@ -1082,10 +1144,9 @@
       voz: { ...(d.voz || {}), voz_id: ($('#ajVoz') || {}).value || '', idioma: ($('#ajIdioma') || {}).value || 'pt' },
       producao: { ...(d.producao || {}),
         duracao_alvo: Number(($('#ajDuracao') || {}).value) || 45,
-        cenas: Number(($('#ajCenas') || {}).value) || 6,
         qualidade: ($('#ajQualidade') || {}).value || 'Normal',
         preset_imagem: ($('#ajPreset') || {}).value || 'z_image_turbo',
-        formato_base: ($('#ajFormatoBase') || {}).value || '9:16',
+        imagens_por_formato: ($('#ajImagensPorFormato') || {}).value || 'auto',
         legendas: !!($('#ajLegendas') || {}).checked,
         falar_cenas: !!($('#ajFalar') || {}).checked },
       formatos,
@@ -1210,6 +1271,7 @@
     if (acao === 'ia-campo') { await melhorarCampo(b); return; }
     if (acao === 'ia-contexto') { await gerarContexto(); return; }
     if (acao === 'sugerir-descricao') { await sugerirDescricao(); return; }
+    if (acao === 'ler-inspiracao') { await lerInspiracao(); return; }
     if (acao === 'add-hora') {
       const h = ($('#ajHoraNova') || {}).value || '06:00';
       const atual = $$('#cxHorarios .cx-hora').map((x) => x.dataset.hora);

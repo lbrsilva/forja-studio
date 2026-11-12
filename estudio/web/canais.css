@@ -85,6 +85,20 @@
 .cx-secao-cab .nota { max-width: 620px; text-align: right; }
 .cx-acoes-fim { justify-content: flex-end; margin-top: 18px; }
 
+.canais select, .canal-dlg select {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239aa3b5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 42px;
+}
+.cx-hora-add select { padding-right: 34px; background-position: right 10px center; }
+
+.cx-briefing-grade { display: grid; grid-template-columns: minmax(180px, .45fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.cx-personagens-uso { display: flex; gap: 8px; flex-wrap: wrap; }
+.cx-personagens-uso .cx-pill { background: var(--fundo-2); }
+.cx-personagens-uso .cx-pill:has(input:checked) { border-color: var(--acento-borda); background: var(--acento-suave); }
+
 /* stat tiles — número é o assunto, sem gráfico de uma barra só */
 .cx-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .cx-kpi { background: var(--cx-surface); border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; }
@@ -240,7 +254,7 @@
 
 @media (max-width: 860px) {
   .canais { padding: 14px 12px 70px; }
-  .cx-grid2, .cx-grid3, .canais-form-2, .cx-cred { grid-template-columns: 1fr; }
+  .cx-grid2, .cx-grid3, .canais-form-2, .cx-cred, .cx-briefing-grade { grid-template-columns: 1fr; }
   .cx-cena, .cx-cena-cab { grid-template-columns: 26px minmax(0, 1fr) 36px; }
   .cx-cena .cx-prompt, .cx-cena-cab .cx-prompt-cab { display: none; }
   .cx-persona { grid-template-columns: 1fr 36px; }
@@ -260,3 +274,16 @@
   .cx-prod { grid-template-columns: 1fr; }
   .cx-prod .cx-prod-bts { justify-content: flex-start; }
 }
+
+/* seta própria dos selects: precisa vir DEPOIS do background dos .cx-form,
+   senão o atalho de fundo apaga a imagem da seta. */
+.canais select, .canal-dlg select, .cx-form select, .cx-formato select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--fundo-2);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239aa3b5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 42px;
+}
+.cx-hora-add select { padding-right: 32px; background-position: right 9px center; }

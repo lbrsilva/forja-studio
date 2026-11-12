@@ -111,6 +111,7 @@ def _canal_padrao(nome, **extra):
             "qualidade": "Normal",
             "estilo": "",
             "formato_base": "9:16",
+            "imagens_por_formato": "auto",
             "falar_cenas": True,
         },
         "formatos": [dict(f, ativo=True) for f in FORMATOS_PADRAO],
@@ -236,15 +237,102 @@ def formato_por_id(canal, fid):
 
 
 def formatos_distintos(canal):
-    """Um arquivo por tamanho/legenda, nao um por plataforma: Stories e Reels usam o mesmo 9:16."""
-    vistos, saida = set(), []
+    """Um arquivo por proporção e decisão de legenda. Mesma proporção em tamanhos diferentes
+    vira o MAIOR tamanho: não faz sentido renderizar 720x1280 e 1080x1920 do mesmo vídeo."""
+    return list(formatos_representantes(canal).values())
+
+
+def chave_formato(f):
+    try:
+        razao = round(float(f.get("largura") or 1080) / float(f.get("altura") or 1920), 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        razao = round(1080 / 1920, 4)
+    return (razao, bool(f.get("legendas", True)))
+
+
+def _area(f):
+    try:
+        return int(f.get("largura") or 0) * int(f.get("altura") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def formatos_representantes(canal):
+    reps = {}
     for f in formatos_ativos(canal):
-        chave = (int(f.get("largura") or 1080), int(f.get("altura") or 1920), bool(f.get("legendas", True)))
-        if chave in vistos:
-            continue
+        k = chave_formato(f)
+        if k not in reps or _area(f) > _area(reps[k]):
+            reps[k] = dict(f)
+    return reps
+
+
+def proporcao_de(f):
+    try:
+        w = float(f.get("largura") or 1080)
+        h = float(f.get("altura") or 1920)
+    except (TypeError, ValueError):
+        return "9:16"
+    r = w / h
+    for nome, alvo in (("16:9", 16 / 9), ("9:16", 9 / 16), ("1:1", 1.0)):
+        if abs(r - alvo) < 0.03:
+            return nome
+    return "9:16" if h >= w else "16:9"
+
+
+def grupos_de_imagem(canal, formatos, modo=None):
+    """Agrupa os formatos pela proporção em que a imagem precisa ser gerada.
+
+    modo:
+      auto   -> uma imagem por proporção ativa (padrão)
+      unico  -> uma imagem só, reaproveitada com fundo desfocado
+      9:16, 16:9, 1:1 -> força uma proporção
+    """
+    modo = modo or ((canal.get("producao") or {}).get("imagens_por_formato") or "auto")
+    escolhidos = list(formatos or [])
+    if not escolhidos:
+        escolhidos = formatos_ativos(canal)
+    if modo == "unico":
+        contagem = {}
+        for f in escolhidos:
+            p = proporcao_de(f)
+            contagem[p] = contagem.get(p, 0) + 1
+        base = max(contagem, key=lambda p: (contagem[p], 1 if p == "9:16" else 0))
+        return {base: escolhidos}
+    if modo in ("9:16", "16:9", "1:1"):
+        return {modo: escolhidos}
+    grupos = {}
+    for f in escolhidos:
+        grupos.setdefault(proporcao_de(f), []).append(f)
+    return grupos
+
+
+def personagens_disponiveis(cid, limite=40):
+    """Personagens do contexto + os que já apareceram em produções deste canal."""
+    saida, vistos = [], set()
+
+    def add(p, origem="canal", producao_id=""):
+        if isinstance(p, str):
+            p = {"nome": p}
+        if not isinstance(p, dict):
+            return
+        nome = str(p.get("nome") or "").strip()[:60]
+        chave = nome.lower()
+        if not nome or chave in vistos:
+            return
         vistos.add(chave)
-        saida.append(dict(f))
-    return saida
+        saida.append({"nome": nome,
+                      "descricao": str(p.get("descricao") or "").strip()[:800],
+                      "visual": str(p.get("visual") or "").strip()[:800],
+                      "origem": origem, "producao_id": producao_id})
+
+    for p in contexto(cid).get("personagens") or []:
+        add(p, "contexto do canal")
+    for prod in lista_producoes(cid):
+        for p in (prod.get("plano") or {}).get("personagens") or []:
+            add(p, prod.get("titulo") or "vídeo", prod.get("id") or "")
+        if len(saida) >= limite:
+            break
+    return saida[:limite]
 
 
 def contexto(cid):

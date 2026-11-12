@@ -5260,6 +5260,7 @@ def _resumo_canal(c):
     d["credenciais"] = canais.estado_credenciais(c["id"])
     d["agenda"] = canais.agenda_listar(c["id"])
     d["producoes"] = [esteira.resumo(p) for p in canais.lista_producoes(c["id"])]
+    d["personagens_disponiveis"] = canais.personagens_disponiveis(c["id"])
     d["pasta"] = str(canais.pasta_canal(c["id"]))
     return d
 
@@ -5405,6 +5406,59 @@ async def api_canal_contexto(req):
     return web.json_response(canais.gravar_contexto(cid, b))
 
 
+def _personagens_da_requisicao(b, cid):
+    nomes = []
+    for x in (b.get("personagens") or []):
+        nome = x.get("nome") if isinstance(x, dict) else x
+        nome = str(nome or "").strip()
+        if nome and nome not in nomes:
+            nomes.append(nome)
+    return nomes, canais.personagens_disponiveis(cid)
+
+
+async def api_inspiracao(req):
+    """Lê o título/autor de um vídeo de referência sem baixar o vídeo.
+
+    É o suficiente para o roteirista se inspirar no clima e no formato. Instagram não tem
+    oEmbed público sem token: nesse caso a tela pede para descrever o estilo no briefing.
+    """
+    b = await req.json()
+    url = str(b.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise web.HTTPBadRequest(text="Cole uma URL http(s) de um vídeo.")
+    baixo = url.lower()
+    if "youtube.com" in baixo or "youtu.be" in baixo:
+        plataforma = "youtube"
+        endereco = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url, safe="")
+    elif "tiktok.com" in baixo:
+        plataforma = "tiktok"
+        endereco = "https://www.tiktok.com/oembed?url=" + urllib.parse.quote(url, safe="")
+    elif "instagram.com" in baixo:
+        raise web.HTTPBadRequest(text="O Instagram não tem leitura pública de referência. "
+                                      "Descreva o estilo no briefing ou use YouTube/TikTok.")
+    else:
+        raise web.HTTPBadRequest(text="Use uma URL do YouTube, TikTok ou Instagram.")
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            async with s.get(endereco, headers={"User-Agent": "Mozilla/5.0"}) as r:
+                txt = await r.text()
+                if r.status >= 400:
+                    raise web.HTTPBadGateway(text="Não consegui ler a referência (%s)." % r.status)
+                d = json.loads(txt) if txt else {}
+    except web.HTTPException:
+        raise
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui ler a referência: " + str(exc)[:200])
+    return web.json_response({
+        "url": url,
+        "plataforma": plataforma,
+        "titulo": str(d.get("title") or "")[:300],
+        "autor": str(d.get("author_name") or "")[:200],
+        "miniatura": str(d.get("thumbnail_url") or ""),
+        "texto": "Referência de estilo: %s, de %s." % (d.get("title") or "vídeo", d.get("author_name") or "autor desconhecido"),
+    })
+
+
 async def api_canal_plano(req):
     cid = req.match_info["cid"]
     canal = _canal_ou_erro(cid)
@@ -5414,16 +5468,19 @@ async def api_canal_plano(req):
         raise web.HTTPBadRequest(text="Escreva o que você quer postar.")
     ctx = canais.contexto(cid)
     prod = canal.get("producao") or {}
+    fixos, disponiveis = _personagens_da_requisicao(b, cid)
+    inspiracao = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else None
     try:
         plano = await roteirista.gerar_plano(
             _pedir_texto, canal, ctx, briefing,
-            int(b.get("quantas") or prod.get("cenas") or 6),
-            int(b.get("duracao") or prod.get("duracao_alvo") or 45))
+            int(b.get("quantas") or 0),
+            int(b.get("duracao") or prod.get("duracao_alvo") or 45),
+            personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao)
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
         raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
-    return web.json_response({"plano": plano, "contexto": ctx})
+    return web.json_response({"plano": plano, "contexto": ctx, "personagens": disponiveis})
 
 
 async def _gerar_imagem_esteira(prompt, formato, destino, preset, qualidade):
@@ -5537,16 +5594,21 @@ async def api_canal_produzir(req):
     ctx = canais.contexto(cid)
     plano = b.get("plano")
     briefing = (b.get("briefing") or "").strip()
+    inspiracao = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else None
+    fixos, disponiveis = _personagens_da_requisicao(b, cid)
     if not isinstance(plano, dict) or not (plano.get("cenas") or []):
         if not briefing:
             raise web.HTTPBadRequest(text="Escreva o briefing ou mande um plano com cenas.")
         try:
             plano = await roteirista.gerar_plano(
                 _pedir_texto, canal, ctx, briefing,
-                int(b.get("quantas") or (canal.get("producao") or {}).get("cenas") or 6),
-                int(b.get("duracao") or (canal.get("producao") or {}).get("duracao_alvo") or 45))
+                int(b.get("quantas") or 0),
+                int(b.get("duracao") or (canal.get("producao") or {}).get("duracao_alvo") or 45),
+                personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao)
         except Exception as e:
             raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
+    elif inspiracao and not plano.get("inspiracao"):
+        plano["inspiracao"] = {k: inspiracao.get(k) for k in ("url", "plataforma", "titulo", "autor", "descricao")}
     for i, c in enumerate(plano.get("cenas") or [], 1):
         if not str(c.get("fala") or "").strip():
             raise web.HTTPBadRequest(text="A cena %d está sem fala." % i)
@@ -5836,6 +5898,7 @@ app.add_routes([
     web.get("/api/canal/fila", api_canal_fila), web.post("/api/canal/fila", api_canal_fila),
     web.get("/api/canais", api_canais), web.post("/api/canais", api_canais),
     web.post("/api/canais/sugerir", api_canais_sugerir),
+    web.post("/api/inspiracao", api_inspiracao),
     web.get("/api/canais/{cid}", api_canal), web.post("/api/canais/{cid}", api_canal),
     web.delete("/api/canais/{cid}", api_canal),
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),

@@ -11,10 +11,14 @@ Rota nova: `#/canais` (menu **Canais**).
 
 - **Visão geral**: produções, próxima publicação, views e receita do período.
 - **Produzir**: um briefing em texto vira roteiro com cenas, falas, descrições visuais e
-  personagens. Tudo é editável antes de mandar produzir. A esteira gera voz por cena,
-  uma imagem por cena e monta o vídeo em todos os formatos ativos do canal.
+  personagens. O número de cenas não é fixo: sai da duração e do próprio roteiro.
+  A duração escolhida é um piso: se a fala sair menor, a última cena segura até o mínimo.
   **Gerar vídeo completo** faz roteiro, voz, imagens e montagem em um clique. **Só o
   roteiro** para no plano para você revisar.
+- **Personagens**: o canal pode reaproveitar personagens de vídeos anteriores. Na aba
+  Produzir, marque os que quer manter; sem marcar, a IA escolhe e repete a aparência.
+- **Inspiração**: cole a URL de um vídeo do YouTube ou TikTok e clique em **Ler referência**.
+  O roteiro usa título e autor como referência de ritmo e clima, sem baixar nem copiar o vídeo.
 - **Contexto com IA**: em Ajustes, **Gerar contexto com IA** preenche tema, público, tom,
   identidade visual, personagens, regras, referências, chamada e hashtags a partir do nome
   e da descrição. Cada campo tem **Melhorar** para reescrever só ele. No canal novo,
@@ -32,9 +36,11 @@ Cada formato tem nome, plataforma, largura, altura e legenda. O padrão vem com 
 horizontal (1920x1080), YouTube Shorts, Instagram Reels, Instagram Stories e TikTok
 (1080x1920). Você pode mudar as medidas ou criar um formato novo em Ajustes.
 
-Formatos com o mesmo tamanho e a mesma decisão de legenda reaproveitam o mesmo arquivo:
-Reels, Stories e TikTok saem do mesmo 9:16. O horizontal usa fundo desfocado atrás da
-imagem para não cortar o assunto.
+Formatos com a mesma proporção e a mesma decisão de legenda reaproveitam o mesmo arquivo:
+Reels, Stories e TikTok saem do mesmo 9:16. O padrão é **Automático**: uma imagem gerada
+por proporção ativa. Assim o YouTube horizontal recebe imagens 16:9 de verdade, e o
+vertical recebe 9:16, sem cortar o assunto. A opção **Uma só** reaproveita a mesma imagem
+com fundo desfocado, gastando menos placa.
 
 ## Contexto isolado
 
@@ -116,6 +122,7 @@ Todas as rotas abaixo ficam em `/api/canais`.
 | GET/POST | `/api/canais/{id}/contexto` | ler / gravar contexto |
 | POST | `/api/canais/{id}/contexto/ia` | gerar contexto inteiro ou melhorar um campo |
 | POST | `/api/canais/sugerir` | descrição a partir do nome do canal |
+| POST | `/api/inspiracao` | título/autor de um vídeo de referência |
 | POST | `/api/canais/{id}/plano` | briefing -> roteiro |
 | POST | `/api/canais/{id}/produzir` | plano -> produção em segundo plano |
 | GET | `/api/canais/{id}/producoes` | lista de produções |
