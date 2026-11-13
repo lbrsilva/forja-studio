@@ -24,6 +24,58 @@ def _limpar(s, limite=1200):
     return re.sub(r"\s+", " ", str(s or "")).strip()[:limite]
 
 
+_RE_VISUAL_CENA = re.compile(
+    r"\b(standing|sitting|walking|looking|gazing|facing|floating|kneeling|reaching|pointing|"
+    r"holding|lying|background|setting|scene|garden|desert|forest|fire|moon|sky|ground|camera|"
+    r"shot|render|lighting|style|comic book|halftone|dynamic action|flat 2D|ancient)\b", re.I)
+
+
+def _limpar_visual(v):
+    """Mantém só o que descreve a pessoa e a roupa; tira cenário, objeto, animal e estilo."""
+    partes = []
+    for parte in str(v or "").split(","):
+        parte = parte.strip()
+        if not parte:
+            continue
+        if _RE_VISUAL_CENA.search(parte):
+            continue
+        partes.append(parte)
+    limpo = ", ".join(partes)[:800]
+    return limpo or _limpar(v, 800)
+
+
+def _nomes_do_elenco(elenco):
+    nomes = []
+    for parte in re.split(r"[\n;]+", str(elenco or "")):
+        parte = parte.strip()
+        if not parte:
+            continue
+        nome = re.split(r"[:,\-–—(]", parte, 1)[0].strip()
+        nome = re.sub(r"\s+", " ", nome)[:60]
+        if nome and nome.lower() not in {n.lower() for n in nomes}:
+            nomes.append(nome)
+    return nomes
+
+
+def _nome_do_elenco(nome, nomes_elenco, existentes=()):
+    """Casa 'Anjo' com 'Anjo da Guarda' sem criar um personagem duplicado."""
+    n = _sem_acento(nome).lower()
+    if not n:
+        return None
+    for e in nomes_elenco:
+        if _sem_acento(e).lower() == n:
+            return e
+    for e in nomes_elenco:
+        ee = _sem_acento(e).lower()
+        if ee and (n in ee or ee in n):
+            for x in existentes:
+                xx = _sem_acento(x).lower()
+                if xx == ee or xx in ee or ee in xx:
+                    return x
+            return e
+    return None
+
+
 def _json_do_texto(txt):
     txt = str(txt or "").strip()
     txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt, flags=re.I | re.M).strip()
@@ -64,8 +116,9 @@ def _json_do_texto(txt):
 
 def _pedido(canal, contexto, briefing, max_cenas, duracao, personagens_fixos=None,
             personagens_disponiveis=None, inspiracao=None, estilo=None,
-            parte=None, total_partes=None, serie_anterior=None):
+            parte=None, total_partes=None, serie_anterior=None, elenco=None):
     fixos = [p for p in (personagens_fixos or []) if str(p).strip()]
+    elenco = str(elenco or "").strip()
     disponiveis = personagens_disponiveis or contexto.get("personagens") or []
     est = canais.estilo_de(canal, estilo)
     ctx = {
@@ -87,11 +140,34 @@ def _pedido(canal, contexto, briefing, max_cenas, duracao, personagens_fixos=Non
                              "Escreva o nome do personagem em cada cena em que ele aparece."
                              % ", ".join(fixos))
     else:
-        regra_personagens = ("- Você pode usar os personagens que já existem no canal ou criar novos. "
-                             "Escolha os que fizerem sentido e mantenha o MESMO personagem com a MESMA "
-                             "aparência em todas as cenas em que ele aparecer.\n"
-                             "- Use coadjuvantes quando a história pedir mais gente. Não deixe a cena só "
-                             "nos protagonistas, principalmente em novelinha.")
+        if elenco:
+            regra_personagens = ("- Use SOMENTE os personagens do ELENCO OBRIGATÓRIO abaixo. "
+                                 "Não crie outros nomes, parentes, animais ou figurantes.")
+        else:
+            regra_personagens = ("- Você pode usar os personagens que já existem no canal ou criar novos. "
+                                 "Escolha os que fizerem sentido e mantenha o MESMO personagem com a MESMA "
+                                 "aparência em todas as cenas em que ele aparecer.\n"
+                                 "- Use coadjuvantes quando a história pedir mais gente. Não deixe a cena só "
+                                 "nos protagonistas, principalmente em novelinha.")
+    regra_elenco = ("ELENCO OBRIGATÓRIO DESTE VÍDEO (use exatamente estes nomes):\n%s\n" % elenco) if elenco else ""
+    coerencia = """
+COERÊNCIA OBRIGATÓRIA:
+- A história tem começo, desenvolvimento, conflito, virada e consequência. Cada cena deve ser
+  consequência da anterior; não pule etapas nem crie cenas soltas.
+- Use somente os personagens do elenco/contexto. Não invente animais, objetos, móveis, veículos,
+  multidões ou pessoas que não estejam no briefing. Se não estiver no briefing, não existe.
+- Respeite a época e o cenário. Em histórias antigas ou bíblicas, use túnicas, tecidos, peles,
+  sandálias, tendas, deserto, madeira e pedra. Nunca use toalhas, quadros, setas, luz elétrica,
+  roupas modernas ou objetos de outra época.
+- Mantenha o mesmo cenário enquanto a ação continua no mesmo lugar. Troque de lugar só quando a
+  história pedir, e diga isso na descrição visual.
+- A descrição visual de cada cena deve mostrar exatamente o que a fala diz, sem elementos aleatórios.
+- Nada de cenas abstratas, simbólicas ou surreais. Toda imagem deve mostrar uma pessoa, lugar ou
+  ação concreta; nada de correntes quebradas, metáforas visuais ou composições soltas.
+- Cada cena deve ter fala. Não crie cenas de transição sem fala.
+- No campo "personagens", descreva só a pessoa e a roupa: nada de cenário, objetos, animais,
+  móveis ou outras pessoas.
+"""
     ref = ""
     if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
         linhas_ref = ["- %s%s" % (inspiracao.get("titulo") or inspiracao.get("url"),
@@ -125,6 +201,8 @@ CONTEXTO FIXO DO CANAL (tudo aqui manda mais que o briefing):
 
 BRIEFING DESTE VÍDEO:
 %s
+%s
+%s
 %s%s%s%s
 REGRAS DE SAÍDA:
 - Escolha o número de cenas que a duração pedir, não um número fixo. Cada cena deve render
@@ -152,13 +230,14 @@ Responda SÓ com este JSON, sem explicação e sem markdown:
  "personagens":[{"nome":"...","papel":"principal","descricao":"...","visual":"..."}],
  "cenas":[{"n":1,"fala":"...","imagem":"english visual description","personagem":"Nome ou vazio"}],
  "legenda":"...","hashtags":["#..."],"cta":"...","observacoes":"..."}
-""" % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, ref, estilo_txt, parte_txt, serie_txt,
+""" % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, regra_elenco, coerencia,
+       ref, estilo_txt, parte_txt, serie_txt,
        max_cenas, duracao, regra_personagens, duracao)
 
 
 def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
                 personagens_fixos=None, personagens_disponiveis=None,
-                estilo_prompt="", estilo_id="auto", parte=0, serie_id=""):
+                estilo_prompt="", estilo_id="auto", parte=0, serie_id="", elenco=None):
     d = bruto if isinstance(bruto, dict) else {}
     max_cenas = max(3, min(24, int(max_cenas or 12)))
     cenas_brutas = d.get("cenas") or d.get("scenes") or d.get("roteiro") or []
@@ -204,7 +283,7 @@ def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
         personagens.append({"nome": nome,
                             "papel": papel,
                             "descricao": _limpar(p.get("descricao") or p.get("description") or base.get("descricao"), 800),
-                            "visual": _limpar(p.get("visual") or p.get("aparência") or p.get("appearance") or base.get("visual"), 800)})
+                            "visual": _limpar_visual(p.get("visual") or p.get("aparência") or p.get("appearance") or base.get("visual"))})
     if not personagens:
         personagens = [dict(p) for p in (contexto.get("personagens") or [])]
 
@@ -218,12 +297,19 @@ def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
             escolhidos.append({"nome": base.get("nome") or nome,
                                "papel": base.get("papel") or "principal",
                                "descricao": _limpar(base.get("descricao"), 800),
-                               "visual": _limpar(base.get("visual"), 800)})
+                               "visual": _limpar_visual(base.get("visual"))})
         personagens = escolhidos
         nomes = {p["nome"].lower() for p in personagens}
         for c in cenas:
             if c.get("personagem") and c["personagem"].lower() not in nomes:
                 c["personagem"] = ""
+
+    nomes_elenco = _nomes_do_elenco(elenco)
+    if nomes_elenco:
+        atuais = {p["nome"].lower() for p in personagens}
+        for nome in nomes_elenco:
+            if nome.lower() not in atuais:
+                personagens.append({"nome": nome, "papel": "principal", "descricao": "", "visual": ""})
 
     hashtags = []
     for h in (d.get("hashtags") or []):
@@ -294,8 +380,10 @@ def _cenas_do_briefing(contexto, briefing, duracao, max_cenas=24):
 
 async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, duracao=45,
                       personagens_fixos=None, personagens_disponiveis=None, inspiracao=None,
-                      estilo=None, parte=0, total_partes=None, serie_anterior=None, serie_id=""):
+                      estilo=None, parte=0, total_partes=None, serie_anterior=None, serie_id="",
+                      elenco=None):
     briefing = _limpar(briefing, 12000)
+    elenco = re.sub(r"[ \t]+", " ", str(elenco or "")).strip()[:2000]
     if not briefing:
         raise ValueError("Escreva o que você quer postar.")
     duracao = max(15, min(180, int(duracao or 45)))
@@ -309,7 +397,7 @@ async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, dura
     try:
         res = await pedir_texto("canal_roteiro", _pedido(canal, contexto, briefing, max_cenas, duracao,
                                                    personagens_fixos, personagens_disponiveis, inspiracao,
-                                                   est.get("id"), parte, total_partes, serie_anterior))
+                                                   est.get("id"), parte, total_partes, serie_anterior, elenco))
         txt = (res or {}).get("texto") if isinstance(res, dict) else str(res or "")
         bruto = _json_do_texto(txt)
         if bruto is None:
@@ -319,7 +407,7 @@ async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, dura
     plano = _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
                         personagens_fixos, personagens_disponiveis,
                         estilo_prompt=est.get("prompt") or "", estilo_id=est.get("id") or "auto",
-                        parte=parte, serie_id=serie_id)
+                        parte=parte, serie_id=serie_id, elenco=elenco)
     if parte and ("parte %d" % int(parte)).lower() not in str(plano.get("titulo") or "").lower():
         plano["titulo"] = "%s · Parte %d" % (plano.get("titulo") or "Vídeo", int(parte))
     if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
@@ -538,15 +626,23 @@ def _contexto_em_linhas(txt):
 
 
 async def gerar_personagens(pedir_texto, canal, contexto, existentes=None, briefing="",
-                            inspiracao=None, estilo=None, plano=None):
+                            inspiracao=None, estilo=None, plano=None, elenco=None):
+    elenco = re.sub(r"[ \t]+", " ", str(elenco or "")).strip()[:2000]
+    nomes_elenco = _nomes_do_elenco(elenco)
+    permitidos = {n.lower() for n in nomes_elenco}
     nomes = [str((p or {}).get("nome") or "").strip() for p in (existentes or []) if isinstance(p, dict)]
     nomes = [n for n in nomes if n]
     do_plano = [str((p or {}).get("nome") or "").strip() for p in ((plano or {}).get("personagens") or [])
                 if isinstance(p, dict)]
     nomes = list(dict.fromkeys([n for n in nomes + do_plano if n]))
+    nomes_evitar = [n for n in nomes if n.lower() not in permitidos]
     est = canais.estilo_de(canal, estilo)
     insp = inspiracao if isinstance(inspiracao, dict) else {}
     ref_visual = str(insp.get("visual") or "").strip()
+    elenco_txt = ("\nELENCO OBRIGATÓRIO DESTE VÍDEO (use exatamente estes nomes):\n%s\n" % elenco) if elenco else ""
+    coadjuvante_txt = ("" if elenco else
+                       "Inclua pelo menos um coadjuvante quando o canal contar histórias ou novelinha, "
+                       "para a cena não ficar só nos protagonistas.\n")
     pedido = """Você cria personagens para um canal de vídeos curtos.
 
 Canal: %s
@@ -557,35 +653,37 @@ Identidade visual: %s
 Estilo do vídeo: %s
 Referência visual analisada: %s
 Briefing DESTE vídeo (manda mais que o resto): %s
+%s
 Personagens que já existem (NÃO repita estes nomes): %s
 
-Crie de 1 a 3 personagens NOVOS que sirvam EXATAMENTE a este vídeo.
+Crie de 1 a 3 personagens que sirvam EXATAMENTE a este vídeo.
+Se houver ELENCO OBRIGATÓRIO, use SOMENTE os nomes dele e crie/complete a descrição de cada um.
+Não invente parentes, animais, figurantes, objetos, cenários ou pessoas fora do elenco/briefing.
 Se o briefing citar nomes, personagens, história ou episódio, use esses nomes e esse universo;
-não troque por personagens de outra história. Se o briefing não citar ninguém, crie gente que
-caiba no tema e no briefing, mantendo o mesmo universo.
-Inclua pelo menos um coadjuvante quando o canal contar histórias ou novelinha, para a
-cena não ficar só nos protagonistas.
-Cada um precisa de:
+não troque por personagens de outra história.
+%sCada um precisa de:
 - nome curto;
 - papel: principal, coadjuvante ou figurante;
 - descrição de quem é e como fala;
-- aparência visual EM INGLÊS, concreta o suficiente para repetir nas imagens: rosto, cabelo,
-  corpo, roupa, expressão e época. Descreva SÓ o personagem; não repita o estilo do vídeo
-  (traço, render, luz, paleta) porque o estúdio aplica esse estilo separadamente.
+- aparência visual EM INGLÊS, só a pessoa e a roupa: rosto, cabelo, corpo, roupa, expressão e época.
+  Sem cenário, sem objetos, sem animais, sem móveis, sem outras pessoas. A roupa precisa combinar
+  com a época e a história; nunca use toalhas, quadros, setas, roupas modernas ou objetos de outra época.
+  Não repita o estilo do vídeo (traço, render, luz, paleta); o estúdio aplica o estilo separadamente.
 Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdown:
 [{"nome":"...","papel":"coadjuvante","descricao":"...","visual":"english appearance"}]
 """ % (canal.get("nome") or "canal", contexto.get("tema") or "", contexto.get("publico") or "",
        contexto.get("tom") or "", contexto.get("identidade_visual") or "",
        (est.get("nome") or "automático") + ((" — " + est["prompt"]) if est.get("prompt") else ""),
        ref_visual or "(nenhuma)", (briefing or "").strip()[:1200] or "(não informado)",
-       ", ".join(nomes) or "(nenhum)")
+       elenco_txt, ", ".join(nomes_evitar) or "(nenhum)", coadjuvante_txt)
     res = await pedir_texto("canal_personagens", pedido)
     bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
     if isinstance(bruto, dict):
         bruto = bruto.get("personagens") or []
     if not isinstance(bruto, list):
         raise ValueError("A IA não devolveu personagens. Tente de novo.")
-    vistos = {n.lower() for n in nomes}
+    vistos = {n.lower() for n in nomes_evitar}
+    limite = max(3, min(10, len(nomes_elenco))) if nomes_elenco else 3
     saida = []
     for p in bruto:
         if isinstance(p, str):
@@ -593,7 +691,13 @@ Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdow
         if not isinstance(p, dict):
             continue
         nome = _limpar(p.get("nome") or p.get("name"), 60)
-        if not nome or nome.lower() in vistos:
+        if not nome:
+            continue
+        if nomes_elenco:
+            nome = _nome_do_elenco(nome, nomes_elenco, nomes)
+            if not nome:
+                continue
+        if nome.lower() in vistos:
             continue
         vistos.add(nome.lower())
         papel = _limpar(p.get("papel") or p.get("role") or "principal", 20).lower()
@@ -601,8 +705,8 @@ Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdow
             papel = "principal"
         saida.append({"nome": nome, "papel": papel,
                       "descricao": _limpar(p.get("descricao") or p.get("description"), 800),
-                      "visual": _limpar(p.get("visual") or p.get("appearance"), 800)})
-        if len(saida) >= 3:
+                      "visual": _limpar_visual(p.get("visual") or p.get("appearance"))})
+        if len(saida) >= limite:
             break
     if not saida:
         raise ValueError("A IA não criou personagens novos. Tente de novo.")

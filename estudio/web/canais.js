@@ -178,7 +178,7 @@
     plano: null, briefing: '', producao: null, poll: null, pollLista: null, analise: null, falarDisp: null,
     analiseDias: 30, analiseCarregada: false, vozes: null, presets: null, charts: {}, erros: 0,
     estiloDraft: null, duracaoDraft: null, parteDraft: null, legendasDraft: null, formatosDraft: null,
-    pautaPedido: '', inspiracaoUrl: '',
+    pautaPedido: '', inspiracaoUrl: '', elenco: '',
     personagensNovos: [], agendarAgora: false, abaFixa: false, estilos: [], playbooks: [], pautas: [],
     referencia: null, cortes: [], cortesSugeridos: [], cortesSel: {}, cortesStatus: '',
     cortesBuscando: false, cortesTentado: false, playbookSel: null, inspiracaoEmCurso: null,
@@ -327,7 +327,7 @@
     S.atual = id;
     try { localStorage.setItem('forja_canal_atual', id); } catch (e) { /* sem armazenamento */ }
     S.plano = null; S.producao = null; S.analise = null; S.inspiracao = null;
-    S.briefing = ''; S.pautas = []; S.personagensNovos = []; S.pautaPedido = ''; S.inspiracaoUrl = '';
+    S.briefing = ''; S.pautas = []; S.personagensNovos = []; S.pautaPedido = ''; S.inspiracaoUrl = ''; S.elenco = '';
     S.estiloDraft = null; S.duracaoDraft = null; S.parteDraft = null; S.legendasDraft = null; S.formatosDraft = null;
     S.referencia = null; S.cortes = []; S.cortesSugeridos = []; S.cortesSel = {}; S.cortesStatus = '';
     S.cortesBuscando = false; S.cortesTentado = false; S.playbookSel = null; S.inspiracaoEmCurso = null; S.falarDisp = null;
@@ -525,6 +525,9 @@
         <p class="fraco">Escreva o que você quer postar. A IA local monta o roteiro completo com falas, cenas e personagens. O número de cenas é calculado pela duração e pelo roteiro.</p>
         <div class="cx-form">
           <label><span>Briefing</span><textarea id="cxBriefing" rows="5" placeholder="Ex.: conta a história de Adão e Eva em 45 segundos, com gancho nos 3 primeiros segundos, sem citar violência explícita.">${esc(S.briefing || '')}</textarea></label>
+          <label><span>Personagens do vídeo (opcional)</span>
+            <textarea id="cxElenco" rows="3" placeholder="Ex.: Adão, homem, túnica simples de tecido marrom, cabelo curto; Eva, mulher, vestido longo verde, cabelo preto longo; Anjo, asas brancas, túnica clara.">${esc(S.elenco || '')}</textarea>
+            <span class="cx-dica">Liste quem aparece, com roupa e papel. Se listar, a IA usa exatamente esses personagens e não cria outros.</span></label>
           <div class="cx-briefing-grade">
             <div class="cx-campo"><label for="cxDuracao">Duração mínima (s)</label>
               <select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], duracao)}</select>
@@ -1456,6 +1459,8 @@
     const briefing = (($('#cxBriefing') || {}).value || '').trim();
     if (!briefing) { mostrar('Escreva o briefing antes de gerar o roteiro.', 'erro'); return; }
     S.briefing = briefing;
+    const elenco = (($('#cxElenco') || {}).value || S.elenco || '').trim();
+    S.elenco = elenco;
     const estilo = estiloEscolhido();
     const bt = $('[data-acao="gerar-plano"]');
     if (bt) { bt.disabled = true; bt.textContent = 'Lendo o briefing…'; }
@@ -1465,6 +1470,7 @@
       carregando('Escrevendo o roteiro…');
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/plano', {
         briefing,
+        elenco,
         duracao: Number(($('#cxDuracao') || {}).value) || undefined,
         estilo,
         parte: Number(($('#cxParte') || {}).value) || 0,
@@ -1481,7 +1487,7 @@
       mostrar('Não consegui montar o roteiro: ' + e.message, 'erro');
     } finally {
       pararCarregando();
-      if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('brilho') + 'Só o roteiro'; }
+      if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('brilho') + 'Gerar roteiro para revisar'; }
     }
   }
 
@@ -1500,7 +1506,7 @@
       const inspiracao = await garantirInspiracao();
       carregando('Preparando a produção…');
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir',
-        { plano, briefing: S.briefing, formatos, inspiracao,
+        { plano, briefing: S.briefing, elenco: S.elenco, formatos, inspiracao,
           estilo,
           legendas: $('#cxLegendas') ? $('#cxLegendas').checked : undefined,
           parte: Number(($('#cxParte') || {}).value) || 0 });
@@ -1851,28 +1857,33 @@
       return;
     }
     S.briefing = briefing;
+    const elenco = (($('#cxElenco') || {}).value || S.elenco || '').trim();
+    S.elenco = elenco;
     if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
     const estilo = estiloEscolhido();
     const bt = $('[data-acao="gerar-personagens"]');
     if (bt) bt.disabled = true;
-    carregando('Lendo o briefing, o estilo e a referência…');
+    carregando('Lendo o briefing, o elenco, o estilo e a referência…');
     try {
       const inspiracao = await garantirInspiracao();
       carregando('Criando personagens para este vídeo…');
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/gerar', {
-        briefing, estilo, inspiracao, plano: S.plano,
+        briefing, elenco, estilo, inspiracao, plano: S.plano,
       });
       const novos = r.novos || [];
       S.personagensNovos = novos.map((p) => p.nome);
       if (S.plano && novos.length) {
-        const existentes = new Set((S.plano.personagens || []).map((p) => String((p || {}).nome || '').toLowerCase()));
-        S.plano.personagens = [...(S.plano.personagens || []),
-          ...novos.filter((p) => !existentes.has(String(p.nome || '').toLowerCase()))];
+        const mapa = new Map((S.plano.personagens || []).map((p) => [String((p || {}).nome || '').toLowerCase(), p]));
+        novos.forEach((p) => {
+          const k = String((p || {}).nome || '').toLowerCase();
+          if (k) mapa.set(k, { ...(mapa.get(k) || {}), ...p });
+        });
+        S.plano.personagens = [...mapa.values()];
       }
       lembrarEstilo(estilo);
       await carregarCanal(false);
       render();
-      mostrar(novos.length + ' personagem(ns) criado(s) para este vídeo e salvo(s) no canal.', 'ok');
+      mostrar(novos.length + ' personagem(ns) criado(s)/atualizado(s) para este vídeo e salvo(s) no canal.', 'ok');
     } catch (e) {
       mostrar('Não consegui criar personagens: ' + e.message, 'erro');
     } finally { pararCarregando(); if (bt) bt.disabled = false; }
@@ -2199,6 +2210,7 @@
       const t = ev.target;
       if (!t || !t.id) return;
       if (t.id === 'cxBriefing') S.briefing = t.value;
+      else if (t.id === 'cxElenco') S.elenco = t.value;
       else if (t.id === 'cxPautaPedido') S.pautaPedido = t.value;
       else if (t.id === 'cxInspiracaoUrl') {
         S.inspiracaoUrl = t.value.trim();
@@ -2272,7 +2284,7 @@
     if (acao === 'novo-canal') { abrirNovoCanal(); return; }
     if (acao === 'ir-produzir') { S.aba = 'produzir'; render(); return; }
     if (acao === 'nova-producao') {
-      S.producao = null; S.plano = null; S.briefing = ''; S.personagensNovos = [];
+      S.producao = null; S.plano = null; S.briefing = ''; S.elenco = ''; S.personagensNovos = [];
       S.parteDraft = null; S.formatosDraft = null; S.legendasDraft = null;
       render(); return;
     }

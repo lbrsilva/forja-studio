@@ -416,8 +416,12 @@
   background: var(--acento-suave); font-size: 10.5px; font-weight: 800; letter-spacing: .02em; }
 .cx-pill-pers { gap: 7px; padding-left: 6px; }
 .cx-pill-pers .cx-avatar { width: 24px; height: 24px; }
-.cx-personagens-uso .cx-pill-pers { padding: 6px 10px 6px 6px; gap: 8px; align-items: center; }
-.cx-personagens-uso .cx-pill-pers .cx-avatar { width: 56px; height: 56px; border-radius: 14px; }
+.cx-personagens-uso .cx-pill-pers { padding: 6px 10px 6px 6px; gap: 9px; align-items: center; }
+.cx-personagens-uso .cx-pill-pers .cx-pill-foto { border-radius: 12px; overflow: hidden; flex: none; }
+.cx-personagens-uso .cx-pill-pers .cx-avatar { width: 56px; height: 56px; border-radius: 12px;
+  border: 2px solid var(--borda-forte); background: var(--fundo-2); }
+.cx-personagens-uso .cx-pill-pers input[type=checkbox]:focus-visible {
+  outline: 2px solid var(--borda-forte); outline-offset: 2px; }
 .cx-pill-foto { display: inline-flex; }
 .cx-ampliavel { cursor: zoom-in; }
 .cx-pill-nome { font-size: 14px; }

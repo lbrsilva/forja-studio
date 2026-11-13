@@ -5400,21 +5400,26 @@ async def api_canal_retrato(req):
         arq = existentes[nome]
         return web.json_response({"nome": nome, "arquivo": arq,
                                   "url": "/api/canais/%s/personagens/retrato/%s" % (cid, arq)})
-    visual = str(b.get("visual") or "").strip()
-    desc = str(b.get("descricao") or "").strip()
+    visual = roteirista._limpar_visual(str(b.get("visual") or "").strip())
     est = canais.estilo_de(canal, b.get("estilo"))
     ctx = canais.contexto(cid)
     insp = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else {}
     insp_visual = str(insp.get("visual") or "").strip()
     identidade = str(ctx.get("identidade_visual") or "").strip()
     partes = [
-        "character reference portrait of %s" % nome,
+        "isolated character reference portrait, waist-up, only the person and their clothing",
+        nome,
         visual,
-        desc,
         identidade,
-        ("reference look: " + insp_visual) if insp_visual else "",
+        ("style reference only, apply the palette and line style, not the scene: " + insp_visual) if insp_visual else "",
         est.get("prompt") or "",
-        "head and shoulders, clear face, even lighting, plain background, no text, no watermark",
+        "plain solid light neutral background, no props, no objects, no animals, no furniture, "
+        "no other people, no scene, no text, no watermark",
+        "clothing must match the character description and the historical setting; keep the colors "
+        "and garments described in the character visual; prefer leather, wool or woven fabric; "
+        "if the character wears a loincloth, make it primitive brown animal hide or rough woven "
+        "fabric tied at the waist, never a towel, sheet or bathrobe; no framed pictures, "
+        "arrows or electric lights",
     ]
     prompt = ", ".join(p for p in partes if p).strip(", ")
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", sem_acento(nome).lower()).strip("-")[:60] or "personagem"
@@ -5806,19 +5811,23 @@ async def api_canal_personagens_gerar(req):
         b = {}
     inspiracao = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else None
     plano = b.get("plano") if isinstance(b.get("plano"), dict) else None
+    elenco = (b.get("elenco") or "").strip()
     try:
         novos = await roteirista.gerar_personagens(
             _pedir_texto, canal, ctx, canais.personagens_disponiveis(cid),
             briefing=(b.get("briefing") or "").strip(), inspiracao=inspiracao,
-            estilo=b.get("estilo"), plano=plano)
+            estilo=b.get("estilo"), plano=plano, elenco=elenco)
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
         raise web.HTTPBadGateway(text="A IA não conseguiu criar personagens: " + str(e)[:300])
-    nomes = {str(p.get("nome") or "").strip().lower() for p in atuais}
-    adicionar = [p for p in novos if p["nome"].lower() not in nomes]
-    contexto = canais.gravar_contexto(cid, {"personagens": atuais + adicionar})
-    return web.json_response({"novos": adicionar, "personagens": canais.personagens_disponiveis(cid),
+    mapa = {str(p.get("nome") or "").strip().lower(): dict(p) for p in atuais if isinstance(p, dict)}
+    for p in novos:
+        chave = str(p.get("nome") or "").strip().lower()
+        if chave:
+            mapa[chave] = {**mapa.get(chave, {}), **p}
+    contexto = canais.gravar_contexto(cid, {"personagens": list(mapa.values())})
+    return web.json_response({"novos": novos, "personagens": canais.personagens_disponiveis(cid),
                               "contexto": contexto})
 
 
@@ -6010,13 +6019,14 @@ async def api_canal_plano(req):
     prod = canal.get("producao") or {}
     fixos, disponiveis = _personagens_da_requisicao(b, cid)
     inspiracao = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else None
+    elenco = (b.get("elenco") or "").strip()
     try:
         plano = await roteirista.gerar_plano(
             _pedir_texto, canal, ctx, briefing,
             int(b.get("quantas") or 0),
             int(b.get("duracao") or prod.get("duracao_alvo") or 45),
             personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao,
-            estilo=b.get("estilo"), parte=int(b.get("parte") or 0))
+            estilo=b.get("estilo"), parte=int(b.get("parte") or 0), elenco=elenco)
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
@@ -6200,6 +6210,7 @@ async def api_canal_produzir(req):
     briefing = (b.get("briefing") or "").strip()
     inspiracao = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else None
     fixos, disponiveis = _personagens_da_requisicao(b, cid)
+    elenco = (b.get("elenco") or "").strip()
     if not isinstance(plano, dict) or not (plano.get("cenas") or []):
         if not briefing:
             raise web.HTTPBadRequest(text="Escreva o briefing ou mande um plano com cenas.")
@@ -6209,7 +6220,7 @@ async def api_canal_produzir(req):
                 int(b.get("quantas") or 0),
                 int(b.get("duracao") or (canal.get("producao") or {}).get("duracao_alvo") or 45),
                 personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao,
-                estilo=b.get("estilo"), parte=int(b.get("parte") or 0))
+                estilo=b.get("estilo"), parte=int(b.get("parte") or 0), elenco=elenco)
         except Exception as e:
             raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
     elif inspiracao and not plano.get("inspiracao"):
