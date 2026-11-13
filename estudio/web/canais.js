@@ -493,11 +493,11 @@
     return `
       <div class="cx-card cx-inspiracao">
         <div class="cx-card-cab"><div><h2>Vídeo de inspiração <span class="cx-selo">opcional</span></h2>
-          <p class="fraco">Se quiser, cole uma referência. A IA analisa o ritmo e o visual dela e usa nos personagens, retratos e cenas. Você pode gerar normalmente sem referência.</p></div></div>
+          <p class="fraco">Se quiser, cole uma referência de qualquer plataforma: YouTube, TikTok, Instagram, Facebook, X e outras que o yt-dlp aceita. A IA analisa o ritmo e o visual dela e usa nos personagens, retratos e cenas. Você pode gerar normalmente sem referência.</p></div></div>
         <div class="cx-form">
           <div class="cx-insp-linha">
             <input id="cxInspiracaoUrl" type="url" value="${esc(insp.url || S.inspiracaoUrl || '')}"
-              placeholder="Cole a URL do YouTube ou TikTok (opcional)">
+              placeholder="Cole a URL do YouTube, TikTok, Instagram, Facebook... (opcional)">
             <button type="button" class="bt-sec" data-acao="ler-inspiracao">${ic('brilho')}Analisar referência</button>
           </div>
           <p class="nota" id="cxInspiracaoStatus">${insp.titulo
