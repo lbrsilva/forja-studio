@@ -5831,6 +5831,29 @@ async def api_canal_personagens_gerar(req):
                               "contexto": contexto})
 
 
+async def api_canal_personagem_remover(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    try:
+        b = await req.json()
+    except ValueError:
+        b = {}
+    if not isinstance(b, dict):
+        b = {}
+    nome = str(b.get("nome") or "").strip()
+    if not nome:
+        raise web.HTTPBadRequest(text="Diga qual personagem remover.")
+    ctx = canais.contexto(cid)
+    atuais = ctx.get("personagens") or []
+    restantes = [p for p in atuais
+                 if str((p or {}).get("nome") or "").strip().lower() != nome.lower()]
+    if len(restantes) == len(atuais):
+        raise web.HTTPNotFound(text="Esse personagem não está salvo no canal.")
+    contexto = canais.gravar_contexto(cid, {"personagens": restantes})
+    retratos = canais.remover_retrato(cid, nome)
+    return web.json_response({"contexto": contexto, "retratos": retratos})
+
+
 async def api_canal_contexto_ia(req):
     """Gera o contexto inteiro ou melhora um campo já digitado. Não grava: a tela revisa."""
     cid = req.match_info["cid"]
@@ -6695,6 +6718,7 @@ app.add_routes([
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
     web.post("/api/canais/{cid}/contexto/ia", api_canal_contexto_ia),
     web.post("/api/canais/{cid}/personagens/gerar", api_canal_personagens_gerar),
+    web.post("/api/canais/{cid}/personagens/remover", api_canal_personagem_remover),
     web.post("/api/canais/{cid}/pautas", api_canal_pautas),
     web.post("/api/canais/{cid}/video/analisar", api_canal_video_analisar),
     web.post("/api/canais/{cid}/video/refazer", api_canal_video_refazer),

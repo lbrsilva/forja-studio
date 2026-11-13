@@ -38,7 +38,7 @@
     concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
   const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70', facebook: '#6250d6' };
   const Rotulo = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook' };
-  const ABAS = [['visao', 'Visão geral'], ['ajustes', 'Ajustes'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['cortes', 'Cortes'], ['produzir', 'Produzir']];
+  const ABAS = [['visao', 'Visão geral'], ['ajustes', 'Ajustes'], ['personagens', 'Personagens'], ['agenda', 'Agenda'], ['analise', 'Análise'], ['cortes', 'Cortes'], ['produzir', 'Produzir']];
   const HORAS = ['06:00', '08:00', '09:00', '11:00', '12:00', '15:00', '18:00', '19:00', '20:00', '21:00'];
   const CATEGORIAS_YT = [
     ['1', 'Filmes e animação'], ['2', 'Automóveis'], ['10', 'Música'], ['15', 'Animais'],
@@ -386,6 +386,7 @@
     if (!S.dados) { el.innerHTML = '<p class="fraco">Carregando o canal…</p>'; return; }
     if (S.aba === 'visao') el.innerHTML = telaVisao();
     else if (S.aba === 'produzir') el.innerHTML = telaProduzir();
+    else if (S.aba === 'personagens') el.innerHTML = telaPersonagens();
     else if (S.aba === 'agenda') el.innerHTML = telaAgenda();
     else if (S.aba === 'analise') el.innerHTML = telaAnalise();
     else if (S.aba === 'cortes') el.innerHTML = telaCortes();
@@ -562,6 +563,7 @@
             <div class="cx-acoes" style="justify-content:flex-start">
               <button type="button" class="bt-sec mini" data-acao="gerar-personagens">${ic('brilho')}Gerar personagens com IA</button>
               <button type="button" class="bt-sec mini" data-acao="gerar-retratos">${ic('imagem')}Gerar retratos</button>
+              <button type="button" class="bt-sec mini" data-acao="ir-personagens">${ic('apresentador')}Gerenciar personagens</button>
               <span class="cx-dica">Usa o briefing, o estilo e o visual da referência para não criar gente fora da história.</span>
             </div>
           </div>
@@ -576,6 +578,56 @@
       <div class="cx-card"><div class="cx-row" style="margin-bottom:10px"><h2 style="margin:0">Últimos vídeos</h2>
         <button type="button" class="bt-sec mini cx-right" data-acao="nova-producao">${ic('mais')}Nova produção</button></div>
         <div id="cxListaProducoes">${listaProducoes()}</div></div>`;
+  }
+
+  function telaPersonagens() {
+    const d = S.dados;
+    const disponiveis = d.personagens_disponiveis || [];
+    const salvos = (d.contexto && d.contexto.personagens) || [];
+    const chaves = new Set(salvos.map((p) => String((p || {}).nome || '').toLowerCase()));
+    if (!disponiveis.length) {
+      return `<div class="cx-card">
+        <div class="cx-card-cab"><div><h2>Personagens</h2>
+          <p class="fraco">Quem fica salvo no canal pode ser usado nos próximos vídeos.</p></div>
+          <button type="button" class="bt-sec" data-acao="ir-produzir">${ic('play')}Produzir vídeo</button></div>
+        <div class="cx-vazio"><b>Nenhum personagem ainda</b>
+          Gere um roteiro na aba Produzir ou crie os personagens com IA.</div>
+      </div>`;
+    }
+    return `<div class="cx-card">
+      <div class="cx-card-cab"><div><h2>Personagens</h2>
+        <p class="fraco">Remover um personagem tira a foto e os dados do canal. Vídeos já feitos não mudam.</p></div>
+        <button type="button" class="bt-sec" data-acao="ir-produzir">${ic('play')}Produzir vídeo</button></div>
+      <div class="cx-pers-grade">${disponiveis.map((p) => {
+        const item = p || {};
+        const nome = String(item.nome || '');
+        const salvo = chaves.has(nome.toLowerCase());
+        const u = avatarUrl(nome);
+        return `<div class="cx-pers-card">
+          <div class="cx-pers-card-foto">${u
+            ? `<img src="${u}" alt="${esc(nome)}" class="cx-ampliavel" data-ampliar="${esc(u)}"
+                 title="Ver a foto de ${esc(nome)}">`
+            : avatarHtml(nome)}</div>
+          <div class="cx-pers-card-corpo">
+            <div class="cx-row"><b>${esc(nome)}</b>
+              <span class="cx-selo">${esc(item.papel || 'principal')}</span>
+              ${salvo ? '<span class="cx-selo ok">no canal</span>'
+                : `<span class="cx-selo">${esc(item.origem || 'de produção')}</span>`}</div>
+            ${item.descricao ? `<p class="nota">${esc(item.descricao)}</p>` : ''}
+            ${item.visual ? `<p class="fraco cx-pers-visual-linha">${esc(item.visual)}</p>` : ''}
+            <div class="cx-acoes" style="justify-content:flex-start">
+              <button type="button" class="bt-sec mini" data-acao="gerar-retrato-persona" data-nome="${esc(nome)}">
+                ${ic('imagem')}${u ? 'Refazer foto' : 'Gerar foto'}</button>
+              ${salvo
+                ? `<button type="button" class="bt-perigo mini" data-acao="remover-personagem" data-nome="${esc(nome)}">
+                     ${ic('lixo')}Remover do canal</button>`
+                : `<button type="button" class="bt-sec mini" data-acao="salvar-persona" data-nome="${esc(nome)}">
+                     ${ic('mais')}Salvar no canal</button>`}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
   }
 
   function editorPlano() {
@@ -635,7 +687,13 @@
   }
 
   function avatarUrl(nome) {
-    const arq = ((S.dados && S.dados.retratos) || {})[nome];
+    const retratos = (S.dados && S.dados.retratos) || {};
+    let arq = retratos[nome];
+    if (!arq) {
+      const chave = Object.keys(retratos)
+        .find((n) => n.toLowerCase() === String(nome || '').toLowerCase());
+      if (chave) arq = retratos[chave];
+    }
     return arq ? '/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato/' + encodeURIComponent(arq) : '';
   }
 
@@ -1855,9 +1913,12 @@
   async function gerarRetratoPersona(nome) {
     if (!String(nome || '').trim()) { mostrar('Dê um nome ao personagem antes de gerar a foto.', 'erro'); return; }
     if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
+    const chave = String(nome).toLowerCase();
     const p = ((S.plano && S.plano.personagens) || [])
-      .find((x) => String((x || {}).nome || '').toLowerCase() === String(nome).toLowerCase());
-    if (!p) { mostrar('Personagem não encontrado no roteiro.', 'erro'); return; }
+      .find((x) => String((x || {}).nome || '').toLowerCase() === chave)
+      || ((S.dados && S.dados.personagens_disponiveis) || [])
+        .find((x) => String((x || {}).nome || '').toLowerCase() === chave);
+    if (!p) { mostrar('Personagem não encontrado no canal.', 'erro'); return; }
     const estilo = estiloEscolhido();
     carregando('Analisando a referência e gerando a foto de ' + nome + '…');
     try {
@@ -1872,6 +1933,27 @@
       mostrar('Foto de ' + nome + ' refeita.', 'ok');
     } catch (e) {
       mostrar('Não consegui gerar a foto: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
+  async function removerPersonagem(nome) {
+    if (!String(nome || '').trim()) return;
+    if (!confirm('Remover ' + nome + ' do canal? A foto e os dados saem do canal. Vídeos já feitos não mudam.')) return;
+    carregando('Removendo ' + nome + ' do canal…');
+    try {
+      await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/remover', { nome });
+      if (S.plano) {
+        S.plano.personagens = (S.plano.personagens || [])
+          .filter((p) => String((p || {}).nome || '').toLowerCase() !== nome.toLowerCase());
+        (S.plano.cenas || []).forEach((c) => {
+          if (String(c.personagem || '').toLowerCase() === nome.toLowerCase()) c.personagem = '';
+        });
+      }
+      await carregarCanal(false);
+      render();
+      mostrar(nome + ' removido do canal.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui remover: ' + e.message, 'erro');
     } finally { pararCarregando(); }
   }
 
@@ -2322,6 +2404,8 @@
     if (acao === 'gerar-personagens') { await gerarPersonagens(); return; }
     if (acao === 'gerar-retratos') { await gerarRetratos(); return; }
     if (acao === 'gerar-retrato-persona') { await gerarRetratoPersona(b.dataset.nome); return; }
+    if (acao === 'remover-personagem') { await removerPersonagem(b.dataset.nome); return; }
+    if (acao === 'ir-personagens') { S.aba = 'personagens'; render(); return; }
     if (acao === 'salvar-personagens') { await salvarPersonagensNoCanal(); return; }
     if (acao === 'salvar-persona' || acao === 'toggle-persona-canal') {
       const bloco = b.closest('.cx-persona-bloco');

@@ -422,6 +422,20 @@
   border: 2px solid var(--borda-forte); background: var(--fundo-2); }
 .cx-personagens-uso .cx-pill-pers input[type=checkbox]:focus-visible {
   outline: 2px solid var(--borda-forte); outline-offset: 2px; }
+
+.cx-pers-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.cx-pers-card { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 12px;
+  border: 1px solid var(--borda); border-radius: var(--raio); background: var(--fundo-2); align-items: start; }
+.cx-pers-card-foto { width: 84px; height: 84px; border-radius: 14px; overflow: hidden;
+  border: 2px solid var(--borda-forte); background: var(--fundo); display: grid; place-items: center; }
+.cx-pers-card-foto img, .cx-pers-card-foto .cx-avatar { width: 100%; height: 100%; border-radius: 12px;
+  object-fit: cover; display: block; }
+.cx-pers-card-corpo { min-width: 0; display: grid; gap: 6px; }
+.cx-pers-visual-linha { overflow-wrap: anywhere; }
+.cx-pers-card .cx-acoes { gap: 6px; }
+@media (max-width: 700px) {
+  .cx-pers-grade { grid-template-columns: 1fr; }
+}
 .cx-pill-foto { display: inline-flex; }
 .cx-ampliavel { cursor: zoom-in; }
 .cx-pill-nome { font-size: 14px; }

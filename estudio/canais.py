@@ -334,6 +334,24 @@ def salvar_retrato(cid, nome, arquivo):
     return d
 
 
+def remover_retrato(cid, nome):
+    """Tira o retrato do personagem e apaga o arquivo se nenhum outro nome usa ele."""
+    pasta = pasta_retratos(cid)
+    d = retratos(cid)
+    chave = next((k for k in d if k.lower() == str(nome or "").lower()), None)
+    if not chave:
+        return d
+    arquivo = d.pop(chave)
+    restantes = {Path(x).name for x in d.values()}
+    if Path(arquivo).name not in restantes:
+        try:
+            (pasta / Path(arquivo).name).unlink()
+        except OSError:
+            pass
+    _gravar(pasta / "retratos.json", d)
+    return d
+
+
 def _canais_brutos():
     d = _ler(ARQ_CANAIS, [])
     return d if isinstance(d, list) else []
