@@ -306,6 +306,27 @@ def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
 
     nomes_elenco = _nomes_do_elenco(elenco)
     if nomes_elenco:
+        existentes_nomes = [p.get("nome") for p in disponiveis.values()
+                            if isinstance(p, dict) and p.get("nome")]
+        mapa_nomes = {}
+        for p in personagens:
+            canonico = _nome_do_elenco(p["nome"], nomes_elenco, existentes_nomes)
+            if canonico:
+                mapa_nomes[p["nome"].lower()] = canonico
+                p["nome"] = canonico
+        vistos = set()
+        unicos = []
+        for p in personagens:
+            chave = p["nome"].lower()
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            unicos.append(p)
+        personagens = unicos
+        for c in cenas:
+            atual = str(c.get("personagem") or "")
+            if atual and atual.lower() in mapa_nomes:
+                c["personagem"] = mapa_nomes[atual.lower()]
         atuais = {p["nome"].lower() for p in personagens}
         for nome in nomes_elenco:
             if nome.lower() not in atuais:
