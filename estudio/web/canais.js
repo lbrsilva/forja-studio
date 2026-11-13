@@ -67,7 +67,7 @@
     return (S.estilos && S.estilos.length) ? S.estilos : [
       { id: 'auto', nome: 'Automático' }, { id: 'papel', nome: 'Papel' }, { id: 'lapis', nome: 'Lápis' },
       { id: 'pixel', nome: 'Pixel' }, { id: 'pincel', nome: 'Pincel' }, { id: 'palavra', nome: 'Palavra animada' },
-      { id: '3d', nome: '3D' }, { id: 'e_se', nome: 'E se...' }, { id: 'novelinha', nome: 'Novelinha' },
+      { id: '3d', nome: '3D' }, { id: 'explicador', nome: 'Explicador 2D' }, { id: 'novelinha', nome: 'Novelinha' },
     ];
   }
 

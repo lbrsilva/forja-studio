@@ -140,8 +140,8 @@ ESTILOS = [    {"id": "auto", "nome": "Automático", "instrucao": "", "prompt": 
      "prompt": "kinetic typography, bold animated words, clean background, graphic design, strong contrast"},
     {"id": "3d", "nome": "3D", "instrucao": "3D estilizado",
      "prompt": "3D render, cinematic lighting, stylized characters, depth of field, polished materials"},
-    {"id": "e_se", "nome": "E se...", "instrucao": "gancho 'E se...' com clima de documentário",
-     "prompt": "documentary what-if visual, dramatic reenactment, cinematic realism, archival feeling"},
+    {"id": "explicador", "nome": "Explicador 2D", "instrucao": "desenho explicativo 2D, estilo doodle com contorno preto e cores chapadas",
+     "prompt": "simple 2D explainer cartoon, hand-drawn doodle characters with bold black outlines, minimal faces, flat muted colors, plain pastel background, educational diagram with arrows and icons, clean linework, no text, no watermark"},
     {"id": "novelinha", "nome": "Novelinha", "instrucao": "novelinha com ganchos e coadjuvantes",
      "prompt": "telenovela still, dramatic lighting, expressive characters, colorful set, cliffhanger mood"},
     {"id": "anime", "nome": "Anime", "instrucao": "anime",
@@ -178,8 +178,6 @@ ESTILOS = [    {"id": "auto", "nome": "Automático", "instrucao": "", "prompt": 
      "prompt": "epic cinematic scale, dramatic sky, vast landscape, heroic composition"},
     {"id": "documentario", "nome": "Documentário", "instrucao": "documentário",
      "prompt": "documentary photography, natural light, candid framing, realistic texture"},
-    {"id": "adulto", "nome": "Adulto (18+)", "instrucao": "drama adulto, sensual e elegante, sem nudez explícita",
-     "prompt": "mature adult drama, sensual elegant atmosphere, cinematic lighting, adults only, no explicit nudity"},
 ]
 
 
