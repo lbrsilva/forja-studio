@@ -218,7 +218,16 @@ def _base_filtro(larg, alt, quadros, dentro):
             f"s={larg}x{alt}:fps={FPS}[v0]")
 
 
-def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=None):
+def _base_video_filtro(larg, alt, dur):
+    """Encaixa um clipe de boca sincronizada no formato, com fundo desfocado e o último quadro congelado na pausa."""
+    return ("split=2[bg][fg];[bg]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+            "boxblur=36:8[bg2];[fg]scale=%d:%d:force_original_aspect_ratio=decrease[fg2];"
+            "[bg2][fg2]overlay=(W-w)/2:(H-h)/2,fps=%d,tpad=stop_mode=clone:stop_duration=%.3f,"
+            "trim=duration=%.3f,setpts=PTS-STARTPTS,setsar=1[v0]"
+            % (larg, alt, larg, alt, larg, alt, FPS, PAUSA + 0.5, dur))
+
+
+def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=None, falas_video=None):
     pasta = Path(pasta)
     larg = int(formato.get("largura") or 1080)
     alt = int(formato.get("altura") or 1920)
@@ -268,8 +277,14 @@ def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=No
             except Exception:
                 pass
         quadros = int(round(dur * FPS)) + 2
-        entradas = ["-loop", "1", "-framerate", str(FPS), "-i", str(imagens[i - 1])]
-        grafo = _base_filtro(larg, alt, quadros, i % 2 == 1)
+        clipe_fala = (falas_video or {}).get(i)
+        if clipe_fala and Path(clipe_fala).is_file():
+            entradas = ["-i", str(clipe_fala)]
+            grafo = _base_video_filtro(larg, alt, dur)
+            _log({}, "cena %d com boca sincronizada" % i, callbacks)
+        else:
+            entradas = ["-loop", "1", "-framerate", str(FPS), "-i", str(imagens[i - 1])]
+            grafo = _base_filtro(larg, alt, quadros, i % 2 == 1)
         for k, j in enumerate(janelas, 1):
             arq, ini, fim = j[0], j[1], j[2]
             topo = len(j) > 3
@@ -597,6 +612,38 @@ async def produzir(producao, canal, callbacks):
         _etapa(producao, "voz", "ok", len(cenas), len(cenas))
         if falar_cenas:
             duracoes = _garantir_minimo_voz(pasta, duracoes, producao.get("duracao_minima"), callbacks)
+        falas_video = {}
+        if any(c.get("falar") for c in cenas):
+            (pasta / "falas").mkdir(parents=True, exist_ok=True)
+            if not falar_cenas:
+                _log(producao, "narração desligada: as cenas com Falar seguem como imagem", callbacks)
+            else:
+                for i, cena in enumerate(cenas, 1):
+                    if not cena.get("falar"):
+                        continue
+                    nome = str(cena.get("personagem") or "").strip()
+                    retrato = _retrato_do_personagem(cid, nome) if nome else None
+                    if not retrato:
+                        _log(producao, "cena %d marcada como Falar, mas sem personagem/retrato; segue com a imagem" % i,
+                             callbacks)
+                        continue
+                    destino_fala = pasta / "falas" / ("cena_%02d.mp4" % i)
+                    if destino_fala.is_file() and destino_fala.stat().st_size > 1000:
+                        falas_video[i] = destino_fala
+                        continue
+                    if not callbacks.get("falar_video"):
+                        _log(producao, "motor de boca sincronizada indisponível; segue com a imagem", callbacks)
+                        continue
+                    try:
+                        voz_cena = pasta / "voz" / ("voz_%02d.wav" % i)
+                        if not voz_cena.is_file():
+                            raise RuntimeError("áudio da cena não encontrado")
+                        _log(producao, "boca sincronizada %d/%d (%s)" % (i, len(cenas), nome), callbacks)
+                        await callbacks["falar_video"](retrato, voz_cena, destino_fala, "1:1")
+                        if destino_fala.is_file():
+                            falas_video[i] = destino_fala
+                    except Exception as exc:
+                        _log(producao, "boca sincronizada da cena %d falhou: %s" % (i, exc), callbacks)
         producao["estado"] = "imagens"
 
         escolhidos = [f for f in canais.formatos_ativos(canal) if f["id"] in (producao.get("formatos") or [])]
@@ -668,7 +715,8 @@ async def produzir(producao, canal, callbacks):
             _log(producao, "montagem %s" % fmt.get("nome"), callbacks)
             proporcao = _proporcao_do_grupo(producao, fmt, grupos)
             imagens_dir = pasta / "cenas" / proporcao.replace(":", "x")
-            saida = montar_video(pasta, plano, duracoes, fmt, callbacks, imagens_dir=imagens_dir)
+            saida = montar_video(pasta, plano, duracoes, fmt, callbacks, imagens_dir=imagens_dir,
+                                 falas_video=falas_video)
             chave = canais.chave_formato(fmt)
             arquivo_por_chave[chave] = str(saida)
             producao["arquivos"]["videos"][fmt["id"]] = str(saida)
@@ -697,6 +745,22 @@ def _duracao_wav(caminho):
             return w.getnframes() / float(w.getframerate() or 24000)
     except Exception:
         return None
+
+
+def _retrato_do_personagem(cid, nome):
+    try:
+        retratos = canais.retratos(cid)
+        arq = retratos.get(nome)
+        if not arq:
+            arq = next((v for k, v in retratos.items()
+                        if str(k).lower() == str(nome or "").lower()), None)
+        if arq:
+            arq = canais.pasta_retratos(cid) / Path(arq).name
+            if arq.is_file():
+                return arq
+    except Exception:
+        pass
+    return None
 
 
 def _concatenar_voz(pasta, arquivos, duracoes):

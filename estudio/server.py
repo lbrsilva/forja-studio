@@ -6186,6 +6186,21 @@ async def _rodar_esteira(cid, pid):
         def log(msg):
             print("[canal %s] %s" % (canal.get("nome") or cid, msg), flush=True)
 
+        async def falar_video(foto, audio, destino, formato):
+            if not latentsync_motor.instalada("1.5"):
+                raise RuntimeError("O motor de boca sincronizada (LatentSync 1.5) não está instalado.")
+            dur = esteira._duracao_wav(audio) or 1.0
+            ultimo = {"n": -1}
+
+            def progredir(feitos, total, fase):
+                if feitos >= total or feitos - ultimo["n"] >= 5:
+                    ultimo["n"] = feitos
+                    log("%s (%d/%d)" % (fase, min(feitos, total), total))
+
+            await latentsync_motor.executar(Path(foto), Path(audio), Path(destino), "1.5", dur,
+                                            progredir, cancelado)
+            return str(destino)
+
         plano_atual = producao.get("plano") or {}
         if plano_atual.get("modo") == "noticia":
             rid = str(plano_atual.get("referencia_id") or "")
@@ -6205,11 +6220,11 @@ async def _rodar_esteira(cid, pid):
             await esteira.produzir_noticia(producao, canal, {
                 "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
                 "cortar": cortar_ref, "video_fonte": ref.get("video"),
-                "cancelado": cancelado, "log": log})
+                "falar_video": falar_video, "cancelado": cancelado, "log": log})
         else:
             await esteira.produzir(producao, canal, {
                 "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
-                "cancelado": cancelado, "log": log})
+                "falar_video": falar_video, "cancelado": cancelado, "log": log})
         if producao.get("estado") == "concluido":
             _agendar_automatico(canal, producao)
     except Exception as exc:
@@ -6259,6 +6274,24 @@ async def api_canal_produzir(req):
         if not str(c.get("fala") or "").strip():
             raise web.HTTPBadRequest(text="A cena %d está sem fala." % i)
         c["n"] = i
+    quer_falar = [i for i, c in enumerate(plano.get("cenas") or [], 1) if c.get("falar")]
+    if quer_falar:
+        if not bool((canal.get("producao") or {}).get("falar_cenas", True)):
+            raise web.HTTPBadRequest(
+                text="A narração por cena está desligada. Ligue em Ajustes para usar o Falar.")
+        if not latentsync_motor.instalada("1.5"):
+            raise web.HTTPBadRequest(
+                text="O motor de boca sincronizada (LatentSync 1.5) não está instalado.")
+        retratos = canais.retratos(cid)
+        for i in quer_falar:
+            cena = (plano.get("cenas") or [])[i - 1]
+            nome = str(cena.get("personagem") or "").strip()
+            if not nome:
+                raise web.HTTPBadRequest(
+                    text="A cena %d está marcada como Falar, mas não tem personagem." % i)
+            if not any(str(k).lower() == nome.lower() for k in retratos):
+                raise web.HTTPBadRequest(
+                    text="A cena %d quer falar, mas %s não tem retrato. Gere o retrato antes." % (i, nome))
     formatos = b.get("formatos")
     if isinstance(formatos, list) and not formatos:
         raise web.HTTPBadRequest(text="Marque pelo menos um formato para montar.")

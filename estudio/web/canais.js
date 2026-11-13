@@ -679,7 +679,7 @@
       <textarea class="cx-prompt" rows="2" placeholder="Descrição visual em inglês">${esc(c.imagem || '')}</textarea>
       <div><input class="cx-personagem" type="text" placeholder="Opcional" value="${esc(c.personagem || '')}">
         ${falarOk
-          ? `<label class="cx-check cx-cena-falar" title="Gera o personagem falando (lip sync) nesta cena">
+          ? `<label class="cx-check cx-cena-falar" title="Gera a boca sincronizada com a voz desta cena. Precisa de um personagem com retrato.">
                <input type="checkbox" data-cena-falar ${c.falar ? 'checked' : ''}> Falar</label>`
           : `<button type="button" class="bt-sec mini cx-cena-falar" data-acao="ligar-falar">${ic('play')}Ligar, vou usar</button>`}
         <button type="button" class="ic-bt cx-tirar" data-acao="del-cena" aria-label="Tirar cena">${ic('lixo')}</button></div>
@@ -1556,6 +1556,12 @@
     const plano = lerPlano();
     plano.cenas = plano.cenas.filter((c) => String(c.fala || '').trim());
     if (!plano.cenas.length) { mostrar('Nenhuma cena com fala para produzir.', 'erro'); return; }
+    const semPersonagem = plano.cenas.filter((c) => c.falar && !String(c.personagem || '').trim());
+    if (semPersonagem.length) {
+      mostrar('As cenas ' + semPersonagem.map((c) => c.n).join(', ') +
+        ' estão marcadas como Falar, mas não têm personagem.', 'erro');
+      return;
+    }
     const formatos = $$('[data-formato]:checked').map((x) => x.dataset.formato);
     if (!formatos.length) { mostrar('Marque pelo menos um formato para montar.', 'erro'); return; }
     const estilo = estiloEscolhido();
