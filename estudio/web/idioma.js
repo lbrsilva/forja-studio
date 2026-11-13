@@ -101,6 +101,10 @@
     'ia.semEstudio': 'I could not reach the studio.',
 
     // ---- o resto da tela (texto parado no HTML, marcado em 11/11/2026)
+    'tela.configuracoes-de-api': 'API settings',
+    'tela.sao-todas-opcionais-o-estudio': 'They are all optional: the studio works in full '
+      + 'without any of them. Each one unlocks something extra, and stays only on your '
+      + 'computer.',
     'tela.entre-na-sua-conta': 'Sign in to your account',
     'tela.as-ferramentas-daqui-sao-de': 'The tools here are free and run on your own graphics '
       + 'card. The account is only so the licence is in your name.',
@@ -325,6 +329,9 @@
     'ia.semEstudio': 'No conseguí hablar con el estudio.',
 
     // ---- o resto da tela (texto parado no HTML, marcado em 11/11/2026)
+    'tela.configuracoes-de-api': 'Ajustes de API',
+    'tela.sao-todas-opcionais-o-estudio': 'Son todas opcionales: el estudio funciona entero '
+      + 'sin ninguna. Cada una desbloquea algo más, y se queda solo en tu ordenador.',
     'tela.entre-na-sua-conta': 'Entra en tu cuenta',
     'tela.as-ferramentas-daqui-sao-de': 'Las herramientas de aquí son gratis y generan en tu '
       + 'propia tarjeta gráfica. La cuenta es solo para que la licencia quede a tu nombre.',
@@ -602,6 +609,28 @@
     // a ficha da IA
     'O que faz': 'What it does', 'Melhor para': 'Best for', 'Evite para': 'Avoid it for',
     'Tempo típico (medido nesta máquina)': 'Typical time (measured on this machine)',
+    // ---- a seção Configurações de API
+    'guardada': 'saved',
+    'não tem nenhuma — e tudo bem': 'none saved — and that is fine',
+    'Onde criar a chave': 'Where to create the key',
+    'já tem uma guardada — cole outra para trocar': 'one is saved — paste another to replace it',
+    'cole aqui': 'paste it here',
+    'Salvar': 'Save',
+    'Remover': 'Remove',
+    'fica só no seu computador, em': 'stays only on your computer, in',
+    'Remover esta chave? O estúdio continua funcionando sem ela.':
+      'Remove this key? The studio keeps working without it.',
+    'Cole a chave no campo antes de salvar.': 'Paste the key into the box before saving.',
+    'Pronto.': 'Done.',
+    'Crie uma conta (é de graça)': 'Create an account (it is free)',
+    'Aceite a licença nesta página': 'Accept the licence on this page',
+    'Crie um token de LEITURA e cole aqui': 'Create a READ token and paste it here',
+    'vozes na nuvem, na aba Narração. Sem ela, a narração continua funcionando com as vozes locais, de graça.':
+      'cloud voices, on the Narration tab. Without it, narration keeps working with the '
+      + 'local voices, for free.',
+    'baixar o LTX 2.5. Dos 19 repositórios de modelos, 18 abrem sem nada; só o Lightricks/LTX-2.5 pede conta e aceitar a licença.':
+      'downloading LTX 2.5. Of the 19 model repositories, 18 open with nothing; only '
+      + 'Lightricks/LTX-2.5 asks for an account and the licence.',
     'A mais rápida e a mais caprichada': 'The fastest and the most careful',
     // ---- ligar e desligar os serviços
     'Serviços': 'Services', 'Ligar tudo': 'Turn all on', 'Desligar tudo': 'Turn all off',
@@ -815,6 +844,28 @@
 
     'O que faz': 'Qué hace', 'Melhor para': 'Mejor para', 'Evite para': 'Evítala para',
     'Tempo típico (medido nesta máquina)': 'Tiempo típico (medido en este ordenador)',
+    // ---- a seção Configurações de API
+    'guardada': 'guardada',
+    'não tem nenhuma — e tudo bem': 'no hay ninguna — y está bien',
+    'Onde criar a chave': 'Dónde crear la clave',
+    'já tem uma guardada — cole outra para trocar': 'ya hay una guardada — pega otra para cambiarla',
+    'cole aqui': 'pégala aquí',
+    'Salvar': 'Guardar',
+    'Remover': 'Quitar',
+    'fica só no seu computador, em': 'se queda solo en tu ordenador, en',
+    'Remover esta chave? O estúdio continua funcionando sem ela.':
+      '¿Quitar esta clave? El estudio sigue funcionando sin ella.',
+    'Cole a chave no campo antes de salvar.': 'Pega la clave en la caja antes de guardar.',
+    'Pronto.': 'Listo.',
+    'Crie uma conta (é de graça)': 'Crea una cuenta (es gratis)',
+    'Aceite a licença nesta página': 'Acepta la licencia en esta página',
+    'Crie um token de LEITURA e cole aqui': 'Crea un token de LECTURA y pégalo aquí',
+    'vozes na nuvem, na aba Narração. Sem ela, a narração continua funcionando com as vozes locais, de graça.':
+      'voces en la nube, en la pestaña Narración. Sin ella, la narración sigue funcionando '
+      + 'con las voces locales, gratis.',
+    'baixar o LTX 2.5. Dos 19 repositórios de modelos, 18 abrem sem nada; só o Lightricks/LTX-2.5 pede conta e aceitar a licença.':
+      'descargar LTX 2.5. De los 19 repositorios de modelos, 18 se abren sin nada; solo '
+      + 'Lightricks/LTX-2.5 pide cuenta y aceptar la licencia.',
     'A mais rápida e a mais caprichada': 'La más rápida y la más cuidada',
     // ---- ligar e desligar os serviços
     'Serviços': 'Servicios', 'Ligar tudo': 'Encender todo', 'Desligar tudo': 'Apagar todo',

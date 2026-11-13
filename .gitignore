@@ -1,3 +1,9 @@
+# ATENCAO: comentario NUNCA na mesma linha do padrao.
+# O git nao reconhece '#' no meio da linha: ele le a linha INTEIRA como
+# padrao, e um padrao com espacos e '#' nao casa com nada. Nove regras daqui
+# - inclusive API/ e **/segredos/ - ficaram sem valer nenhum por causa disso,
+# e sem dar nenhum aviso. Achado por lbrsilva no PR #1, conferido com
+# 'git check-ignore -v'.
 # --- o que NUNCA pode subir ---
 # as chaves (elevenlabs, civitai, huggingface, higgsfield, ...)
 API/
@@ -52,3 +58,18 @@ _cache/
 estudio/fila_historico.json
 # canais, produções e credenciais de publicação desta máquina
 estudio/canais/
+
+# arquivos temporarios de quem mantem o projeto
+_msg.txt
+
+# Lixo de execucao do abrir.py (12/11/2026). Nascem quando o estudio nao consegue
+# abrir, para a pessoa poder LER o motivo - antes disso o erro ia para DEVNULL.
+# Comentario na linha de cima, nunca na mesma linha do padrao: o git le a linha
+# inteira como padrao e a regra nao vale (ver o cabecalho deste arquivo).
+estudio/nao_abriu.txt
+estudio/servidor_saida.txt
+estudio/web/nao_abriu.html
+
+# A marca de que o estudio ja tentou por o icone na Area de Trabalho (12/11/2026).
+# E de cada maquina, nao do projeto.
+estudio/icone_feito.json

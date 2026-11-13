@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 rem ============================================================================
 rem  JerS - Forja Studio: o botao de abrir.
 rem
@@ -15,16 +15,46 @@ title JerS - Forja Studio
 cd /d "%~dp0"
 
 rem caminhos escolhidos na instalacao (setup.py escreve este arquivo)
-if exist "caminhos.bat" call "caminhos.bat"
+rem Pelo caminho ABSOLUTO: "caminhos.bat" sozinho depende da pasta atual, e ha
+rem ambiente de Windows que recusa rodar arquivo da pasta atual
+rem (NoDefaultCurrentDirectoryInExePath=1). Com %~dp0 nao depende de nada.
+if exist "%~dp0caminhos.bat" call "%~dp0caminhos.bat"
 
-set "PY=ComfyUI_windows_portable\python_embeded\python.exe"
-if not exist "%PY%" (
+rem ---------------------------------------------------------------------------
+rem  Qual Python roda o painel.
+rem
+rem  12/11/2026: aqui so havia o Python da ComfyUI, e o pacote NAO instala a ComfyUI
+rem  (ver REPOSITORIOS.md). Quem baixava do GitHub clicava neste botao e nao abria
+rem  nada. O painel nao precisa da ComfyUI para MOSTRAR a tela - ela e para gerar
+rem  imagem e video. Entao: a da ComfyUI primeiro, e qualquer Python depois.
+rem ---------------------------------------------------------------------------
+set "PY="
+rem A ComfyUI escolhida na instalacao pode estar noutro disco: o caminhos.bat guarda
+rem ESTUDIO_COMFY_DIR apontando para <algumlugar>\ComfyUI, e o python_embeded fica ao
+rem lado dela. Ate 12/11/2026 isto era ignorado e so se olhava a pasta daqui do lado.
+if defined ESTUDIO_COMFY_DIR (
+  for %%D in ("%ESTUDIO_COMFY_DIR%\..") do set "COMFYBASE=%%~fD"
+)
+if defined COMFYBASE if exist "%COMFYBASE%\python_embeded\python.exe" set "PY=%COMFYBASE%\python_embeded\python.exe"
+if not defined PY if exist "ComfyUI_windows_portable\python_embeded\python.exe" set "PY=ComfyUI_windows_portable\python_embeded\python.exe"
+if not defined PY (
+  py -3 -c "import sys" >nul 2>&1
+  if not errorlevel 1 set "PY=py -3"
+)
+if not defined PY (
+  python -c "import sys" >nul 2>&1
+  if not errorlevel 1 set "PY=python"
+)
+if not defined PY (
   echo.
-  echo   Nao achei o Python da ComfyUI em:
-  echo     %CD%\%PY%
+  echo   Nao achei nenhum Python nesta maquina.
   echo.
-  echo   Voce esta rodando este atalho de dentro da pasta do Forja Studio?
-  echo   Se a ComfyUI estiver noutro lugar, rode o setup.py de novo.
+  echo   O painel precisa de um Python 3.10 ou mais novo. Baixe em
+  echo     https://www.python.org/downloads/
+  echo   e marque "Add python.exe to PATH" na primeira tela do instalador.
+  echo.
+  echo   Se voce tem a ComfyUI noutra pasta, rode o setup.py de novo para
+  echo   apontar o caminho dela.
   echo.
   pause
   exit /b 1

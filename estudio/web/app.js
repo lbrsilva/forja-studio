@@ -563,9 +563,93 @@ const ESCOLHAS = [
     frase: 'Músicas com letra cantada, instrumentais, covers e separação da voz (YuE2, ACE-Step e outros).' },
 ];
 
+// ---------------------------------------------------------------- as chaves de API
+// 11/11/2026. A REGRA DESTA TELA: ela NUNCA mostra a chave guardada, nem traz ela do
+// servidor. Mostra só SE existe uma. Trazer de volta um segredo que o próprio navegador
+// mandou não serve para nada e só aumenta a chance de ele vazar num print ou num log.
+//
+// Quem já tem a chave guardada vê "guardada" e o campo em branco: escrever por cima troca,
+// e salvar em branco remove. Assim ninguém precisa colar de novo o que já colou.
+async function lerChaves() {
+  try {
+    const d = await api('/api/chaves');
+    G.chaves = d.chaves || [];
+    renderChaves();
+  } catch (e) { /* servidor antigo: a seção simplesmente não aparece */ }
+}
+
+function renderChaves() {
+  const onde = $('#chavesLista');
+  if (!onde) return;
+  const lista = G.chaves || [];
+  $('#blocoChaves').hidden = !lista.length;
+  if (!lista.length) return;
+  onde.innerHTML = lista.map((c) => {
+    const passos = (c.antes || []).map(([txt, url], i) =>
+      `<li><a href="${esc(url)}" target="_blank" rel="noopener">${esc(TX(txt))}</a></li>`).join('');
+    const estado = c.tem
+      ? `<span class="chave-ok">${ic('ok')}${esc(TX('guardada'))}</span>`
+      : `<span class="chave-nao">${esc(TX('não tem nenhuma — e tudo bem'))}</span>`;
+    return `<div class="chave-cartao" data-chave="${esc(c.id)}">
+      <div class="chave-topo"><h3>${esc(c.nome)}</h3>${estado}</div>
+      <p class="fraco">${esc(TX(c.para_que))}</p>
+      ${passos ? `<ol class="chave-passos">${passos}</ol>`
+               : `<p class="fraco"><a href="${esc(c.onde_criar)}" target="_blank" rel="noopener">${esc(TX('Onde criar a chave'))}</a></p>`}
+      <div class="chave-linha">
+        <input type="password" class="chave-campo" autocomplete="off" spellcheck="false"
+               placeholder="${esc(c.tem ? TX('já tem uma guardada — cole outra para trocar') : TX('cole aqui'))}">
+        <button type="button" class="bt-sec" data-salvar="${esc(c.id)}">${ic('ok')}${esc(TX('Salvar'))}</button>
+        ${c.tem ? `<button type="button" class="bt-sec" data-apagar="${esc(c.id)}">${esc(TX('Remover'))}</button>` : ''}
+      </div>
+      <p class="fraco chave-onde">${esc(TX('fica só no seu computador, em'))} <code>${esc(c.arquivo)}</code></p>
+    </div>`;
+  }).join('');
+  pintarIcones(onde);
+}
+
+async function salvarChave(id, valor) {
+  const cartao = $(`[data-chave="${id}"]`);
+  const bt = cartao && cartao.querySelector('[data-salvar]');
+  if (bt) bt.disabled = true;
+  try {
+    const d = await api('/api/chaves', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, valor }),
+    });
+    aviso(d.mensagem || 'Pronto.', d.ok === false ? 'aviso' : 'ok', 8000);
+    const campo = cartao && cartao.querySelector('.chave-campo');
+    if (campo) campo.value = '';   // nunca deixar o segredo na tela depois de salvar
+    lerChaves();
+    // chave nova do ElevenLabs: recarrega a lista para as vozes da nuvem aparecerem
+    // agora, e nao so quando a pessoa abrir a aba Narracao de novo.
+    if (id === 'elevenlabs' && typeof carregarVozes === 'function') carregarVozes();
+  } catch (e) {
+    aviso(e.message, 'erro', 9000);
+  } finally {
+    if (bt) bt.disabled = false;
+  }
+}
+
+document.addEventListener('click', (ev) => {
+  const bs = ev.target.closest && ev.target.closest('[data-salvar]');
+  if (bs) {
+    const cartao = bs.closest('[data-chave]');
+    const campo = cartao && cartao.querySelector('.chave-campo');
+    const valor = campo ? campo.value.trim() : '';
+    if (!valor) { aviso('Cole a chave no campo antes de salvar.', 'aviso'); return; }
+    salvarChave(bs.dataset.salvar, valor);
+    return;
+  }
+  const ba = ev.target.closest && ev.target.closest('[data-apagar]');
+  if (ba && confirm(TX('Remover esta chave? O estúdio continua funcionando sem ela.'))) {
+    salvarChave(ba.dataset.apagar, '');
+  }
+});
+
 function abrirInicio() {
   renderEscolhas(true);
   renderCatalogo();
+  lerChaves();
   if (G.dicaIdx == null) proximaDica();
   if (G.inicio) renderInicioVivo();
 }
@@ -1427,7 +1511,14 @@ function chips(el, valores, atual, aoEscolher, rotulo = rot) {
 function faixaInstalar(id) {
   const e = (G.ias || {})[id];
   if (!e || !e.conhecida || e.instalada) return '';
-  const pr = (G.iasProgresso || {}).baixando;
+  // 11/11/2026: ate hoje o erro do download era GUARDADO e nunca mostrado. O LTX 2.5
+  // parava com 401 (o repositorio da Lightricks pede conta) e o cartao so voltava a
+  // dizer "Falta instalar", sem uma palavra. Falha calada e pior que erro na cara.
+  const pg = G.iasProgresso || {};
+  if (pg.erro && pg.erro_ia === id && !pg.baixando) {
+    return `<p class="ia-falta sem-link" role="alert">${ic('alerta')}<span>${esc(pg.erro)}</span></p>`;
+  }
+  const pr = pg.baixando;
   if (pr && pr.ia === e.nome) {
     const pc = pr.total ? Math.floor((pr.baixados / pr.total) * 100) : 0;
     return `<div class="ia-baixando"><div class="ia-barra"><i style="width:${pc}%"></i></div>
@@ -1583,7 +1674,7 @@ function htmlCardIA(p, f) {
 document.addEventListener('idioma-mudou', () => {
   // Cada um destes desenha um pedaco que o JavaScript escreve, e por isso nao e alcancado
   // pelo data-i18n do HTML. Cada um no seu try: um que falhe nao pode derrubar os outros.
-  [renderIAs, renderEscolhas, renderCatalogo].forEach((f) => {
+  [renderIAs, renderEscolhas, renderCatalogo, renderChaves].forEach((f) => {
     try { f(true); } catch (e) { /* secao que ainda nao existe nesta tela */ }
   });
   try { if (G.rota && ROTAS[G.rota]) {

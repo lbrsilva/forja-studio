@@ -1,0 +1,21 @@
+# Como cada tipo de arquivo deve chegar na maquina de quem baixa.
+#
+# 12/11/2026: sem este arquivo, a quebra de linha dependia do `core.autocrlf` de CADA
+# pessoa. Quem tivesse `autocrlf=false` recebia os .bat com LF - e .bat com LF faz o cmd
+# engasgar na primeira linha: o `@echo off` nao vale, da "nao e reconhecido" e a janela
+# fica cuspindo cada comando. Foi medido aqui, por acidente, num arquivo de teste.
+#
+# `eol=crlf` nao pergunta a configuracao de ninguem: o arquivo chega CRLF sempre.
+
+*           text=auto
+
+# Windows exige CRLF nestes
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Estes nao se mexe
+*.ico       binary
+*.png       binary
+*.jpg       binary
+*.pem       text eol=lf

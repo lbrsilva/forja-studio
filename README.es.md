@@ -146,9 +146,14 @@ IAs más grandes no quepan. Empieza por el camino de la imagen y ve subiendo.
 
 Dos pasos: **descargar los modelos** y **aplicar la configuración**.
 
-- [INSTALAR.md](INSTALAR.md) — paso a paso, para hacerlo a mano (en portugués)
+- [INSTALAR.md](INSTALAR.md) — paso a paso, para hacerlo a mano (en portugués). **El lugar estándar es `C:\ForjaStudio`:** `git clone https://github.com/JJatalaia/forja-studio.git C:\ForjaStudio`
 - [INSTALAR-COM-IA.md](INSTALAR-COM-IA.md) — **el texto para pegar en Claude Code, Codex o
   Gemini CLI y dejar que la IA descargue y verifique todo por ti** (en portugués)
+
+**De dónde viene cada cosa — todas las IAs y todos los repositorios — está en
+[REPOSITORIOS.md](REPOSITORIOS.md)** (en portugués). Son 19 repositorios en Hugging Face y 4
+en GitHub; **18 de los 19 se abren directamente**, y solo `Lightricks/LTX-2.5` pide cuenta y
+aceptar la licencia — que es lo que provoca el error **401** en LTX 2.5.
 
 Los enlaces de descarga de todos los modelos están en
 [IAS-INSTALADAS.md](IAS-INSTALADAS.md), con el tamaño exacto de cada archivo y la carpeta

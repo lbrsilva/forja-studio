@@ -141,9 +141,14 @@ may not fit. Start with the image track and work your way up.
 
 Two steps: **download the models** and **apply the configuration**.
 
-- [INSTALAR.md](INSTALAR.md) — step by step, to do by hand (in Portuguese)
+- [INSTALAR.md](INSTALAR.md) — step by step, to do by hand (in Portuguese). **The standard place is `C:\ForjaStudio`:** `git clone https://github.com/JJatalaia/forja-studio.git C:\ForjaStudio`
 - [INSTALAR-COM-IA.md](INSTALAR-COM-IA.md) — **the text to paste into Claude Code, Codex or
   Gemini CLI and let the AI download and verify everything for you**
+
+**Where every file comes from — every AI and every repository — is in
+[REPOSITORIOS.md](REPOSITORIOS.md)** (in Portuguese). 19 repositories on Hugging Face and 4
+on GitHub; **18 of the 19 open straight away**, and only `Lightricks/LTX-2.5` asks for an
+account and the licence — which is what causes the **401** error on LTX 2.5.
 
 Download links for every model are in [IAS-INSTALADAS.md](IAS-INSTALADAS.md), with the exact
 size of each file and the folder it has to land in.

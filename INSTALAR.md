@@ -52,6 +52,43 @@ mais devagar.
 
 ---
 
+## Onde instalar — o lugar padrão
+
+```
+C:\ForjaStudio
+```
+
+Baixe assim, e fica igual em toda máquina:
+
+```bash
+git clone https://github.com/JJatalaia/forja-studio.git C:\ForjaStudio
+```
+
+Não é obrigatório — o estúdio funciona em qualquer pasta. Mas é o lugar que esta
+documentação e o suporte assumem, e ele evita três problemas de verdade:
+
+| por quê | o que acontece fora dele |
+|---|---|
+| **sem espaço no nome** | caminho com espaço já quebrou `.bat` neste projeto mais de uma vez |
+| **fora do Documentos** | em muita máquina o Documentos é sincronizado com o OneDrive — que tentaria **subir os 270 GB de modelos** |
+| **curto** | o Windows corta caminho em 260 caracteres, e a ComfyUI tem pasta funda |
+
+Criar essa pasta **não pede administrador** (medido).
+
+**E os 270 GB?** Não precisam ficar no C:. O pacote em si tem **1,6 MB**; o que pesa é a
+ComfyUI e os modelos, e o `setup.py` pergunta onde você quer eles — pode ser outro disco.
+A escolha fica no `caminhos.bat`, e os botões de abrir leem esse arquivo.
+
+**Se você já instalou noutro lugar**, clique em **`IR PARA O LUGAR PADRAO.bat`**. Ele
+copia a pasta para `C:\ForjaStudio` e refaz o ícone sozinho.
+
+Ele é cuidadoso de propósito: **copia e não move** (o original fica até você conferir),
+**recusa** se `C:\ForjaStudio` já tiver coisa dentro, e **recusa** se a pasta pesar mais de
+500 MB — aí a ComfyUI e os modelos já estão lá dentro, e copiar 270 GB às cegas seria uma
+violência com o seu disco. Nesse caso ele explica como mover à mão.
+
+---
+
 ## Antes de começar
 
 Confira a placa. Abra o Prompt de Comando e digite:
@@ -130,6 +167,9 @@ importante, **a pasta em que ele tem que cair** dentro de `ComfyUI/models/`.
 > `diffusion_models/` simplesmente não aparece na lista, e parece que o download deu errado.
 
 ### 🔑 Dois arquivos pedem login
+
+> Tudo sobre isto — e de qual repositório vem cada arquivo do projeto — está em
+> **[REPOSITORIOS.md](REPOSITORIOS.md)**.
 
 Os dois arquivos do **LTX 2.5** que vêm do repositório oficial da Lightricks estão atrás de um
 portão: você precisa estar logado no Hugging Face e **aceitar a licença** na página do
@@ -273,3 +313,19 @@ então ela pode estar segurando memória mesmo com a fila vazia.
 
 **Falta um complemento.** O erro da ComfyUI diz o nome do nó que faltou; procure pelo nome na
 tabela do Passo 0.
+
+**O ícone não apareceu na Área de Trabalho.** Clique em
+**`Criar o icone na Area de Trabalho.bat`**, na pasta do Forja Studio. Ele cria o ícone na
+hora e, se não conseguir, **diz o motivo na tela** em vez de falhar calado. Dá para clicar
+quantas vezes quiser: ele refaz o mesmo ícone, não duplica.
+
+Até 12/11/2026 o ícone só nascia durante a instalação, e só se você respondesse uma pergunta
+na janela preta — quem instalou pelo GitHub, ou fechou a janela antes, ficava sem ícone e sem
+saber por quê.
+
+**"Não consegui identificar esta máquina", na tela de criar conta.** Atualize o Forja Studio.
+Antes de 12/11/2026 as três características do equipamento eram lidas todas pela mesma chamada
+de PowerShell: quando ela falhava — máquina virtual, Windows recém-instalado, serviço do WMI
+parado — as três sumiam juntas e não dava para criar conta. Agora são **cinco características,
+de dois caminhos independentes** (PowerShell e registro do Windows), e basta um dos caminhos
+responder. A tela também passou a dizer **qual** característica não deu.

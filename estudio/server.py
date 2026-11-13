@@ -50,6 +50,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -1515,6 +1516,90 @@ async def api_chave_hf(req):
     await asyncio.to_thread(ias.guardar_token_hf, token)
     return estado({"ok": True, "conta": nome, "mensagem": f"Pronto: token da conta {nome} guardado. "
                    "Pode baixar as IAs que exigiam conta."})
+
+
+# ---------------------------------------------------------------- as chaves de API, numa tela só
+# 11/11/2026: antes cada chave morava num canto. A do ElevenLabs ficava escondida dentro da
+# aba Narração, e o token do Hugging Face só existia como arquivo - quem instalasse o pacote
+# não tinha como saber que ele existia, nem onde criar um. Agora os dois ficam no mesmo
+# lugar, com o endereço de onde se cria cada um.
+#
+# A REGRA DAS DUAS: o GET diz SE existe uma chave, NUNCA qual é. Devolver um segredo que o
+# próprio navegador mandou não serve para nada e só aumenta a chance de ele vazar num log,
+# num print de tela ou no histórico de uma aba aberta.
+CHAVES_DE_API = {
+    "elevenlabs": {
+        "nome": "ElevenLabs",
+        "para_que": "vozes na nuvem, na aba Narração. Sem ela, a narração continua "
+                    "funcionando com as vozes locais, de graça.",
+        "onde_criar": "https://elevenlabs.io/app/settings/api-keys",
+        "paga": True,
+    },
+    "huggingface": {
+        "nome": "Hugging Face",
+        "para_que": "baixar o LTX 2.5. Dos 19 repositórios de modelos, 18 abrem sem nada; "
+                    "só o Lightricks/LTX-2.5 pede conta e aceitar a licença.",
+        "onde_criar": "https://huggingface.co/settings/tokens",
+        "antes": [
+            ("Crie uma conta (é de graça)", "https://huggingface.co/join"),
+            ("Aceite a licença nesta página", "https://huggingface.co/Lightricks/LTX-2.5"),
+            ("Crie um token de LEITURA e cole aqui", "https://huggingface.co/settings/tokens"),
+        ],
+        "paga": False,
+    },
+}
+
+
+def _estado_das_chaves():
+    fora = []
+    for cid, info in CHAVES_DE_API.items():
+        tem = elevenlabs.tem_chave() if cid == "elevenlabs" else ias.tem_token()
+        arq = elevenlabs.CHAVE_ARQ if cid == "elevenlabs" else ias.TOKEN_ARQ
+        fora.append(dict(info, id=cid, tem=bool(tem), arquivo=str(arq)))
+    return fora
+
+
+async def api_chaves(req):
+    """Lista o estado das chaves (GET) ou guarda uma (POST {id, valor})."""
+    if req.method == "GET":
+        return web.json_response({"chaves": _estado_das_chaves()})
+    b = await req.json()
+    cid = (b.get("id") or "").strip()
+    if cid not in CHAVES_DE_API:
+        raise web.HTTPBadRequest(text="Não conheço esta chave.")
+    valor = (b.get("valor") or "").strip()
+    if cid == "huggingface":
+        ok, recado = await asyncio.to_thread(ias.guardar_token, valor)
+        if not ok:
+            raise web.HTTPBadRequest(text=recado)
+        return web.json_response({"ok": True, "tem": ias.tem_token(), "mensagem": recado})
+    # ElevenLabs: reaproveita o caminho que já existia, para não haver dois jeitos de
+    # guardar a mesma chave e um deles ficar para trás.
+    arq = elevenlabs.CHAVE_ARQ
+    if not valor:
+        try:
+            arq.unlink()
+        except FileNotFoundError:
+            pass
+        elevenlabs.esquecer()
+        return web.json_response({"ok": True, "tem": False,
+                                  "mensagem": "Chave removida. A narração continua "
+                                              "funcionando com a voz local."})
+    if len(valor) > 300 or any(c.isspace() for c in valor):
+        raise web.HTTPBadRequest(text="Isso não parece uma chave. Cole só a chave, "
+                                      "sem espaços nem quebra de linha.")
+    arq.parent.mkdir(parents=True, exist_ok=True)
+    arq.write_text(valor + "\n", encoding="utf-8")
+    elevenlabs.esquecer()
+    vs = await asyncio.to_thread(elevenlabs.vozes, True)
+    if not vs:
+        return web.json_response({"ok": False, "tem": True,
+                                  "mensagem": "Guardei a chave, mas o ElevenLabs não "
+                                              "respondeu com nenhuma voz. Confira se ela "
+                                              "está certa e se a conta tem saldo."})
+    return web.json_response({"ok": True, "tem": True,
+                              "mensagem": "Pronto: %d vozes da sua conta apareceram na "
+                                          "lista, com o símbolo de nuvem." % len(vs)})
 
 
 async def api_voz_salvar(req):
@@ -6771,6 +6856,8 @@ app.add_routes([
     web.post("/api/remover/{id}", api_remover), web.post("/api/limpar-lixeira", api_limpar_lixeira),
     web.get("/api/midia/{id}/{i}", api_midia),
     web.get("/api/vozes", api_vozes), web.get("/api/vozes11", api_vozes11), web.post("/api/vozes", api_voz_salvar),
+    web.get("/api/chaves", api_chaves),
+    web.post("/api/chaves", api_chaves),
     web.get("/api/chave-nuvem", api_chave_nuvem),
     web.post("/api/chave-nuvem", api_chave_nuvem),
     web.get("/api/chave-hf", api_chave_hf), web.post("/api/chave-hf", api_chave_hf),
@@ -6845,5 +6932,59 @@ app.add_routes([
     web.get("/", estatico), web.get("/{caminho:.+}", estatico),
 ])
 
+# ------------------------------------------------------- o icone, na primeira subida
+MARCA_DO_ICONE = AQUI / "icone_feito.json"
+
+
+def _icone_na_primeira_subida():
+    r"""Poe o icone do Forja Studio na Area de Trabalho, uma unica vez.
+
+    POR QUE AQUI, e nao so no setup.py (12/11/2026)
+
+    Instalaram o estudio numa maquina por uma IA: ela fez `pip install` e rodou o
+    `server.py`, sem passar pelo `setup.py`. O painel subiu redondo e o icone nao
+    existia - porque ele so nascia em dois lugares que da para pular: dentro do setup,
+    e num .bat que alguem precisa clicar.
+
+    Subir o estudio e a unica coisa que ninguem pula. Entao e daqui que ele nasce.
+
+    UMA VEZ SO: depois da primeira tentativa fica o `icone_feito.json` e nunca mais se
+    mexe na Area de Trabalho de ninguem. Se a pessoa apagar o icone, apagar e a
+    resposta dela - recriar toda vez seria teimosia, nao ajuda.
+    """
+    try:
+        if os.name != "nt" or MARCA_DO_ICONE.exists():
+            return
+        sys.path.insert(0, str(AQUI))
+        import atalho
+
+        mesa = atalho._area_de_trabalho()
+        if mesa and (mesa / "Forja Studio.lnk").exists():
+            feito, motivo = str(mesa / "Forja Studio.lnk"), "ja existia"
+        else:
+            caminho = atalho.criar(mesa)
+            feito = str(caminho) if caminho else None
+            motivo = None if caminho else (atalho.ultimo_motivo or "sem motivo conhecido")
+
+        MARCA_DO_ICONE.write_text(json.dumps(
+            {"quando": int(time.time()), "icone": feito, "motivo": motivo},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+
+        if feito:
+            print(f"[estudio] icone do Forja Studio na Area de Trabalho: {feito}",
+                  flush=True)
+        else:
+            print(f"[estudio] nao criei o icone na Area de Trabalho: {motivo}", flush=True)
+            print("[estudio]   para tentar de novo: apague estudio\\icone_feito.json e "
+                  "clique em 'Criar o icone na Area de Trabalho.bat'", flush=True)
+    except Exception as exc:
+        # O icone e um conforto, nao o produto: ele nunca pode derrubar o estudio.
+        print(f"[estudio] tropecei ao criar o icone ({exc.__class__.__name__}: {exc}); "
+              "o estudio segue normalmente", flush=True)
+
+
 if __name__ == "__main__":
+    # Em segundo plano para nao atrasar a primeira tela: a leitura da Area de Trabalho
+    # e o PowerShell do atalho levam cerca de meio segundo juntos.
+    threading.Thread(target=_icone_na_primeira_subida, daemon=True).start()
     web.run_app(app, host="127.0.0.1", port=PORTA)

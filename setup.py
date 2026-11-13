@@ -244,6 +244,45 @@ def conferir_configuracao():
                    "(apague a pasta .claude se nao usa)" % (s, a, m))
 
 
+# --------------------------------------------------------------- o lugar padrao
+#
+# 12/11/2026. Nao e uma exigencia: e o lugar que a gente recomenda, e que a documentacao
+# e o suporte assumem. Quem quiser outro, poe noutro - o estudio funciona igual. O que
+# nao da e a gente nao ter UM lugar para escrever nas instrucoes.
+LUGAR_PADRAO = r"C:\ForjaStudio"
+
+
+def conferir_o_lugar():
+    """Diz se o estudio esta no lugar recomendado, e por que o lugar importa."""
+    titulo(0, "Onde o estudio esta instalado")
+    atual = str(AQUI)
+    print("  aqui: %s" % atual)
+    if atual.lower().rstrip("\\") == LUGAR_PADRAO.lower():
+        print(OK + "e o lugar padrao")
+        return
+
+    print("  padrao recomendado: %s" % LUGAR_PADRAO)
+    motivos = []
+    if " " in atual:
+        motivos.append("tem ESPACO no nome, e caminho com espaco ja quebrou .bat aqui")
+    if "onedrive" in atual.lower():
+        motivos.append("esta dentro do OneDrive, que vai tentar SINCRONIZAR os modelos")
+    elif "\\documents" in atual.lower() or "\\documentos" in atual.lower():
+        motivos.append("esta no Documentos, que em muita maquina o OneDrive sincroniza - "
+                       "e ai ele tentaria subir os 270 GB de modelos")
+    if len(atual) > 60:
+        motivos.append("e longo, e o Windows corta caminho em 260 caracteres")
+
+    if motivos:
+        for m in motivos:
+            cuidado(m)
+    else:
+        print("  (funciona assim mesmo; o padrao e so para a documentacao bater)")
+    print("\n       Para ir para o lugar padrao: clique em 'IR PARA O LUGAR PADRAO.bat'.")
+    print("       Ele copia (nao move) e refaz o icone. Numa instalacao pesada ele")
+    print("       recusa e explica como mover a mao - 270 GB nao se copia as cegas.")
+
+
 # ------------------------------------------------------------------ 6. o atalho
 def criar_atalho(comfy):
     """Os atalhos de abrir. Eles VEM prontos no pacote; aqui so conferimos e explicamos.
@@ -263,9 +302,17 @@ def criar_atalho(comfy):
         return None
     print(OK + "%-29s abre o painel (espera ficar pronto antes)" % principal.name)
     sistema = "Windows" if WIN else "Mac"
-    for extra, oque in ((f"Ligar com o {sistema}{ext}", "abre sozinho quando voce entra no computador"),
-                        (f"Nao ligar com o {sistema}{ext}", "desfaz o de cima"),
-                        ("Desligar o estudio" + ext, "fecha tudo e libera a placa de video / memoria")):
+    extras = [("Criar o icone na Area de Trabalho.bat", "poe o icone na sua mesa"),
+              ("IR PARA O LUGAR PADRAO.bat", "leva tudo para C:\\ForjaStudio")]
+    if WIN:
+        extras += [("Ligar com o Windows.bat", "abre sozinho quando voce entra no PC"),
+                   ("Nao ligar com o Windows.bat", "desfaz o de cima"),
+                   ("Desligar o estudio.bat", "fecha tudo e libera a placa de video")]
+    else:
+        extras += [(f"Ligar com o {sistema}{ext}", "abre sozinho quando voce entra no computador"),
+                   (f"Nao ligar com o {sistema}{ext}", "desfaz o de cima"),
+                   ("Desligar o estudio" + ext, "fecha tudo e libera a placa de video / memoria")]
+    for extra, oque in extras:
         if (AQUI / extra).is_file():
             print(OK + "%-29s %s" % (extra, oque))
 
@@ -303,6 +350,88 @@ def criar_atalho(comfy):
     return principal
 
 
+def _de_novo_depois():
+    """A frase que diz como pedir o icone mais tarde. Numa constante porque aparece em
+    tres lugares, e tres copias de um texto viram tres textos diferentes com o tempo."""
+    print("       Da para pedir ele depois: clique em")
+    print("       'Criar o icone na Area de Trabalho.bat', aqui nesta pasta.")
+
+
+def _icone_na_area_de_trabalho():
+    r"""O icone do Forja Studio na Area de Trabalho.
+
+    12/11/2026 - POR QUE ISTO DEIXOU DE SER SO UMA PERGUNTA
+
+    O Jerffeson instalou numa maquina nova, pelo GitHub, e o icone nao apareceu. Nenhum
+    erro, em lugar nenhum. O trecho antigo pendurava o icone num `input()` e tinha, logo
+    abaixo, um `except (OSError, EOFError, KeyboardInterrupt): pass` - ou seja: numa
+    instalacao que nao consegue perguntar, o icone nao nascia E NINGUEM FICAVA SABENDO.
+
+    Perguntar continua sendo o certo quando da para perguntar: mexer na Area de Trabalho
+    dos outros sem avisar e falta de educacao. Mas nao conseguir perguntar nao e um "nao".
+    Ele pediu o icone; na duvida, o icone nasce - e se ele nao quiser, tira num clique.
+    """
+    try:
+        sys.path.insert(0, str(AQUI / "estudio"))
+        import atalho as _atalho
+    except Exception as exc:
+        cuidado("nao consegui carregar o criador de icone (%s)." % exc)
+        _de_novo_depois()
+        return
+
+    try:
+        mesa = _atalho._area_de_trabalho()
+    except Exception as exc:
+        mesa = None
+        cuidado("nao consegui achar a sua Area de Trabalho (%s)." % exc)
+
+    if not mesa:
+        cuidado("nao achei a sua Area de Trabalho, entao nao criei o icone.")
+        _de_novo_depois()
+        return
+
+    if (mesa / "Forja Studio.lnk").exists():
+        print(OK + "o icone do Forja Studio ja esta na Area de Trabalho")
+        return
+
+    quer = True
+    try:
+        quer = input("\n   Quer o icone do Forja Studio na Area de Trabalho? (S/n): "
+                     ).strip().lower() != "n"
+    except (EOFError, OSError):
+        # Instalacao que nao tem como perguntar. Criar e o que ele pediu.
+        print("\n   (nao deu para perguntar aqui - vou criar o icone; se nao quiser,"
+              " e so apagar)")
+    except KeyboardInterrupt:
+        print("\n   Tudo bem, sem icone.")
+        _de_novo_depois()
+        return
+
+    if not quer:
+        print("   Tudo bem, sem icone.")
+        _de_novo_depois()
+        return
+
+    try:
+        feito = _atalho.criar(mesa)
+    except Exception as exc:
+        feito = None
+        _atalho.ultimo_motivo = str(exc)
+
+    if feito:
+        print(OK + "icone criado na Area de Trabalho")
+        print("       Clicar nele abre SO a pagina - nenhuma janela preta e")
+        print("       nenhuma IA ligada. As IAs voce liga pelos botoes la dentro,")
+        print("       uma de cada vez, do jeito que o seu computador aguentar.")
+        return
+
+    # Falhar aqui nao pode mais ser mudo: o motivo vai para a tela, inteiro.
+    cuidado("nao consegui criar o icone.")
+    print("       " + (getattr(_atalho, "ultimo_motivo", None) or "Nao sei dizer o motivo."))
+    print("       Da para abrir o estudio pelo 'Forja Studio.bat', aqui da pasta.")
+    _de_novo_depois()
+
+
 def main():
     print("=" * 66)
     print("  SETUP DO ESTUDIO LOCAL")
@@ -311,6 +440,7 @@ def main():
         print("  MODO CONFERENCIA: so olha, nao instala nem cria nada.")
     print("=" * 66)
     conferir_maquina()
+    conferir_o_lugar()
     # Onde guardar os 235 GB. So pergunta na PRIMEIRA vez: quem ja escolheu nao quer ser
     # perguntado de novo toda vez que roda o setup so para conferir alguma coisa.
     if "--conferir" not in sys.argv and not (AQUI / ("caminhos.bat" if WIN else "caminhos.sh")).is_file():

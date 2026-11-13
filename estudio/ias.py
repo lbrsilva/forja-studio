@@ -48,6 +48,110 @@ import plataforma
 AQUI = Path(__file__).resolve().parent
 RAIZ = AQUI.parent
 
+# A pasta API fica AO LADO da pasta estudio (mesmo lugar da chave do ElevenLabs).
+_API_DIR = Path(os.environ.get("ESTUDIO_API_DIR") or RAIZ / "API")
+TOKEN_ARQ = _API_DIR / "huggingface.txt"
+
+
+class _SemTokenEmOutroHost(urllib.request.HTTPRedirectHandler):
+    """Tira o Authorization assim que o redirect troca de host.
+
+    O urllib REENVIA o cabeçalho ao seguir um redirect, e o Hugging Face responde 302
+    mandando para o CDN (medido em 12/11/2026: us.aws.cdn.hf.co). O token não tem nada que
+    fazer lá - a URL do CDN já vem assinada - e mandar segredo para um host que não é o
+    dono dele é justamente o que a gente evita no resto do projeto.
+
+    Achado por lbrsilva, no PR #1 do macOS.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, novaurl):
+        novo = super().redirect_request(req, fp, code, msg, headers, novaurl)
+        de = urllib.parse.urlparse(req.full_url).hostname
+        para = urllib.parse.urlparse(novaurl).hostname
+        if novo is not None and para != de:
+            novo.remove_header("Authorization")
+        return novo
+
+
+def _token_hf():
+    """O token do Hugging Face, se a pessoa tiver posto um. Vazio = baixa sem se identificar.
+
+    Quase nenhum modelo precisa disto: dos 19 repositorios, 18 entregam o arquivo a quem
+    pedir. O token existe por causa do Lightricks/LTX-2.5, que fica atras de um portao -
+    e sem ele o download parava com um 401 cru, sem explicar nada a ninguem.
+    """
+    try:
+        t = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+        if not t and TOKEN_ARQ.is_file():
+            t = TOKEN_ARQ.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+        return t
+    except OSError:
+        return ""   # pasta sem permissao: segue sem token, e o 401 explica o que fazer
+
+
+def tem_token():
+    """So diz SE existe um token, nunca qual e. A tela nao precisa saber o segredo."""
+    return bool(_token_hf())
+
+
+def guardar_token(valor):
+    """Grava (ou apaga, se vier vazio) o token do Hugging Face. Devolve (ok, recado).
+
+    Nao confere o token aqui de proposito: conferir pediria baixar alguma coisa, e o
+    unico jeito honesto de saber se ele vale e tentar instalar a IA que precisa dele.
+    O que da para conferir e a FORMA - token do Hugging Face comeca com "hf_" e nao tem
+    espaco. Colar a senha da conta por engano no lugar do token e o erro mais comum.
+    """
+    valor = (valor or "").strip()
+    if not valor:
+        try:
+            TOKEN_ARQ.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            return False, f"Não consegui apagar {TOKEN_ARQ}: {exc.strerror or exc}"
+        return True, "Token removido. Os 18 repositórios abertos continuam baixando normalmente."
+    if any(c.isspace() for c in valor) or len(valor) > 200:
+        return False, "Isso não parece um token. Cole só o token, sem espaço nem quebra de linha."
+    if not valor.startswith("hf_"):
+        return False, ("Token do Hugging Face começa com \"hf_\". Confira se você copiou o "
+                       "TOKEN (em Settings > Access Tokens) e não a senha da conta.")
+    try:
+        TOKEN_ARQ.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_ARQ.write_text(valor + "\n", encoding="utf-8")
+    except OSError as exc:
+        return False, f"Não consegui guardar em {TOKEN_ARQ}: {exc.strerror or exc}"
+    return True, "Token guardado. Agora clique em instalar o LTX 2.5 de novo."
+
+
+def _repo_do_link(url):
+    """De https://huggingface.co/DONO/REPO/resolve/... tira "DONO/REPO"."""
+    try:
+        depois = url.split("huggingface.co/", 1)[1]
+        dono, repo = depois.split("/", 2)[:2]
+        return dono + "/" + repo
+    except Exception:
+        return ""
+
+
+def _recado_do_portao(url, nome, com_token):
+    """O recado que a pessoa le quando o servidor responde 401/403.
+
+    Numero de erro nao ensina ninguem a fazer nada. Este texto diz o repositorio, o que
+    fazer la, e onde esta explicado - e muda conforme ja exista um token ou nao.
+    """
+    repo = _repo_do_link(url)
+    onde = ("https://huggingface.co/" + repo) if repo else "a pagina do modelo"
+    if com_token:
+        return (f"{nome}: o Hugging Face recusou o seu token para {repo or 'este modelo'}. "
+                f"Confira se você aceitou a licença em {onde} com a MESMA conta do token, "
+                f"e se o token ainda vale (API\\huggingface.txt). Veja REPOSITORIOS.md.")
+    return (f"{nome}: o repositório {repo or 'deste modelo'} pede conta no Hugging Face e "
+            f"aceitar a licença. Abra {onde}, entre na sua conta e aceite a licença; depois "
+            f"crie um token de leitura em https://huggingface.co/settings/tokens e salve a "
+            f"primeira linha dele em API\\huggingface.txt. Daí clique em instalar de novo. "
+            f"Está explicado em REPOSITORIOS.md.")
+
 
 def _achar_catalogo():
     """O modelos.json fica em lugares diferentes no pacote e aqui no desenvolvimento.
@@ -123,17 +227,6 @@ def quem_e_o_token_hf(token=None):
         raise OSError("Nao consegui falar com o Hugging Face (sem internet?). O token foi guardado mesmo assim.") from exc
 
 
-class _SemTokenEmOutroHost(urllib.request.HTTPRedirectHandler):
-    """O urllib reenvia o Authorization ao seguir um redirect. O Hugging Face redireciona para um CDN de URL
-    assinada, que recusa o cabecalho: tira o token assim que o host muda."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        novo = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if novo is not None and urllib.parse.urlparse(newurl).hostname != urllib.parse.urlparse(req.full_url).hostname:
-            novo.remove_header("Authorization")
-        return novo
-
-
 def _abrir(pedido, nome):
     if urllib.parse.urlparse(pedido.full_url).hostname == HOST_HF:
         token = _token_hf()
@@ -158,6 +251,7 @@ FOLGA_BYTES = 1024 * 1024
 _fila = []                 # ids esperando
 _agora = None              # {"ia":..., "arquivo":..., "baixados":..., "total":..., "comecou":...}
 _erro = None
+_erro_ia = None            # de QUAL IA foi o erro: o cartao dela mostra o recado
 _parar = False
 _trava = threading.Lock()
 _tocando = False
@@ -238,7 +332,7 @@ def todas(nomes):
 def progresso():
     with _trava:
         d = dict(_agora) if _agora else None
-        return {"baixando": d, "fila": list(_fila), "erro": _erro}
+        return {"baixando": d, "fila": list(_fila), "erro": _erro, "erro_ia": _erro_ia}
 
 
 def _baixar_arquivo(nome, info):
@@ -251,6 +345,12 @@ def _baixar_arquivo(nome, info):
     ja = parcial.stat().st_size if parcial.exists() else 0
 
     pedido = urllib.request.Request(info["fonte"], headers={"User-Agent": "ForjaStudio/1.0"})
+    # So manda o token para o Hugging Face: token e segredo, e nao se entrega segredo a
+    # um servidor que nao e o dono dele.
+    # Host exato, não "contém": "huggingface.co.exemplo.com" não é o Hugging Face.
+    token = _token_hf() if urllib.parse.urlparse(info["fonte"]).hostname == "huggingface.co" else ""
+    if token:
+        pedido.add_header("Authorization", "Bearer " + token)
     if ja:
         # continuar de onde parou. Se o servidor nao aceitar, ele responde 200 e a gente
         # recomeca do zero em vez de grudar bytes novos no fim de um arquivo pela metade.
@@ -292,8 +392,9 @@ def _baixar_arquivo(nome, info):
 
 
 def _trabalhar(nomes_por_ia):
-    global _agora, _erro, _tocando, _parar
+    global _agora, _erro, _erro_ia, _tocando, _parar
     cat = catalogo()
+    ia = None
     try:
         while True:
             with _trava:
@@ -317,6 +418,7 @@ def _trabalhar(nomes_por_ia):
     except Exception as exc:
         with _trava:
             _erro = str(exc)
+            _erro_ia = ia
     finally:
         with _trava:
             _agora = None
@@ -326,7 +428,7 @@ def _trabalhar(nomes_por_ia):
 
 def instalar(ia):
     """Poe a IA na fila. Devolve (entrou, recado)."""
-    global _tocando, _erro
+    global _tocando, _erro, _erro_ia
     est = estado_de(ia)
     if not est.get("conhecida"):
         return False, "Não conheço esta IA no catálogo de modelos."
@@ -340,6 +442,7 @@ def instalar(ia):
             return False, "Esta IA já está na fila."
         _fila.append(ia)
         _erro = None
+        _erro_ia = None
         if _tocando:
             return True, "Entrou na fila."
         _tocando = True

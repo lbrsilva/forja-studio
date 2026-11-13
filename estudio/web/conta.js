@@ -84,13 +84,26 @@
     p.hidden = !msg;
   }
 
+  // 12/11/2026: este pé de página dizia só "não consegui identificar esta máquina", e
+  // mandava "abrir o estúdio do jeito de sempre" — que não resolvia nada, porque o
+  // problema não era o jeito de abrir: era a leitura do equipamento falhando calada.
+  // Agora ele diz QUAL característica não deu, que é o que permite consertar.
   function pe(estado) {
     const n = estado && estado.campos_da_maquina;
+    const total = (estado && estado.maquina && estado.maquina.total) || 5;
+    const faltou = (estado && estado.maquina_faltou) || [];
     const partes = [];
     if (n != null) {
-      partes.push(n >= 2
-        ? `Esta máquina foi reconhecida por <b>${n} de 3</b> características do equipamento.`
-        : '<b>Não consegui identificar esta máquina.</b> Abra o estúdio do jeito de sempre e tente de novo.');
+      if (n >= 2) {
+        partes.push(`Esta máquina foi reconhecida por <b>${n} de ${total}</b> características do equipamento.`);
+      } else {
+        partes.push('<b>Não consegui identificar esta máquina.</b>'
+          + (faltou.length
+              ? ' Não deu para ler ' + faltou.join(', ') + '.'
+              : '')
+          + ' <b>Atualize o Forja Studio</b> e abra de novo: a versão nova lê o'
+          + ' equipamento por dois caminhos diferentes, e basta um deles responder.');
+      }
     }
     partes.push('Guardamos nome, e-mail e telefone. A senha fica embaralhada, e os números de '
       + 'série do seu equipamento <b>não saem daqui</b> — só um resumo que não volta atrás.');

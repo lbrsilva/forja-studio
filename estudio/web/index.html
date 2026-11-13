@@ -223,6 +223,18 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
       </div>
       <div class="catalogo-grade" id="catalogo"></div>
     </section>
+
+    <!-- 11/11/2026: as chaves de API, num lugar so. Antes a do ElevenLabs ficava escondida
+         dentro da aba Narracao e o token do Hugging Face só existia como arquivo — quem
+         instalava o pacote não tinha como saber que ele existia. O conteudo e desenhado
+         pelo app.js (renderChaves), a partir do que o /api/chaves conta. -->
+    <section class="bloco-inicio chaves" id="blocoChaves" aria-labelledby="chavesTitulo">
+      <div class="bloco-cab">
+        <h2 id="chavesTitulo" data-i18n="tela.configuracoes-de-api">Configurações de API</h2>
+        <p class="fraco" data-i18n="tela.sao-todas-opcionais-o-estudio">São todas opcionais: o estúdio funciona inteiro sem nenhuma. Cada uma destrava uma coisa a mais, e fica guardada só no seu computador.</p>
+      </div>
+      <div class="chaves-lista" id="chavesLista"></div>
+    </section>
   </section>
 
   <!-- ============================== GERADOR (imagem / vídeo / pessoa falando) ============================== -->
@@ -1114,7 +1126,7 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
 
 <!-- idioma.js vem ANTES dos outros: ele troca o texto da casca assim que a tela existe,
      para a pessoa que escolheu inglês não ver o português piscar primeiro. -->
-<script src="idioma.js?v=20261111-fim"></script>
+<script src="idioma.js?v=20261111-chaves"></script>
 <script src="icones.js?v=20260924-desligar2"></script>
 <script src="conta.js?v=20261111-nome"></script>
 <script src="atualizacao.js?v=20261103-atu"></script>

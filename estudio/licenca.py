@@ -42,6 +42,17 @@ SERVIDOR = os.environ.get("FORJA_CONTAS_URL") or "https://jers.viverbemcomoesta.
 # resumos diferentes em programas diferentes. O segredo do sistema e a chave privada.
 TEMPERO = b"forja-studio/impressao/v1"
 
+# Os campos da impressao digital, em ordem. Os tres primeiros sao do WMI (PowerShell); os
+# dois ultimos, do registro do Windows. O servidor precisa conhecer esta mesma lista.
+CAMPOS = ("placa_uuid", "placa_serie", "disco_serie", "windows_id", "instalacao_id")
+
+# Como cada campo se chama em portugues, para a tela explicar o que faltou.
+NOME_DO_CAMPO = {"placa_uuid": "o codigo da placa-mae",
+                 "placa_serie": "a serie da placa-mae",
+                 "disco_serie": "a serie do disco",
+                 "windows_id": "o identificador do Windows",
+                 "instalacao_id": "a instalacao do Windows"}
+
 # Quantos dias o painel aguenta sem conseguir falar com o servidor depois de a licenca
 # vencer.
 #
@@ -90,17 +101,73 @@ def _ler_maquina_windows():
         "[pscustomobject]@{placa_uuid=$p.UUID; placa_serie=$b.SerialNumber; "
         "disco_serie=$d.SerialNumber} | ConvertTo-Json -Compress"
     )
+    global _ultimo_erro
     try:
         r = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
              "-Command", ps],
             capture_output=True, text=True, timeout=25,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return json.loads(r.stdout.strip() or "{}")
     except Exception as exc:
-        global _ultimo_erro
-        _ultimo_erro = f"Nao consegui ler a identificacao da maquina: {exc}"
+        _ultimo_erro = f"O Windows nao deixou ler a identificacao da maquina: {exc}"
         return {}
+    # 12/11/2026: o codigo de saida era IGNORADO. PowerShell que morria pela metade devolvia
+    # stdout vazio, o json virava {} e os tres campos sumiam SEM MOTIVO NENHUM na tela.
+    saida = (r.stdout or "").strip()
+    if r.returncode != 0 and not saida:
+        _ultimo_erro = ("O Windows nao respondeu a leitura da placa e do disco "
+                        f"(codigo {r.returncode}). " + ((r.stderr or "").strip()[:160]))
+        return {}
+    try:
+        return json.loads(saida or "{}")
+    except ValueError:
+        _ultimo_erro = "A leitura da placa e do disco veio ilegivel."
+        return {}
+
+
+def _ler_registro_windows():
+    """Dois identificadores do proprio Windows, lidos SEM PowerShell e SEM WMI.
+
+    Existem desde que o Windows foi instalado, nao precisam de administrador e nao passam
+    pelo servico do WMI - que e justamente o que falha nas maquinas novas e nas virtuais.
+    Sao a segunda perna da identificacao: com elas, o WMI inteiro pode cair e a pessoa
+    continua conseguindo criar a conta.
+
+    O que eles custam, dito na cara: dois PCs clonados da MESMA imagem do Windows nascem com
+    os mesmos valores, e para a conta eles contam como UMA maquina. Quem clona ja clonava a
+    placa-mae virtual junto, entao isso nao abriu porta nova - mas e bom estar escrito.
+    """
+    if os.name != "nt":
+        return {}
+    fora = {}
+    try:
+        import winreg
+    except Exception:
+        return fora
+
+    def _ler(raiz, chave, valor):
+        try:
+            with winreg.OpenKey(raiz, chave, 0,
+                                winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0)) as k:
+                v, _ = winreg.QueryValueEx(k, valor)
+            return str(v).strip()
+        except OSError:
+            return None
+
+    # o identificador da instalacao do Windows: existe em 100% das maquinas
+    fora["windows_id"] = _ler(winreg.HKEY_LOCAL_MACHINE,
+                              r"SOFTWARE\Microsoft\Cryptography", "MachineGuid")
+
+    # um segundo, de origem diferente. Se ele nao existir, monta-se um a partir do numero
+    # do produto mais a data da instalacao - que juntos ja nao se repetem a toa.
+    segundo = _ler(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\SQMClient", "MachineId")
+    if not segundo:
+        nt = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        produto = _ler(winreg.HKEY_LOCAL_MACHINE, nt, "ProductId")
+        quando = _ler(winreg.HKEY_LOCAL_MACHINE, nt, "InstallDate")
+        segundo = f"{produto}|{quando}" if produto and quando else None
+    fora["instalacao_id"] = segundo
+    return fora
 
 
 # Valores de fabrica que aparecem em milhares de maquinas: se vier um destes, o campo nao
@@ -121,22 +188,42 @@ def _resumir(v):
 
 
 def impressao(recarregar=False):
-    """{"placa_uuid": <sha256>, "placa_serie": <sha256>, "disco_serie": <sha256>}.
+    """Um resumo embaralhado de cada campo. O numero de serie nunca sai desta maquina.
 
     Campo que nao der para ler, ou que vier com valor de fabrica, vai como None. O servidor
-    aceita a maquina com 2 dos 3 batendo - entao trocar o HD nao tranca ninguem de fora.
+    aceita a maquina com 2 campos batendo - entao trocar o HD nao tranca ninguem de fora.
+
+    Os tres primeiros vem do WMI; os dois ultimos, do registro. Duas fontes de proposito:
+    ate 11/11/2026 as tres vinham da MESMA chamada de PowerShell, e quando ela falhava a
+    pessoa simplesmente nao conseguia criar conta no proprio computador.
     """
     global _impressao
     if _impressao is not None and not recarregar:
         return _impressao
-    cru = plataforma.maquina_mac() if plataforma.MAC else _ler_maquina_windows()
+    if plataforma.MAC:
+        cru = plataforma.maquina_mac()
+    else:
+        cru = dict(_ler_maquina_windows())
+        cru.update(_ler_registro_windows())
     _impressao = {campo: (_resumir(bom) if (bom := _vale(cru.get(campo))) else None)
-                  for campo in ("placa_uuid", "placa_serie", "disco_serie")}
+                  for campo in CAMPOS}
     return _impressao
 
 
 def quantos_campos():
     return sum(1 for v in impressao().values() if v)
+
+
+def campos_lidos():
+    """Quais campos deram e quais nao deram - para a tela poder DIZER o que faltou.
+
+    A tela antiga so sabia contar. Quando dava menos de dois, ela mandava "abra o estudio
+    do jeito de sempre e tente de novo", que nao ajuda ninguem a resolver nada.
+    """
+    imp = impressao()
+    return {"lidos": [c for c in CAMPOS if imp.get(c)],
+            "faltaram": [c for c in CAMPOS if not imp.get(c)],
+            "total": len(CAMPOS)}
 
 
 # ------------------------------------------------------------------ conferir assinatura
@@ -289,6 +376,8 @@ def estado():
         # servia para tudo e nao ajudava ninguem - a pessoa so sabia que nao entrou.
         return {"entrou": False, "servidor": SERVIDOR,
                 "campos_da_maquina": quantos_campos(),
+                "maquina": campos_lidos(),
+                "maquina_faltou": [NOME_DO_CAMPO[c] for c in campos_lidos()["faltaram"]],
                 "tem_licenca": bool(guardado.get("licenca")),
                 "motivo": (_motivo if guardado.get("licenca") else None) or _ultimo_erro}
     agora = int(time.time())
@@ -302,7 +391,8 @@ def estado():
             "dias": round(vence_em / 86400, 1),
             "vencida": vence_em <= 0,
             "na_folga": -folga < vence_em <= 0,
-            "servidor": SERVIDOR, "campos_da_maquina": quantos_campos()}
+            "servidor": SERVIDOR, "campos_da_maquina": quantos_campos(),
+            "maquina": campos_lidos()}
 
 
 def precisa_renovar():

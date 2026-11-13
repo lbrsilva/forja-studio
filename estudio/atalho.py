@@ -25,6 +25,9 @@ AQUI = Path(__file__).resolve().parent          # ...\estudio
 RAIZ = AQUI.parent
 NOME = "Forja Studio"
 
+# Por que o ultimo `criar()` nao deu certo. Em portugues, para ir direto para a tela.
+ultimo_motivo = None
+
 
 def _area_de_trabalho():
     """Pergunta ao Windows onde fica a Area de Trabalho DESTA pessoa.
@@ -140,14 +143,27 @@ def _criar_app_mac(mesa):
 
 
 def criar(mesa=None):
-    """Cria o atalho. Devolve o caminho dele, ou None."""
+    """Cria o atalho. Devolve o caminho dele, ou None.
+
+    Quando devolve None, o PORQUE fica em `ultimo_motivo` - em portugues, pronto para ir
+    para a tela. Ver o cabecalho do arquivo: este era o ponto onde o icone sumia calado.
+    """
+    global ultimo_motivo
+    ultimo_motivo = None
     if plataforma.MAC:
         mesa = Path(mesa) if mesa else _area_de_trabalho()
-        return _criar_app_mac(mesa) if mesa and mesa.is_dir() else None
+        if mesa and mesa.is_dir():
+            return _criar_app_mac(mesa)
+        ultimo_motivo = "Nao achei a sua Area de Trabalho."
+        return None
     if os.name != "nt":
+        ultimo_motivo = "O icone na Area de Trabalho so existe no Windows."
         return None
     mesa = Path(mesa) if mesa else _area_de_trabalho()
     if not mesa or not mesa.is_dir():
+        ultimo_motivo = ("Nao achei a sua Area de Trabalho. Se ela estiver no OneDrive e "
+                         "ele ainda nao tiver terminado de sincronizar, espere e tente "
+                         "de novo.")
         return None
 
     alvo = mesa / f"{NOME}.lnk"
@@ -155,6 +171,8 @@ def criar(mesa=None):
     abrir = AQUI / "abrir.py"
     icone = AQUI / "icone.ico"
     if not abrir.is_file():
+        ultimo_motivo = (f"Falta o arquivo {abrir} na pasta do estudio. Baixe o pacote "
+                         "de novo.")
         return None
 
     # o .lnk guarda o caminho; aspas duplas dentro do PowerShell viram ""
@@ -170,13 +188,22 @@ $a.Description      = "Abre o Forja Studio. So a pagina: as IAs voce liga la den
 '''
     if icone.is_file():
         script += f'$a.IconLocation = "{esc(icone)},0"\n'
+    else:
+        # Sem isto, o atalho nasce com a CARA DO PYTHON em vez da nossa - e ninguem
+        # entende por que o icone "nao e igual ao daqui". Falhava calado.
+        print(f"  ATENCAO: nao achei {icone}. O atalho vai ficar com o icone do Python,")
+        print("           nao com o nosso. Baixe o pacote de novo para ter o icone certo.")
     script += "$a.Save()\n"
 
     ok, saida = _ps(script)
     if ok and alvo.is_file():
         return alvo
-    if saida:
-        print("  (o Windows disse:", saida, ")")
+    if not ok:
+        ultimo_motivo = ("O Windows nao deixou criar o atalho. Costuma ser o antivirus ou "
+                         "a politica de scripts do PowerShell. " + (saida or "")).strip()
+    else:
+        ultimo_motivo = (f"O PowerShell nao reclamou, mas o arquivo {alvo.name} nao "
+                         "apareceu na Area de Trabalho. " + (saida or "")).strip()
     return None
 
 
@@ -197,8 +224,85 @@ def tirar(mesa=None):
     return tirou
 
 
+def conferir(mesa=None):
+    r"""Conta tudo sobre o atalho que EXISTE, para quem esta longe poder mandar o texto.
+
+    Nasceu em 12/11/2026: o icone apareceu com a cara errada numa maquina de teste e nao
+    abria, e daqui nao havia como saber por que. Adivinhar de longe custa um dia; uma tela
+    de diagnostico custa um minuto.
+    """
+    mesa = Path(mesa) if mesa else _area_de_trabalho()
+    print("=" * 64)
+    print("  CONFERENCIA DO ICONE DO FORJA STUDIO")
+    print("=" * 64)
+    print(f"  pasta do estudio   : {RAIZ}")
+    print(f"  Area de Trabalho   : {mesa}")
+
+    abrir = AQUI / "abrir.py"
+    icone = AQUI / "icone.ico"
+    print(f"  estudio\\abrir.py   : {'esta la' if abrir.is_file() else 'FALTANDO'}")
+    print(f"  estudio\\icone.ico  : "
+          f"{str(icone.stat().st_size) + ' bytes' if icone.is_file() else 'FALTANDO'}")
+
+    comfy = RAIZ / "ComfyUI_windows_portable" / "python_embeded" / "python.exe"
+    print(f"  Python da ComfyUI  : {'esta la' if comfy.is_file() else 'nao instalada'}")
+    print(f"  Python deste setup : {sys.executable}")
+    escolhido = _pythonw()
+    print(f"  o atalho usaria    : {escolhido}")
+    if not Path(escolhido).is_file():
+        print("                       ^^^ ESSE ARQUIVO NAO EXISTE - o atalho nao abriria")
+
+    if not mesa:
+        print("\n  Sem Area de Trabalho, nao da para conferir o atalho.")
+        return 1
+
+    alvo = mesa / f"{NOME}.lnk"
+    print(f"\n  {NOME}.lnk        : {'existe' if alvo.is_file() else 'NAO EXISTE'}")
+    if (mesa / f"{NOME}.bat").exists():
+        print(f"  {NOME}.bat        : existe tambem (e o atalho ANTIGO; pode apagar)")
+    if not alvo.is_file():
+        print("\n  Rode 'Criar o icone na Area de Trabalho.bat' para criar.")
+        return 1
+
+    ok, saida = _ps(
+        '$a = (New-Object -ComObject WScript.Shell).CreateShortcut("%s");'
+        '"alvo=" + $a.TargetPath; "args=" + $a.Arguments;'
+        '"pasta=" + $a.WorkingDirectory; "icone=" + $a.IconLocation'
+        % str(alvo).replace('"', '""'))
+    if not ok:
+        print("  nao consegui ler o atalho:", saida)
+        return 1
+    dados = {}
+    for linha in saida.splitlines():
+        if "=" in linha:
+            k, _, v = linha.partition("=")
+            dados[k.strip()] = v.strip()
+            print(f"    {k.strip():6}: {v.strip()}")
+
+    problemas = []
+    destino = dados.get("alvo", "")
+    if destino and not Path(destino).is_file():
+        problemas.append(f"o alvo '{destino}' NAO EXISTE nesta maquina - por isso nao abre")
+    ico = (dados.get("icone") or "").rsplit(",", 1)[0]
+    if not ico or ico == "," or not Path(ico).is_file():
+        problemas.append("o atalho nao tem o NOSSO icone (por isso a carinha esta diferente)")
+    if "abrir.py" not in (dados.get("args") or ""):
+        problemas.append("o atalho nao aponta para o estudio\\abrir.py - foi feito a mao?")
+
+    print()
+    if problemas:
+        for x in problemas:
+            print("  [X] " + x)
+        print("\n  Conserto: clique em 'Criar o icone na Area de Trabalho.bat'.")
+        return 1
+    print("  [OK] o atalho esta certo: aponta para o estudio e usa o nosso icone.")
+    return 0
+
+
 def main():
     mesa = _area_de_trabalho()
+    if "--conferir" in sys.argv:
+        return conferir(mesa)
     if "--onde" in sys.argv:
         print(f"  Area de Trabalho: {mesa}")
         return 0
@@ -210,7 +314,9 @@ def main():
         print(f"    aponta para: {_pythonw().name} {AQUI / 'abrir.py'}")
         print("    clicar nele NAO abre janela preta e NAO acende a placa de video")
         return 0
-    print("  nao consegui criar o icone (Area de Trabalho nao encontrada?)")
+    print("  nao consegui criar o icone.")
+    print("  " + (ultimo_motivo or "Nao sei dizer o motivo."))
+    print("\n  Enquanto isso, da para abrir pelo 'Forja Studio.bat' na pasta do estudio.")
     return 1
 
 

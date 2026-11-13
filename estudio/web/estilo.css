@@ -877,8 +877,7 @@ dialog::backdrop { background: rgba(5, 6, 9, .72); backdrop-filter: blur(3px); }
 .forja-fornos .ic-caixa { flex: none; }
 @media (max-width: 760px) { .forja-fornos .servico { white-space: normal; } }
 
-/* ================================================================================
-   O TRILHO (02/11/2026): em tela larga o menu sai de cima e vira uma barra lateral,
+/* =========================================================================   O TRILHO (02/11/2026): em tela larga o menu sai de cima e vira uma barra lateral,
    como em programa de edicao. Ganha-se a largura toda para o trabalho e o nome das
    abas para de ser cortado ("Plano-seq...").
 
@@ -1179,3 +1178,20 @@ body.rota-inicio .maq-lateral .bloco-inicio { max-width: 560px; }
   color: var(--fraco); font-size: 11.5px; text-align: center; font-variant-numeric: tabular-nums; }
 .fila-abas button[aria-selected="true"] .fila-aba-n { color: var(--acento); border-color: rgba(215, 255, 58, .3); }
 .fila-hist-audio { width: 100%; height: 34px; margin-top: var(--e2); }
+
+/* ---- Configurações de API (11/11/2026) --------------------------------------
+   Cartões discretos: quem não tem chave nenhuma usa o estúdio inteiro, então esta
+   seção não pode parecer uma pendência nem gritar na tela inicial. */
+.chaves-lista { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.chave-cartao { border: 1px solid var(--borda); border-radius: 12px; padding: 14px 16px; background: var(--fundo-2); }
+.chave-topo { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.chave-topo h3 { margin: 0; font-size: 15px; }
+.chave-ok { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ok, #6ee7a8); }
+.chave-ok svg { width: 14px; height: 14px; }
+.chave-nao { font-size: 12px; color: var(--fraco); }
+.chave-passos { margin: 8px 0 10px; padding-left: 20px; font-size: 13px; color: var(--fraco); }
+.chave-passos li { margin: 3px 0; }
+.chave-linha { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.chave-campo { flex: 1 1 180px; min-width: 0; }
+.chave-onde { margin-top: 8px; font-size: 11px; opacity: .8; }
+.chave-onde code { font-size: 11px; word-break: break-all; }

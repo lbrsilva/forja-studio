@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 rem  Faz o Forja Studio subir sozinho quando voce entra no Windows.
 rem
 rem  O que isto liga e SO o estudio - o programa leve que serve a pagina. Ele NAO
