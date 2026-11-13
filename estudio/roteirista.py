@@ -94,11 +94,18 @@ def _pedido(canal, contexto, briefing, max_cenas, duracao, personagens_fixos=Non
                              "nos protagonistas, principalmente em novelinha.")
     ref = ""
     if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
-        ref = ("\nREFERÊNCIA DE ESTILO (inspire-se no ritmo e no clima, nunca copie):\n"
-               "- %s%s\n%s\n" % (
-                   inspiracao.get("titulo") or inspiracao.get("url"),
-                   (" de " + inspiracao["autor"]) if inspiracao.get("autor") else "",
-                   inspiracao.get("descricao") or inspiracao.get("texto") or ""))
+        linhas_ref = ["- %s%s" % (inspiracao.get("titulo") or inspiracao.get("url"),
+                                  (" de " + inspiracao["autor"]) if inspiracao.get("autor") else "")]
+        if inspiracao.get("ritmo"):
+            linhas_ref.append("- RITMO (imite, não copie): " + str(inspiracao["ritmo"]))
+        if inspiracao.get("visual"):
+            linhas_ref.append("- ESTILO VISUAL DA REFERÊNCIA (aplique em TODAS as descrições de "
+                              "imagem): " + str(inspiracao["visual"]))
+        amostra = str(inspiracao.get("descricao") or inspiracao.get("texto") or "").strip()
+        if amostra:
+            linhas_ref.append("- Trecho falado da referência (inspire-se no tom): " + amostra[:600])
+        ref = ("\nREFERÊNCIA DE ESTILO (inspire-se no ritmo, no visual e no clima; nunca copie):\n"
+               + "\n".join(linhas_ref) + "\n\n")
     estilo_txt = ""
     if est.get("prompt"):
         estilo_txt = ("- ESTILO VISUAL OBRIGATÓRIO: %s. Aplique em TODAS as descrições de imagem: %s.\n"
@@ -126,6 +133,12 @@ REGRAS DE SAÍDA:
 - A primeira cena é o gancho: prende nos primeiros 3 segundos, sem "olá" e sem apresentação.
 - Cada cena tem uma descrição visual EM INGLÊS, de um objeto, lugar ou pessoa EM AÇÃO.
   Nada de texto escrito dentro da imagem; nada de marca d'água.
+- Seja o mais específico possível, como uma direção de arte: quem/o quê, a ação, o
+  enquadramento (close, plano médio, plano aberto), a expressão (olhos, boca, sobrancelhas),
+  o cabelo, a roupa, a iluminação e a paleta de cores. Descreva o que se vê, não o que se sente.
+- Adapte o detalhe ao estilo: realista/cinematográfico pede rosto, pele e olhos detalhados;
+  minimalista, papel, pixel, pincel ou 3D estilizado pedem formas, cores e textura do estilo,
+  sem forçar realismo.
 - A cena é sobre a IDEIA e o que está sendo contado, não sobre o rosto do personagem.
   Varie enquadramentos: plano aberto, objeto, detalhe, silhueta, ação e lugar. Só use
   close no personagem quando ele for o foco emocional da cena.
@@ -310,7 +323,8 @@ async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, dura
     if parte and ("parte %d" % int(parte)).lower() not in str(plano.get("titulo") or "").lower():
         plano["titulo"] = "%s · Parte %d" % (plano.get("titulo") or "Vídeo", int(parte))
     if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
-        plano["inspiracao"] = {k: inspiracao.get(k) for k in ("url", "plataforma", "titulo", "autor", "descricao")}
+        plano["inspiracao"] = {k: inspiracao.get(k) for k in (
+            "url", "plataforma", "titulo", "autor", "descricao", "ritmo", "visual", "duracao")}
     if aviso:
         plano["motor"] = "fallback"
         plano["observacoes"] = (plano.get("observacoes") + " " + aviso).strip()
@@ -392,24 +406,40 @@ async def melhorar_campo(pedir_texto, canal, contexto, campo, texto=""):
         raise ValueError("Campo desconhecido.")
     texto = _limpar(texto, 3000)
     limite = 160 if campo in ("publico", "tom", "chamada_final") else 900
+    outros = {k: contexto.get(k) for k in ("tema", "publico", "tom", "identidade_visual",
+                                            "regras", "nao_fazer", "referencias", "chamada_final")
+              if k != campo}
+    extra = {
+        "identidade_visual": (
+            "Mantenha o estilo que o texto atual já descreve e detalhe o que entra no prompt de imagem: "
+            "traço ou acabamento, luz, paleta, textura, enquadramento e cenário. NÃO troque por outro "
+            "estilo nem use rótulos genéricos como cinematográfico ou realista se o usuário não escreveu isso."),
+        "tema": "Mantenha o que o canal conta e para quem; só deixe mais claro e concreto.",
+        "publico": "Uma frase curta.",
+        "tom": "Uma frase curta.",
+        "chamada_final": "Uma frase curta.",
+        "regras": "Uma linha por item.",
+        "nao_fazer": "Uma linha por item.",
+        "referencias": "Uma linha por item.",
+        "hashtags": "Separe as hashtags por espaço, cada uma começando com #.",
+    }.get(campo, "")
     pedido = """Você melhora a configuração de um canal de vídeos curtos.
 
 Canal: %s
 Campo: %s
-Texto atual: %s
-Contexto já definido: %s
-
-Reescreva o campo no português do Brasil, direto e concreto, sem explicação e sem markdown.
-Se o texto atual estiver vazio, crie do zero a partir do nome e do contexto do canal.
+Texto atual escrito pelo usuário:
 %s
-Responda só com o texto final.
+
+Contexto já definido (use só para combinar, nunca para substituir o texto atual):
+%s
+
+O texto final DEVE partir do texto atual: conserve a ideia, o estilo e todos os detalhes concretos
+que o usuário escreveu. Se o texto estiver vazio, crie do zero a partir do nome e do contexto.
+%s
+Responda só com o texto final do campo, sem título e sem explicação.
 """ % (canal.get("nome") or "canal", CAMPOS_TEXTO[campo], texto or "(vazio)",
-       json.dumps({k: contexto.get(k) for k in ("tema", "publico", "tom", "identidade_visual",
-                                                "regras", "nao_fazer", "referencias", "chamada_final")},
-                  ensure_ascii=False),
-       "Uma linha por item." if campo in ("regras", "nao_fazer", "referencias") else
-       ("Separe as hashtags por espaço, cada uma começando com #." if campo == "hashtags" else ""))
-    res = await pedir_texto("livre", pedido)
+       json.dumps(outros, ensure_ascii=False), extra)
+    res = await pedir_texto("canal_campo", pedido)
     saida = _limpar_ia((res or {}).get("texto") if isinstance(res, dict) else res, limite + 400)
     if not saida:
         raise ValueError("A IA não devolveu texto para este campo.")
@@ -507,9 +537,16 @@ def _contexto_em_linhas(txt):
     return saida
 
 
-async def gerar_personagens(pedir_texto, canal, contexto, existentes=None):
+async def gerar_personagens(pedir_texto, canal, contexto, existentes=None, briefing="",
+                            inspiracao=None, estilo=None, plano=None):
     nomes = [str((p or {}).get("nome") or "").strip() for p in (existentes or []) if isinstance(p, dict)]
     nomes = [n for n in nomes if n]
+    do_plano = [str((p or {}).get("nome") or "").strip() for p in ((plano or {}).get("personagens") or [])
+                if isinstance(p, dict)]
+    nomes = list(dict.fromkeys([n for n in nomes + do_plano if n]))
+    est = canais.estilo_de(canal, estilo)
+    insp = inspiracao if isinstance(inspiracao, dict) else {}
+    ref_visual = str(insp.get("visual") or "").strip()
     pedido = """Você cria personagens para um canal de vídeos curtos.
 
 Canal: %s
@@ -517,20 +554,31 @@ Tema: %s
 Público: %s
 Tom/estilo: %s
 Identidade visual: %s
+Estilo do vídeo: %s
+Referência visual analisada: %s
+Briefing DESTE vídeo (manda mais que o resto): %s
 Personagens que já existem (NÃO repita estes nomes): %s
 
-Crie de 1 a 3 personagens NOVOS que combinem com o canal e conversem com os existentes.
+Crie de 1 a 3 personagens NOVOS que sirvam EXATAMENTE a este vídeo.
+Se o briefing citar nomes, personagens, história ou episódio, use esses nomes e esse universo;
+não troque por personagens de outra história. Se o briefing não citar ninguém, crie gente que
+caiba no tema e no briefing, mantendo o mesmo universo.
 Inclua pelo menos um coadjuvante quando o canal contar histórias ou novelinha, para a
 cena não ficar só nos protagonistas.
 Cada um precisa de:
 - nome curto;
 - papel: principal, coadjuvante ou figurante;
 - descrição de quem é e como fala;
-- aparência visual EM INGLÊS, concreta o suficiente para repetir nas imagens.
+- aparência visual EM INGLÊS, concreta o suficiente para repetir nas imagens: rosto, cabelo,
+  corpo, roupa, expressão e época. Descreva SÓ o personagem; não repita o estilo do vídeo
+  (traço, render, luz, paleta) porque o estúdio aplica esse estilo separadamente.
 Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdown:
 [{"nome":"...","papel":"coadjuvante","descricao":"...","visual":"english appearance"}]
 """ % (canal.get("nome") or "canal", contexto.get("tema") or "", contexto.get("publico") or "",
-       contexto.get("tom") or "", contexto.get("identidade_visual") or "", ", ".join(nomes) or "(nenhum)")
+       contexto.get("tom") or "", contexto.get("identidade_visual") or "",
+       (est.get("nome") or "automático") + ((" — " + est["prompt"]) if est.get("prompt") else ""),
+       ref_visual or "(nenhuma)", (briefing or "").strip()[:1200] or "(não informado)",
+       ", ".join(nomes) or "(nenhum)")
     res = await pedir_texto("canal_personagens", pedido)
     bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
     if isinstance(bruto, dict):
@@ -561,16 +609,35 @@ Não invente marcas, números ou prêmios. Responda SÓ com um JSON, sem markdow
     return saida
 
 
-async def sugerir_pautas(pedir_texto, canal, contexto, top_videos=None, quantas=8):
+async def sugerir_pautas(pedir_texto, canal, contexto, top_videos=None, quantas=8, evitar=None, direcionamento=None):
     top = [str((v or {}).get("titulo") or "") for v in (top_videos or [])][:8]
-    pedido = """Você sugere pautas para um canal de vídeos curtos.
+    ja_existem = [str(t or "").strip()[:90] for t in (evitar or []) if str(t or "").strip()][:40]
+    regras = "; ".join(str(r) for r in (contexto.get("regras") or []))
+    nao_fazer = "; ".join(str(r) for r in (contexto.get("nao_fazer") or []))
+    personagens = ", ".join(str(p.get("nome")) for p in (contexto.get("personagens") or [])
+                            if isinstance(p, dict) and p.get("nome"))
+    direcionamento = str(direcionamento or "").strip()[:1200]
+    pedido_final = """Você sugere pautas para um canal de vídeos curtos.
 
 Canal: %s
 Tema: %s
 Público: %s
 Tom: %s
 Estilo: %s
+Identidade visual: %s
+Regras do canal: %s
+Não fazer: %s
+Personagens do canal: %s
 Vídeos que já performaram: %s
+Vídeos JÁ CRIADOS neste canal (NÃO repita estes temas nem sugira variação óbvia): %s
+
+PEDIDO DO DONO DO CANAL PARA ESTA LEVA (prioridade máxima, desde que caiba no tema): %s
+
+REGRA MAIS IMPORTANTE: TODAS as pautas têm de estar DENTRO do tema e do universo
+deste canal. Se o canal é sobre histórias da Bíblia, não sugira nada fora disso
+(nada de ficção genérica, tecnologia, notícia ou outro assunto). Se não couber no
+tema, não sugira. Se houver pedido do dono, todas as pautas devem partir dele
+(personagem, história, ângulo, série ou formato citado).
 
 Sugira %d pautas NOVAS, diferentes das que já existem, com:
 - titulo: chamada curta;
@@ -583,13 +650,18 @@ Não invente notícia, número ou acusação. Responda SÓ com JSON, sem markdow
 [{"titulo":"...","angulo":"...","gancho":"...","formato":"curto","serie":"","motivo":"..."}]
 """ % (canal.get("nome") or "canal", contexto.get("tema") or "", contexto.get("publico") or "",
        contexto.get("tom") or "", canais.estilo_de(canal, None).get("nome") or "",
-       ", ".join(top) or "(nenhum)", max(3, min(15, int(quantas or 8))))
-    res = await pedir_texto("canal_pautas", pedido)
+       contexto.get("identidade_visual") or "", regras or "(nenhuma)", nao_fazer or "(nenhum)",
+       personagens or "(nenhum)",
+       ", ".join(top) or "(nenhum)", "; ".join(ja_existem) or "(nenhum)",
+       direcionamento or "(nenhum — sugestões livres dentro do tema)",
+       max(3, min(15, int(quantas or 8))))
+    res = await pedir_texto("canal_pautas", pedido_final)
     bruto = _json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
     if isinstance(bruto, dict):
         bruto = bruto.get("pautas") or []
     if not isinstance(bruto, list):
         raise ValueError("A IA não devolveu pautas. Tente de novo.")
+    existentes = {_sem_acento(t).lower() for t in ja_existem}
     saida = []
     for x in bruto:
         if not isinstance(x, dict):
@@ -597,6 +669,10 @@ Não invente notícia, número ou acusação. Responda SÓ com JSON, sem markdow
         titulo = _limpar(x.get("titulo") or x.get("title"), 120)
         if not titulo:
             continue
+        chave = _sem_acento(titulo).lower()
+        if chave in existentes:
+            continue
+        existentes.add(chave)
         saida.append({"titulo": titulo,
                       "angulo": _limpar(x.get("angulo") or x.get("angle"), 400),
                       "gancho": _limpar(x.get("gancho") or x.get("hook"), 300),

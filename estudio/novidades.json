@@ -2,10 +2,18 @@
   "_sobre": "As notícias que aparecem na página inicial do Forja Studio. Uma por bloco, a mais nova em cima. Campos: id (nunca repetir), data (AAAA-MM-DD), etiqueta (novidade | ias | dica | aviso), titulo, texto. O 'destaque' deixa a primeira em evidência. Quando o servidor de contas entrar no ar, este arquivo passa a vir de lá — e todo mundo recebe a mesma notícia sem baixar nada de novo.",
   "novidades": [
     {
-      "id": "2026-11-11-idiomas",
+      "id": "2026-11-11-chaves-api",
       "data": "2026-11-11",
       "etiqueta": "novidade",
       "destaque": true,
+      "titulo": "Configurações de API: cole as suas chaves pela tela",
+      "texto": "Na tela de Início agora tem um lugar para as chaves que você tiver. São todas opcionais — o estúdio funciona inteiro sem nenhuma. A do ElevenLabs destrava as vozes na nuvem; sem ela a narração continua de graça, com as vozes locais. E o token do Hugging Face serve para baixar o LTX 2.5, o único dos 19 repositórios de modelos que pede conta e aceitar a licença — o cartão leva os três passos em links, na ordem certa. A tela nunca mostra a chave já guardada, só diz que ela existe, e tudo fica apenas no seu computador. Antes, quando o LTX 2.5 parava, nada aparecia na tela; agora o cartão da IA explica o que fazer."
+    },
+    {
+      "id": "2026-11-11-idiomas",
+      "data": "2026-11-11",
+      "etiqueta": "novidade",
+      "destaque": false,
       "titulo": "O painel agora fala inglês e espanhol",
       "texto": "No alto da tela tem PT · EN · ES. O português continua sendo o padrão e nada muda para quem já usa assim. Quem escolher outro idioma vê o menu, a tela de Início, o gerador inteiro, a aba de Voz e os cartões das IAs traduzidos — e a escolha fica guardada no navegador. O que ainda não foi traduzido continua aparecendo em português, de propósito: meia tela traduzida confunde mais do que ajuda. O README do projeto também já está nos três idiomas."
     },

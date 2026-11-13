@@ -407,6 +407,46 @@ async def apagar_voz(pid):
     return not any(str(v.get("id")) == pid for v in restantes)
 
 
+_IDIOMAS_PRESET = {
+    "a": "Inglês (EUA)", "b": "Inglês (UK)", "e": "Espanhol", "f": "Francês",
+    "h": "Híndi", "i": "Italiano", "j": "Japonês", "p": "Português", "z": "Chinês",
+}
+_presets_cache = {"ativos": None, "ate": 0.0}
+
+
+def _nome_preset(vid):
+    vid = str(vid or "")
+    lingua = _IDIOMAS_PRESET.get(vid[:1].lower(), "")
+    genero = {"f": "feminina", "m": "masculina"}.get(vid[1:2].lower(), "")
+    nome = vid.split("_", 1)[1].capitalize() if "_" in vid else vid
+    partes = [p for p in (lingua, genero) if p]
+    return "%s%s" % (nome, (" (" + ", ".join(partes) + ")") if partes else "")
+
+
+async def presets_do_motor():
+    """Vozes predefinidas do motor ativo. O MCP só lista profiles; os presets vêm de /engines."""
+    if _presets_cache["ativos"] is not None and time.time() < _presets_cache["ate"]:
+        return _presets_cache["ativos"]
+    try:
+        async with aiohttp.ClientSession() as ses:
+            async with ses.get(URL.rstrip("/") + "/engines/tts",
+                               timeout=aiohttp.ClientTimeout(total=15)) as r:
+                d = await r.json()
+    except Exception:
+        return _presets_cache["ativos"] or []
+    ativo = (d or {}).get("active")
+    entry = next((b for b in (d.get("backends") or []) if b.get("id") == ativo), None)
+    lista = []
+    if entry:
+        selo, txt = licenca_de(ativo)
+        for vid in entry.get("preset_voices") or []:
+            lista.append({"id": str(vid), "nome": _nome_preset(str(vid)),
+                          "motor": str(ativo or ""), "tipo": "preset",
+                          "licenca": selo, "licenca_txt": txt})
+    _presets_cache.update(ativos=lista, ate=time.time() + 300)
+    return lista
+
+
 async def vozes(forcar=False):
     """[{id, nome, motor, licenca, licenca_txt}] — em cache por 2 min."""
     if not forcar and _cache["vozes"] is not None and time.time() < _cache["ate"]:
@@ -415,14 +455,18 @@ async def vozes(forcar=False):
         lista = _normalizar_vozes(_json_do(await chamar("list_voices", timeout=20)))
     except Exception:
         return _cache["vozes"] or []
+    presets = await presets_do_motor()
+    if presets:
+        ids = {str(v.get("id")) for v in lista}
+        lista.extend(p for p in presets if p["id"] not in ids)
     # a voz não diz de qual motor é: herda a licença do motor LIGADO AGORA
     m = await motor_ativo()
     if m:
         for v in lista:
             if not v["motor"]:
                 v.update(motor=m["nome"], licenca=m["licenca"], licenca_txt=m["licenca_txt"])
-        lista.sort(key=lambda v: ({"ok": 0, "limite": 1, "duvida": 2, "proibido": 3}[v["licenca"]],
-                                  v["nome"].lower()))
+    lista.sort(key=lambda v: ({"ok": 0, "limite": 1, "duvida": 2, "proibido": 3}.get(v["licenca"], 2),
+                              v["nome"].lower()))
     # NÃO guardar lista vazia: durante os ~30 s de aquecimento ele responde sem as vozes, e
     # guardar isso deixava a tela dizendo "nenhuma voz" por 2 minutos depois de já estar
     # pronta. Resposta de quem ainda está acordando não é resposta.
@@ -907,6 +951,33 @@ AJUSTES_REAIS = ("speed", "steps")
 # Anunciado não é o mesmo que aceito: o que vale é o que respondeu OK no teste.
 
 
+async def _falar_preset(texto, saida, preset, idioma="pt", formato="wav", ajustes=None):
+    """Fala uma voz predefinida do motor (Kokoro etc.). O MCP não aceita preset; o HTTP aceita."""
+    form = {"text": texto, "preset_voice": str(preset)}
+    if idioma:
+        form["language"] = idioma
+    vel = (ajustes or {}).get("speed")
+    if vel:
+        form["speed"] = str(vel)
+    async with _vez:
+        t0 = time.time()
+        async with aiohttp.ClientSession() as ses:
+            async with ses.post(URL.rstrip("/") + "/generate", data=form,
+                                timeout=aiohttp.ClientTimeout(total=TEMPO_FALA)) as r:
+                dados = await r.read()
+                if r.status >= 400:
+                    raise RuntimeError("O VoiceStudio recusou a voz %s (%s): %s"
+                                       % (preset, r.status, dados[:200]))
+        demorou = time.time() - t0
+    if not dados:
+        raise RuntimeError("Ele respondeu, mas sem áudio. Veja a janela do VoiceStudio.")
+    p = Path(saida)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(dados)
+    return {"caminho": str(p), "bytes": len(dados), "demorou": round(demorou, 1),
+            "segundos": _duracao_wav(dados)}
+
+
 async def falar(texto, saida, voz_id=None, idioma="pt", formato="wav", ajustes=None):
     """Gera a fala e salva em `saida`. Devolve {segundos, caminho, demorou}.
 
@@ -917,6 +988,9 @@ async def falar(texto, saida, voz_id=None, idioma="pt", formato="wav", ajustes=N
     texto = (texto or "").strip()
     if not texto:
         raise RuntimeError("Sem texto para falar.")
+    presets = await presets_do_motor()
+    if voz_id and any(str(p.get("id")) == str(voz_id) for p in presets):
+        return await _falar_preset(texto, saida, voz_id, idioma, formato, ajustes)
     base = {"text": texto, "format": formato}
     if voz_id:
         base["profile_id"] = voz_id

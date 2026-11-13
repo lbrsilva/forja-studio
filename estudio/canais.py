@@ -45,7 +45,7 @@ PLAYBOOKS = [
             "chamada_final": "o que você faria no lugar dele?",
             "hashtags": ["#misterio", "#dark", "#casosreais", "#historias"],
         },
-        "producao": {"estilo": "noir", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+        "producao": {"estilo": "noir", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": False},
     },
     {
         "id": "true_crime", "nome": "True crime",
@@ -59,7 +59,7 @@ PLAYBOOKS = [
             "chamada_final": "o caso merecia outra investigação?",
             "hashtags": ["#truecrime", "#investigacao", "#casosreais"],
         },
-        "producao": {"estilo": "documentario", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+        "producao": {"estilo": "documentario", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": False},
     },
     {
         "id": "financas", "nome": "Finanças e negócios",
@@ -73,7 +73,7 @@ PLAYBOOKS = [
             "chamada_final": "qual decisão você tomaria?",
             "hashtags": ["#financas", "#negocios", "#dinheiro"],
         },
-        "producao": {"estilo": "minimalista", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+        "producao": {"estilo": "minimalista", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": False},
     },
     {
         "id": "historias", "nome": "Histórias e narrativa",
@@ -87,7 +87,7 @@ PLAYBOOKS = [
             "chamada_final": "o que você faria no lugar dela?",
             "hashtags": ["#historia", "#narrativa", "#novelinha"],
         },
-        "producao": {"estilo": "novelinha", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": True},
+        "producao": {"estilo": "novelinha", "duracao_alvo": 60, "imagens_por_formato": "auto", "legendas": False},
     },
     {
         "id": "infantil", "nome": "Infantil",
@@ -101,7 +101,7 @@ PLAYBOOKS = [
             "chamada_final": "qual foi a sua parte favorita?",
             "hashtags": ["#infantil", "#historias", "#criancas"],
         },
-        "producao": {"estilo": "3d", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": True},
+        "producao": {"estilo": "3d", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": False},
     },
     {
         "id": "educativo", "nome": "Educativo / explicação",
@@ -115,7 +115,7 @@ PLAYBOOKS = [
             "chamada_final": "qual assunto você quer ver no próximo?",
             "hashtags": ["#explicado", "#aprender", "#curiosidades"],
         },
-        "producao": {"estilo": "minimalista", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": True},
+        "producao": {"estilo": "minimalista", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": False},
     },
 ]
 
@@ -271,7 +271,7 @@ def _canal_padrao(nome, **extra):
         "producao": {
             "duracao_alvo": 45,
             "cenas": 6,
-            "legendas": True,
+            "legendas": False,
             "preset_imagem": "z_image_turbo",
             "qualidade": "Normal",
             "estilo": "auto",
@@ -407,7 +407,7 @@ def criar(nome, **extra):
     return c
 
 
-_CAMPOS = {"nome", "slug", "cor", "voz", "producao", "formatos", "publicacao", "analytics", "arquivado"}
+_CAMPOS = {"nome", "slug", "cor", "voz", "producao", "formatos", "publicacao", "analytics", "playbook", "arquivado"}
 
 
 def atualizar(cid, campos):
@@ -466,7 +466,7 @@ def chave_formato(f):
         razao = round(float(f.get("largura") or 1080) / float(f.get("altura") or 1920), 4)
     except (TypeError, ValueError, ZeroDivisionError):
         razao = round(1080 / 1920, 4)
-    return (razao, bool(f.get("legendas", True)))
+    return (razao, bool(f.get("legendas", False)))
 
 
 def _area(f):

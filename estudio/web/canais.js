@@ -27,6 +27,10 @@
     return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + 'T' + z(d.getHours()) + ':' + z(d.getMinutes());
   };
   const linhas = (s) => String(s || '').split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  const mmss = (seg) => {
+    seg = Math.max(0, Number(seg) || 0);
+    return String(Math.floor(seg / 60)).padStart(2, '0') + ':' + String(Math.floor(seg % 60)).padStart(2, '0');
+  };
   const tags = (s) => String(s || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean)
     .map((x) => (x.startsWith('#') ? x : '#' + x));
   const METAS = { preparando: 'Preparando', voz: 'Gerando voz', imagens: 'Gerando imagens', montagem: 'Montando',
@@ -67,6 +71,103 @@
     ];
   }
 
+  function exemploEstilo(e) {
+    return '/estilos/' + encodeURIComponent((e || {}).id || 'auto') + '.jpg';
+  }
+
+  function seletorEstilo(id, atual) {
+    const lista = estilosDisponiveis();
+    const sel = lista.find((e) => e.id === atual) || lista[0] || { id: 'auto', nome: 'Automático' };
+    return `<div class="cx-estilo-picker" data-picker="${esc(id)}">
+      <input type="hidden" id="${esc(id)}" value="${esc(sel.id)}">
+      <button type="button" class="cx-estilo-trigger" data-acao="abrir-estilos" data-alvo="${esc(id)}"
+        aria-haspopup="listbox" aria-expanded="false">
+        <span class="cx-estilo-trigger-thumb"><img src="${exemploEstilo(sel)}" alt=""
+          onerror="this.parentNode.classList.add('cx-estilo-vazio'); this.remove();"><span class="cx-estilo-ini">${esc(sel.nome.slice(0, 2))}</span></span>
+        <span class="cx-estilo-trigger-nome">${esc(sel.nome)}</span>
+        <span class="cx-estilo-seta">▾</span>
+      </button>
+      <div class="cx-estilo-painel" hidden>
+        <div class="cx-estilo-nota">Exemplos gerados no seu computador. Se algum ainda não apareceu, ele mostra as iniciais até ficar pronto.</div>
+        <div class="cx-estilo-grade" role="listbox">
+          ${lista.map((e) => `<button type="button" class="cx-estilo-card${e.id === sel.id ? ' on' : ''}"
+            data-acao="escolher-estilo" data-alvo="${esc(id)}" data-id="${esc(e.id)}"
+            role="option" aria-selected="${e.id === sel.id}">
+            <span class="cx-estilo-thumb"><img src="${exemploEstilo(e)}" alt="" loading="lazy"
+              onerror="this.parentNode.classList.add('cx-estilo-vazio'); this.remove();"><span class="cx-estilo-ini">${esc(e.nome.slice(0, 2))}</span></span>
+            <span class="cx-estilo-nome">${esc(e.nome)}</span>
+          </button>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function fecharEstilos() {
+    $$('.cx-estilo-picker').forEach((p) => {
+      const painel = $('.cx-estilo-painel', p);
+      if (painel) painel.hidden = true;
+      const bt = $('.cx-estilo-trigger', p);
+      if (bt) bt.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function alternarEstilos(botao) {
+    const picker = botao.closest('.cx-estilo-picker');
+    const painel = picker && $('.cx-estilo-painel', picker);
+    if (!painel) return;
+    const abrir = painel.hidden;
+    fecharEstilos();
+    if (abrir) {
+      painel.hidden = false;
+      botao.setAttribute('aria-expanded', 'true');
+    }
+  }
+
+  function escolherEstilo(botao) {
+    const id = botao.dataset.id;
+    const e = estilosDisponiveis().find((x) => x.id === id) || { id, nome: id };
+    const picker = botao.closest('.cx-estilo-picker');
+    const input = document.getElementById(botao.dataset.alvo);
+    if (input) {
+      input.value = id;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (picker) {
+      const nome = $('.cx-estilo-trigger-nome', picker);
+      if (nome) nome.textContent = e.nome;
+      const thumb = $('.cx-estilo-trigger-thumb', picker);
+      if (thumb) {
+        thumb.classList.remove('cx-estilo-vazio');
+        let img = $('img', thumb);
+        if (!img) { img = document.createElement('img'); img.alt = ''; thumb.prepend(img); }
+        img.onerror = () => { thumb.classList.add('cx-estilo-vazio'); img.remove(); };
+        img.src = exemploEstilo(e);
+        img.style.display = '';
+      }
+      $$('.cx-estilo-card', picker).forEach((c) => {
+        const on = c.dataset.id === id;
+        c.classList.toggle('on', on);
+        c.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      const painel = $('.cx-estilo-painel', picker);
+      if (painel) painel.hidden = true;
+      const trigger = $('.cx-estilo-trigger', picker);
+      if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    }
+  }
+
+  function estiloEscolhido() {
+    const el = $('#cxEstilo');
+    if (el && el.value) return el.value;
+    return S.estiloDraft || ((S.dados || {}).producao || {}).estilo || undefined;
+  }
+
+  function lembrarEstilo(estilo) {
+    if (!estilo) return;
+    S.estiloDraft = estilo;
+    if (S.dados) S.dados.producao = { ...(S.dados.producao || {}), estilo };
+  }
+
   function botaoIA(campo, rotulo = 'Melhorar') {
     return `<button type="button" class="cx-ia" data-acao="ia-campo" data-campo="${esc(campo)}"
       title="Usar a IA local para melhorar este campo">${ic('brilho')}${esc(rotulo)}</button>`;
@@ -74,10 +175,13 @@
 
   const S = {
     iniciado: false, canais: [], atual: null, dados: null, aba: 'visao',
-    plano: null, briefing: '', producao: null, poll: null, analise: null,
+    plano: null, briefing: '', producao: null, poll: null, pollLista: null, analise: null, falarDisp: null,
     analiseDias: 30, analiseCarregada: false, vozes: null, presets: null, charts: {}, erros: 0,
+    estiloDraft: null, duracaoDraft: null, parteDraft: null, legendasDraft: null, formatosDraft: null,
+    pautaPedido: '', inspiracaoUrl: '',
     personagensNovos: [], agendarAgora: false, abaFixa: false, estilos: [], playbooks: [], pautas: [],
-    referencia: null, cortes: [], cortesStatus: '',
+    referencia: null, cortes: [], cortesSugeridos: [], cortesSel: {}, cortesStatus: '',
+    cortesBuscando: false, cortesTentado: false, playbookSel: null, inspiracaoEmCurso: null,
   };
 
   async function pedir(url, corpo, metodo) {
@@ -91,13 +195,40 @@
   }
 
   function mostrar(msg, tipo) {
-    const el = $('#canaisErro');
-    if (!el) return;
-    el.hidden = !msg;
-    el.textContent = msg || '';
-    el.className = 'aviso-linha' + (tipo ? ' ' + tipo : '');
+    let el = $('#cxToast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cxToast';
+      el.className = 'cx-toast';
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
+      document.body.appendChild(el);
+    }
     clearTimeout(S._aviso);
-    if (msg) S._aviso = setTimeout(() => { el.hidden = true; }, 6000);
+    if (!msg) { el.classList.remove('on'); return; }
+    el.className = 'cx-toast on' + (tipo ? ' ' + tipo : '');
+    el.textContent = msg;
+    S._aviso = setTimeout(() => el.classList.remove('on'), tipo === 'erro' ? 7000 : 4000);
+  }
+
+  function carregando(msg) {
+    let el = $('#cxToast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cxToast';
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
+      document.body.appendChild(el);
+    }
+    clearTimeout(S._aviso);
+    el.className = 'cx-toast on carregando';
+    el.innerHTML = '<span class="cx-spin"></span><span class="cx-toast-msg"></span>';
+    el.querySelector('.cx-toast-msg').textContent = msg || 'Trabalhando…';
+  }
+
+  function pararCarregando() {
+    const el = $('#cxToast');
+    if (el && el.classList.contains('carregando')) el.classList.remove('on');
   }
 
   // ================================================================ carregar
@@ -150,12 +281,23 @@
     try {
       S.dados = await pedir('/api/canais/' + encodeURIComponent(S.atual));
       S.analiseCarregada = false;
+      if (mostrarErro) mostrar('');
       carregarAnalise(false);
       carregarVozes();
-      if (mostrarErro) mostrar('');
+      await carregarFalarDisponivel();
     } catch (e) {
       if (mostrarErro) mostrar('Não consegui abrir o canal: ' + e.message, 'erro');
       S.dados = null;
+    }
+  }
+
+  async function carregarFalarDisponivel(forcar) {
+    if (!S.atual) return;
+    if (!forcar && S.falarDisp !== null) return;
+    try {
+      S.falarDisp = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/falar-disponivel');
+    } catch (e) {
+      S.falarDisp = { disponivel: false, instalado: false, comfy: false };
     }
   }
 
@@ -185,7 +327,10 @@
     S.atual = id;
     try { localStorage.setItem('forja_canal_atual', id); } catch (e) { /* sem armazenamento */ }
     S.plano = null; S.producao = null; S.analise = null; S.inspiracao = null;
-    S.referencia = null; S.cortes = []; S.cortesStatus = '';
+    S.briefing = ''; S.pautas = []; S.personagensNovos = []; S.pautaPedido = ''; S.inspiracaoUrl = '';
+    S.estiloDraft = null; S.duracaoDraft = null; S.parteDraft = null; S.legendasDraft = null; S.formatosDraft = null;
+    S.referencia = null; S.cortes = []; S.cortesSugeridos = []; S.cortesSel = {}; S.cortesStatus = '';
+    S.cortesBuscando = false; S.cortesTentado = false; S.playbookSel = null; S.inspiracaoEmCurso = null; S.falarDisp = null;
     pararPoll();
     await carregarCanal();
     render();
@@ -198,6 +343,13 @@
     renderAbas();
     renderCorpo();
     posRender();
+    if (S.aba === 'cortes') talvezSugerirCortes();
+  }
+
+  function talvezSugerirCortes() {
+    if (S.aba !== 'cortes' || !S.referencia) return;
+    if (S.cortesBuscando || S.cortesTentado || S.cortesSugeridos.length) return;
+    setTimeout(() => { if (S.aba === 'cortes') sugerirCortes(); }, 0);
   }
 
   function renderSeletor() {
@@ -261,7 +413,9 @@
             ${p.erro ? ' · ' + esc(p.erro.slice(0, 140)) : ''}</div></div>
         <div class="cx-prod-bts">${seloEstado(p.estado)}
           <button type="button" class="bt-sec mini" data-acao="ver-producao" data-id="${esc(p.id)}">Abrir</button>
+          ${comBotoes && p.estado === 'aprovado' ? `<button type="button" class="bt-sec mini" data-acao="proxima-parte" data-id="${esc(p.id)}">${ic('mais')}Próxima parte</button>` : ''}
           ${comBotoes && podeAgendar ? `<button type="button" class="bt-sec mini" data-acao="abrir-agendar" data-id="${esc(p.id)}">${ic('relogio')}Agendar</button>` : ''}
+          ${comBotoes ? `<button type="button" class="ic-bt" data-acao="apagar-producao" data-id="${esc(p.id)}" aria-label="Apagar produção">${ic('lixo')}</button>` : ''}
         </div></div>`;
     }).join('') + '</div>';
   }
@@ -327,11 +481,38 @@
     const ativos = (d.formatos || []).filter((f) => f.ativo !== false);
     const disponiveis = d.personagens_disponiveis || [];
     const insp = S.inspiracao || {};
+    const ctxCanal = (d.contexto && (d.contexto.personagens || [])) || [];
+    const parte = Number(S.parteDraft) || 0;
+    const duracao = Number(S.duracaoDraft) || Number((d.producao || {}).duracao_alvo) || 45;
+    const estiloAtual = S.estiloDraft || (d.producao || {}).estilo || 'auto';
+    const formatosSel = S.formatosDraft;
+    const marcado = (fid) => !formatosSel || formatosSel.includes(fid);
+    const legendas = (S.legendasDraft === null || S.legendasDraft === undefined)
+      ? !!(d.producao || {}).legendas : !!S.legendasDraft;
     return `
+      <div class="cx-card cx-inspiracao">
+        <div class="cx-card-cab"><div><h2>Vídeo de inspiração <span class="cx-selo">opcional</span></h2>
+          <p class="fraco">Se quiser, cole uma referência. A IA analisa o ritmo e o visual dela e usa nos personagens, retratos e cenas. Você pode gerar normalmente sem referência.</p></div></div>
+        <div class="cx-form">
+          <div class="cx-insp-linha">
+            <input id="cxInspiracaoUrl" type="url" value="${esc(insp.url || S.inspiracaoUrl || '')}"
+              placeholder="Cole a URL do YouTube ou TikTok (opcional)">
+            <button type="button" class="bt-sec" data-acao="ler-inspiracao">${ic('brilho')}Analisar referência</button>
+          </div>
+          <p class="nota" id="cxInspiracaoStatus">${insp.titulo
+            ? 'Analisada: ' + esc(insp.titulo) + (insp.autor ? ' de ' + esc(insp.autor) : '') +
+              ((insp.ritmo || insp.visual) ? ' · ' + [insp.ritmo ? 'ritmo' : '', insp.visual ? 'visual' : ''].filter(Boolean).join(' e ') + ' serão aplicados' : '')
+            : 'Nenhuma referência. Siga para o briefing ou cole uma URL acima.'}</p>
+        </div>
+      </div>
       <div class="cx-card">
-        <div class="cx-card-cab"><div><h2>Pautas</h2>
-          <p class="fraco">Sugestões a partir do contexto do canal e do que já performou. Use uma para preencher o briefing.</p></div>
+        <div class="cx-card-cab"><div><h2>2. Pautas</h2>
+          <p class="fraco">Sugestões a partir do contexto do canal e do que já performou. Escreva um direcionamento para a sugestão ficar mais assertiva.</p></div>
           <button type="button" class="bt-sec" data-acao="sugerir-pautas">${ic('brilho')}Sugerir pautas</button></div>
+        <label class="cx-campo"><span>Direcionamento (opcional)</span>
+          <input id="cxPautaPedido" type="text" value="${esc(S.pautaPedido || '')}"
+            placeholder="Ex.: quero histórias de mulheres da Bíblia; ou algo sobre Davi e Saul; ou em formato de série.">
+          <span class="cx-dica">Vazio = sugestões livres dentro do tema do canal. O que você escrever aqui manda nas pautas.</span></label>
         ${S.pautas.length ? `<div class="cx-lista">${S.pautas.map((p, i) =>
           `<div class="cx-prod"><div><b>${esc(p.titulo)}</b>
             <div class="cx-prod-sub">${esc(p.angulo || '')} ${p.serie ? '· série ' + esc(p.serie) : ''}</div>
@@ -340,54 +521,58 @@
           : '<p class="nota">Nenhuma pauta sugerida ainda.</p>'}
       </div>
       <div class="cx-card">
-        <h2>Do briefing ao vídeo</h2>
-        <p class="fraco">Escreva o que você quer postar. A IA local monta roteiro, falas, cenas e personagens com base no contexto deste canal. O número de cenas é calculado pela duração e pelo roteiro.</p>
+        <h2>3. Do briefing ao vídeo</h2>
+        <p class="fraco">Escreva o que você quer postar. A IA local monta o roteiro completo com falas, cenas e personagens. O número de cenas é calculado pela duração e pelo roteiro.</p>
         <div class="cx-form">
-          <label><span>Briefing</span><textarea id="cxBriefing" rows="5" placeholder="Ex.: conta a história de Davi e Golias em 45 segundos, com gancho nos 3 primeiros segundos, sem citar violência explícita.">${esc(S.briefing || '')}</textarea></label>
+          <label><span>Briefing</span><textarea id="cxBriefing" rows="5" placeholder="Ex.: conta a história de Adão e Eva em 45 segundos, com gancho nos 3 primeiros segundos, sem citar violência explícita.">${esc(S.briefing || '')}</textarea></label>
           <div class="cx-briefing-grade">
             <div class="cx-campo"><label for="cxDuracao">Duração mínima (s)</label>
-              <select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], Number((d.producao || {}).duracao_alvo) || 45)}</select>
+              <select id="cxDuracao">${opcoesSelect([15, 20, 30, 45, 60, 75, 90, 120, 180], duracao)}</select>
               <span class="cx-dica">O vídeo pode ficar mais longo, nunca menor.</span></div>
-            <div class="cx-campo"><label for="cxEstilo">Estilo visual</label>
-              <select id="cxEstilo">${estilosDisponiveis().map((e) =>
-                `<option value="${esc(e.id)}" ${((d.producao || {}).estilo || 'auto') === e.id ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label>Estilo visual</label>
+              ${seletorEstilo('cxEstilo', estiloAtual)}
+              <span class="cx-dica">Abra a lista para ver um exemplo de cada estilo.</span></div>
             <div class="cx-campo"><label for="cxParte">Série</label>
-              <select id="cxParte"><option value="0">Vídeo único</option><option value="1">Parte 1 de uma série</option></select>
-              <span class="cx-dica">Depois de aprovado, use Próxima parte.</span></div>
+              <select id="cxParte"><option value="0" ${parte === 0 ? 'selected' : ''}>Vídeo único</option>
+                <option value="1" ${parte === 1 ? 'selected' : ''}>Parte 1 de uma série</option></select>
+              <span class="cx-dica">Escolha "Parte 1" para começar. Depois de aprovar, clique em "Próxima parte" no vídeo.</span></div>
             <div class="cx-campo"><span class="cx-rotulo"><label>Formatos a montar</label></span>
               <div class="cx-row" style="gap:12px">${ativos.map((f) =>
-                `<label class="cx-check"><input type="checkbox" data-formato="${esc(f.id)}" checked>${esc(f.nome)}</label>`).join('') || '<span class="fraco">Ative um formato em Ajustes.</span>'}</div>
-              <span class="cx-dica">Imagens automáticas: uma por proporção ativa. 9:16 e 16:9 não são o mesmo arquivo.</span></div>
+                `<label class="cx-check"><input type="checkbox" data-formato="${esc(f.id)}" ${marcado(f.id) ? 'checked' : ''}>${esc(f.nome)}</label>`).join('') || '<span class="fraco">Ative um formato em Ajustes.</span>'}</div>
+              <span class="cx-dica">Imagens automáticas: uma por proporção ativa. 9:16 e 16:9 não são o mesmo arquivo.</span>
+              <label class="cx-check" style="margin-top:8px"><input type="checkbox" id="cxLegendas" ${legendas ? 'checked' : ''}> Queimar legendas no vídeo</label>
+              <span class="cx-dica">Grava o texto falado dentro do vídeo, em qualquer player. A legenda do post continua separada.</span></div>
           </div>
-          <div class="cx-campo"><div class="cx-rotulo"><label>Personagens</label>
-            <span class="cx-dica">Sem marcar = a IA escolhe e repete a aparência</span></div>
-            <div class="cx-personagens-uso">${disponiveis.map((p) =>
-              `<label class="cx-check cx-pill cx-pill-pers" title="${esc(p.descricao || p.origem || '')}">
-                ${avatarHtml(p.nome)}<input type="checkbox" data-personagem="${esc(p.nome)}" ${(S.personagensNovos || []).includes(p.nome) ? 'checked' : ''}>${esc(p.nome)}</label>`).join('')
-              || '<span class="fraco">Nenhum personagem ainda. A IA cria no roteiro e os próximos vídeos podem reaproveitar.</span>'}</div>
+          <div class="cx-campo"><div class="cx-rotulo"><label>Personagens do canal</label>
+            <span class="cx-dica">Marque quem deve aparecer neste vídeo. Sem marcar, a IA escolhe e mantém a aparência.</span></div>
+            <div class="cx-personagens-uso">${disponiveis.map((p) => {
+              const u = avatarUrl(p.nome);
+              const salvo = ctxCanal.some((x) => String((x || {}).nome || '').toLowerCase() === String(p.nome || '').toLowerCase());
+              return `<label class="cx-check cx-pill cx-pill-pers" title="${esc(p.descricao || p.origem || '')}">
+                <span class="cx-pill-foto${u ? ' cx-ampliavel' : ''}" ${u ? `data-ampliar="${esc(u)}"` : ''}>${avatarHtml(p.nome)}</span>
+                <input type="checkbox" data-personagem="${esc(p.nome)}" ${(S.personagensNovos || []).includes(p.nome) ? 'checked' : ''}>
+                <span class="cx-pill-nome">${esc(p.nome)}</span>
+                <button type="button" class="cx-pill-salvar-texto${salvo ? ' on' : ''}" data-acao="salvar-persona" data-nome="${esc(p.nome)}"
+                  title="${salvo ? 'Este personagem fica salvo para os próximos vídeos — clique para remover do canal' : 'Salvar este personagem no canal para reusar em vídeos futuros'}">${salvo ? 'Salvo no canal' : 'Salvar no canal'}</button>
+              </label>`;
+            }).join('') || '<span class="fraco">Nenhum personagem ainda. Gere a partir do briefing abaixo ou crie no roteiro.</span>'}</div>
             <div class="cx-acoes" style="justify-content:flex-start">
               <button type="button" class="bt-sec mini" data-acao="gerar-personagens">${ic('brilho')}Gerar personagens com IA</button>
               <button type="button" class="bt-sec mini" data-acao="gerar-retratos">${ic('imagem')}Gerar retratos</button>
-              <span class="cx-dica">Cria novos a partir do que já existe no canal.</span>
+              <span class="cx-dica">Usa o briefing, o estilo e o visual da referência para não criar gente fora da história.</span>
             </div>
           </div>
-          <div class="cx-campo"><div class="cx-rotulo"><label for="cxInspiracaoUrl">Vídeo de inspiração</label>
-            <button type="button" class="cx-ia" data-acao="ler-inspiracao">${ic('brilho')}Ler referência</button></div>
-            <input id="cxInspiracaoUrl" type="url" value="${esc(insp.url || '')}" placeholder="Cole a URL do YouTube ou TikTok">
-            <p class="nota" id="cxInspiracaoStatus">${insp.titulo
-              ? 'Referência: ' + esc(insp.titulo) + (insp.autor ? ' de ' + esc(insp.autor) : '')
-              : 'Opcional. O roteiro se inspira no ritmo e no clima, sem copiar o vídeo.'}</p>
-          </div>
           <div class="cx-acoes">
-            <button type="button" class="bt-sec" data-acao="gerar-plano">${ic('brilho')}Só o roteiro</button>
-            <button type="button" class="gerar" data-acao="produzir-direto">${ic('play')}Gerar vídeo completo</button>
+            <button type="button" class="gerar" data-acao="gerar-plano">${ic('brilho')}Gerar roteiro para revisar</button>
           </div>
-          <p class="nota">Gerar vídeo completo faz roteiro, voz, imagens e montagem sem revisão. Só o roteiro deixa você revisar as cenas antes.</p>
+          <p class="nota">Primeiro o roteiro inteiro. Você revisa as cenas, ajusta personagens e só então clica em "Produzir tudo".</p>
         </div>
       </div>
       <div id="cxProgresso">${S.producao ? cartaoProgresso(S.producao) : ''}</div>
       ${S.plano ? editorPlano() : ''}
-      <div class="cx-card"><div class="cx-row" style="margin-bottom:10px"><h2 style="margin:0">Últimos vídeos</h2></div>${listaProducoes()}</div>`;
+      <div class="cx-card"><div class="cx-row" style="margin-bottom:10px"><h2 style="margin:0">Últimos vídeos</h2>
+        <button type="button" class="bt-sec mini cx-right" data-acao="nova-producao">${ic('mais')}Nova produção</button></div>
+        <div id="cxListaProducoes">${listaProducoes()}</div></div>`;
   }
 
   function editorPlano() {
@@ -395,13 +580,14 @@
     const cenas = p.cenas || [];
     const pers = p.personagens || [];
     return `<div class="cx-card">
-      <div class="cx-row"><h2 style="margin:0">Roteiro</h2>
+      <div class="cx-row"><h2 style="margin:0">Roteiro completo para revisão</h2>
         <span class="cx-selo">${p.motor === 'fallback' ? 'montado do briefing' : 'IA local'}</span>
         <span class="cx-selo">${nf1.format(p.duracao_estimada || 0)} s estimados</span>
+        <span class="cx-selo">${cenas.length} cena(s)</span>
         ${p.duracao_minima && Number(p.duracao_estimada || 0) < Number(p.duracao_minima)
           ? `<span class="cx-selo">segura até ${p.duracao_minima} s se faltar</span>` : ''}
         <button type="button" class="bt-sec mini cx-right" data-acao="gerar-plano">${ic('brilho')}Gerar de novo</button></div>
-      <p class="nota" style="margin:6px 0 12px">${esc(p.observacoes || 'Confira as falas e a descrição visual de cada cena antes de produzir.')}</p>
+      <p class="nota" style="margin:6px 0 12px">${esc(p.observacoes || 'Revise o roteiro inteiro: título, falas, imagens e personagens. Nada é gerado em vídeo até você clicar em "Produzir tudo".')}</p>
       <div class="cx-grid2">
         <label class="voz-campo"><span>Título</span><input id="cxTitulo" type="text" maxlength="120" value="${esc(p.titulo || '')}"></label>
         <label class="voz-campo"><span>Gancho (primeiros 3 segundos)</span><input id="cxGancho" type="text" maxlength="300" value="${esc(p.gancho || '')}"></label>
@@ -411,25 +597,36 @@
         <label class="voz-campo"><span>Hashtags</span><input id="cxHashtags" type="text" value="${esc((p.hashtags || []).join(' '))}">
           <span class="nota">Chamada final: <input id="cxCta" type="text" value="${esc(p.cta || '')}" style="margin-top:5px"></span></label>
       </div>
-      <h3 style="margin:16px 0 8px">Personagens</h3>
+      <h3 style="margin:16px 0 8px">Elenco deste vídeo</h3>
+      <p class="nota" style="margin:0 0 10px">A foto e o visual de cada personagem entram nas cenas. "Salvar no canal" reaproveita o personagem nos próximos vídeos; "Remover do vídeo" tira só desta produção.</p>
       <div class="cx-pers" id="cxPersonagens">${pers.map(linhaPersonagem).join('')}</div>
-      <div class="cx-acoes"><button type="button" class="bt-sec mini" data-acao="add-persona">${ic('mais')}Personagem</button></div>
+      <div class="cx-acoes" style="justify-content:flex-start;margin:10px 0 18px">
+        <button type="button" class="bt-sec mini" data-acao="add-persona">${ic('mais')}Adicionar personagem</button>
+        <button type="button" class="bt-sec mini" data-acao="gerar-retratos">${ic('imagem')}Gerar retratos que faltam</button>
+        <button type="button" class="bt-sec mini" data-acao="salvar-personagens">${ic('ok')}Salvar elenco no canal</button>
+      </div>
       <h3 style="margin:18px 0 8px">Cenas</h3>
       <div class="cx-cena-cab"><span>#</span><span>Fala (o que é dito)</span><span class="cx-prompt-cab">Imagem (descrição visual)</span><span>Personagem</span></div>
       <div class="cx-cenas" id="cxCenas">${cenas.map(linhaCena).join('')}</div>
       <div class="cx-acoes">
-        <button type="button" class="bt-sec mini" data-acao="add-cena">${ic('mais')}Cena</button>
+        <button type="button" class="bt-sec mini" data-acao="add-cena">${ic('mais')}Adicionar cena</button>
         <button type="button" class="gerar" data-acao="produzir">${ic('play')}Produzir tudo</button>
       </div>
+      <p class="nota">Ao produzir, a voz vem primeiro; depois imagens e montagem. O vídeo fica aguardando sua aprovação antes de publicar.</p>
     </div>`;
   }
 
   function linhaCena(c, i) {
+    const falarOk = !!(S.falarDisp && S.falarDisp.disponivel);
     return `<div class="cx-cena" data-cena="${i}">
       <span class="n">${i + 1}</span>
       <textarea class="cx-fala" rows="2" placeholder="Fala curta, 1 a 2 frases">${esc(c.fala || '')}</textarea>
       <textarea class="cx-prompt" rows="2" placeholder="Descrição visual em inglês">${esc(c.imagem || '')}</textarea>
       <div><input class="cx-personagem" type="text" placeholder="Opcional" value="${esc(c.personagem || '')}">
+        ${falarOk
+          ? `<label class="cx-check cx-cena-falar" title="Gera o personagem falando (lip sync) nesta cena">
+               <input type="checkbox" data-cena-falar ${c.falar ? 'checked' : ''}> Falar</label>`
+          : `<button type="button" class="bt-sec mini cx-cena-falar" data-acao="ligar-falar">${ic('play')}Ligar, vou usar</button>`}
         <button type="button" class="ic-bt cx-tirar" data-acao="del-cena" aria-label="Tirar cena">${ic('lixo')}</button></div>
     </div>`;
   }
@@ -448,16 +645,40 @@
 
   function linhaPersonagem(p, i) {
     const papel = p.papel || 'principal';
-    return `<div class="cx-persona" data-persona="${i}">
-      <span class="cx-pers-avatar" title="${esc(p.nome || 'sem nome')}">${avatarHtml(p.nome)}</span>
-      <input class="cx-pers-nome" type="text" placeholder="Nome" value="${esc(p.nome || '')}">
-      <select class="cx-pers-papel" aria-label="Papel do personagem">
-        ${[['principal', 'Principal'], ['coadjuvante', 'Coadjuvante'], ['figurante', 'Figurante']].map(([v, r]) =>
-          `<option value="${v}" ${papel === v ? 'selected' : ''}>${r}</option>`).join('')}
-      </select>
-      <textarea class="cx-pers-desc" rows="2" placeholder="Quem é, o que quer, como fala">${esc(p.descricao || '')}</textarea>
-      <textarea class="cx-pers-visual" rows="2" placeholder="Aparência visual (para a imagem)">${esc(p.visual || '')}</textarea>
-      <button type="button" class="ic-bt" data-acao="del-persona" aria-label="Tirar personagem">${ic('lixo')}</button>
+    const retratos = (S.dados && S.dados.retratos) || {};
+    let arq = retratos[p.nome];
+    if (!arq) {
+      const chave = Object.keys(retratos).find((n) => n.toLowerCase() === String(p.nome || '').toLowerCase());
+      if (chave) arq = retratos[chave];
+    }
+    const url = arq ? `/api/canais/${encodeURIComponent(S.atual)}/personagens/retrato/${encodeURIComponent(arq)}` : '';
+    const salvos = (S.dados && S.dados.contexto && (S.dados.contexto.personagens || [])) || [];
+    const salvo = salvos.some((x) => String((x || {}).nome || '').toLowerCase() === String(p.nome || '').toLowerCase());
+    return `<div class="cx-persona-bloco" data-persona="${i}">
+      <div class="cx-persona">
+        <div class="cx-pers-foto">
+          ${url
+            ? `<img src="${url}" alt="${esc(p.nome || '')}" class="cx-ampliavel" data-ampliar="${esc(url)}" title="Ver a foto de ${esc(p.nome || 'personagem')}">`
+            : avatarHtml(p.nome)}
+          <label class="cx-pers-enviar" title="${url ? 'Trocar a foto' : 'Enviar uma foto'} de ${esc(p.nome || 'personagem')}">
+            ${url ? 'Trocar foto' : 'Enviar foto'}
+            <input type="file" accept="image/png,image/jpeg,image/webp" class="sr-only" data-foto-persona="${i}">
+          </label>
+        </div>
+        <input class="cx-pers-nome" type="text" placeholder="Nome" value="${esc(p.nome || '')}">
+        <select class="cx-pers-papel" aria-label="Papel do personagem">
+          ${[['principal', 'Principal'], ['coadjuvante', 'Coadjuvante'], ['figurante', 'Figurante']].map(([v, r]) =>
+            `<option value="${v}" ${papel === v ? 'selected' : ''}>${r}</option>`).join('')}
+        </select>
+        <textarea class="cx-pers-desc" rows="2" placeholder="Quem é, o que quer, como fala">${esc(p.descricao || '')}</textarea>
+        <textarea class="cx-pers-visual" rows="2" placeholder="Aparência em detalhe: rosto, olhos, boca, cabelo, roupa, expressão e época">${esc(p.visual || '')}</textarea>
+        <button type="button" class="ic-bt" data-acao="del-persona" aria-label="Remover do vídeo" title="Remover só deste vídeo">${ic('lixo')}</button>
+      </div>
+      <div class="cx-pers-barra">
+        <button type="button" class="bt-sec mini${salvo ? ' cx-salvo' : ''}" data-acao="toggle-persona-canal" data-nome="${esc(p.nome || '')}">
+          ${ic(salvo ? 'ok' : 'mais')}${salvo ? 'Salvo no canal' : 'Salvar no canal'}</button>
+        <span class="nota">${url ? 'Foto pronta.' : 'Sem foto ainda: as cenas usam a aparência descrita.'}</span>
+      </div>
     </div>`;
   }
 
@@ -468,12 +689,15 @@
     const videos = (p.arquivos && p.arquivos.videos) || {};
     const plano = p.plano || {};
     const urlVideo = (fid) => `/api/canais/${encodeURIComponent(S.atual)}/producoes/${encodeURIComponent(p.id)}/video/${encodeURIComponent(fid)}`;
+    const porArquivo = {};
+    Object.entries(videos).forEach(([fid, caminho]) => { (porArquivo[caminho] = porArquivo[caminho] || []).push(fid); });
     const revisao = est === 'aguardando_aprovacao' || est === 'concluido';
     const podePublicar = est === 'aprovado';
     return `<div class="cx-card">
       <div class="cx-row"><h2 style="margin:0">${esc(p.titulo || 'Produção')}</h2>${seloEstado(est)}
         <span class="fraco">${p.progresso || 0}%</span>
-        ${!final ? `<button type="button" class="bt-sec mini cx-right" data-acao="cancelar-producao" data-id="${esc(p.id)}">${ic('parar')}Cancelar</button>` : ''}</div>
+        ${!final ? `<button type="button" class="bt-sec mini cx-right" data-acao="cancelar-producao" data-id="${esc(p.id)}">${ic('parar')}Cancelar</button>`
+          : `<button type="button" class="bt-perigo mini cx-right" data-acao="apagar-producao" data-id="${esc(p.id)}">${ic('lixo')}Apagar produção</button>`}</div>
       <div class="cx-progresso"><i style="width:${Number(p.progresso) || 0}%"></i></div>
       <div class="cx-etapas">${['voz', 'imagens', 'montagem'].map((k) => {
         const e = et[k] || {};
@@ -484,9 +708,9 @@
       ${est === 'erro' && p.erro ? `<div class="cx-aviso erro" style="margin-top:10px">${esc(p.erro)}</div>` : ''}
       ${revisao ? `<div class="cx-aprovacao">
         <p class="nota">Assista antes de publicar. Ao aprovar, imagens e áudios intermediários são apagados; ficam só os vídeos, a legenda e os personagens.</p>
-        <div class="cx-videos">${Object.entries(videos).map(([fid]) =>
-          `<div class="cx-video"><span class="cx-video-rot">${esc(fid)}</span>
-            <video controls preload="metadata" src="${urlVideo(fid)}"></video></div>`).join('')}</div>
+        <div class="cx-videos">${Object.entries(porArquivo).map(([caminho, fids]) =>
+          `<div class="cx-video"><span class="cx-video-rot">${esc(fids.join(' · '))}</span>
+            <video controls preload="metadata" src="${urlVideo(fids[0])}"></video></div>`).join('')}</div>
         ${(plano.legenda || (plano.hashtags || []).length) ? `<div class="cx-legenda-aprovar">
           <b>Legenda</b><p>${esc(plano.legenda || '')}</p>
           <p class="fraco">${esc((plano.hashtags || []).join(' '))}</p></div>` : ''}
@@ -500,8 +724,8 @@
         <button type="button" class="bt-sec" data-acao="proxima-parte" data-id="${esc(p.id)}">${ic('mais')}Próxima parte</button>
         ${p.limpeza && p.limpeza.bytes ? `<span class="cx-selo ok">${nf1.format((p.limpeza.bytes || 0) / 1048576)} MB liberados</span>` : ''}
       </div>` : ''}
-      ${Object.keys(videos).length ? `<div class="cx-row" style="margin-top:10px">${Object.entries(videos).map(([fid]) =>
-        `<a class="bt-sec mini" href="${urlVideo(fid)}" target="_blank" rel="noopener">${ic('baixar')}${esc(fid)}</a>`).join('')}</div>` : ''}
+      ${Object.keys(porArquivo).length ? `<div class="cx-row" style="margin-top:10px">${Object.entries(porArquivo).map(([caminho, fids]) =>
+        `<a class="bt-sec mini" href="${urlVideo(fids[0])}" target="_blank" rel="noopener">${ic('baixar')}${esc(fids.join('+'))}</a>`).join('')}</div>` : ''}
       ${p.log && p.log.length ? `<pre class="cx-log">${esc(p.log.slice(-12).join('\n'))}</pre>` : ''}
     </div>`;
   }
@@ -729,24 +953,43 @@
               <option value="melhorar">Melhorar o texto</option></select></label>
             <label><span>Instruções pontuais</span>
               <textarea id="cxRefInstr" rows="3" placeholder="Ex.: deixe o gancho mais forte, corte a repetição do meio, mantenha o final."></textarea></label>
-            <label><span>Estilo</span><select id="cxRefEstilo">${estilosDisponiveis().map((e) =>
-              `<option value="${esc(e.id)}" ${((S.dados.producao || {}).estilo || 'auto') === e.id ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}</select></label>
+            <label><span>Estilo</span>${seletorEstilo('cxRefEstilo', (S.dados.producao || {}).estilo || 'auto')}</label>
             <div class="cx-acoes"><button type="button" class="gerar" data-acao="refazer-video">${ic('play')}Gerar vídeo refeito</button></div>
           </div>
         </div>
         <div class="cx-card">
           <h3>Cortes</h3>
-          <p class="fraco">Escolhe melhores momentos, corta em 9:16 e legenda.</p>
-          <div class="cx-form">
-            <label><span>Quantos cortes</span><select id="cxCortesQtd">${opcoesSelect([3, 5, 8, 10], 5)}</select></label>
-            <div class="cx-acoes"><button type="button" class="gerar" data-acao="gerar-cortes">${ic('play')}Gerar cortes</button></div>
-          </div>
+          <p class="fraco">Sugere os melhores momentos com tempo e descrição. Você marca quais montar: 9:16, legendado.</p>
+          ${S.cortesSugeridos.length ? `
+            <div class="cx-lista" style="margin-top:12px">${S.cortesSugeridos.map((c, i) => {
+              const marcado = S.cortesSel[i] !== false;
+              const fonte = (S.referencia && S.referencia.fonte)
+                ? '/api/canais/' + encodeURIComponent(S.atual) + '/referencias/' + encodeURIComponent(S.referencia.id) + '/' + encodeURIComponent(S.referencia.fonte)
+                : '';
+              const preview = fonte ? fonte + '#t=' + c.inicio + ',' + c.fim : '';
+              return `<div class="cx-corte">
+                <label class="cx-corte-info">
+                  <input type="checkbox" data-corte="${i}" ${marcado ? 'checked' : ''}>
+                  <div><b>${esc(c.titulo || 'Corte ' + (i + 1))}</b>
+                    <div class="cx-prod-sub">${mmss(c.inicio)} → ${mmss(c.fim)} · ${nf1.format(c.duracao || 0)}s</div>
+                    ${c.motivo ? `<div class="cx-prod-sub">${esc(c.motivo)}</div>` : ''}</div>
+                </label>
+                ${preview ? `<video controls preload="metadata" src="${esc(preview)}"></video>` : ''}
+              </div>`;
+            }).join('')}</div>
+            <div class="cx-acoes" style="margin-top:10px">
+              <button type="button" class="bt-sec" data-acao="sugerir-cortes" ${S.cortesBuscando ? 'disabled' : ''}>${ic('brilho')}Sugerir de novo</button>
+              <button type="button" class="gerar" data-acao="montar-cortes">${ic('play')}<span id="cxCortesBtLbl">Montar selecionados (${S.cortesSugeridos.filter((_, i) => S.cortesSel[i] !== false).length})</span></button>
+              <button type="button" class="bt-sec" data-acao="montar-noticia">${ic('play')}Montar notícia</button>
+            </div>`
+          : `<p class="nota" style="margin-top:12px">${S.cortesBuscando ? 'Escolhendo os melhores momentos…' : (S.cortesTentado ? 'Nenhum corte sugerido. Tente de novo.' : 'Preparando as sugestões…')}</p>
+            <div class="cx-acoes" style="margin-top:10px"><button type="button" class="bt-sec" data-acao="sugerir-cortes" ${S.cortesBuscando ? 'disabled' : ''}>${ic('brilho')}Sugerir de novo</button></div>`}
           ${S.cortes.length ? `<div class="cx-lista" style="margin-top:12px">${S.cortes.map((c) =>
             `<div class="cx-prod"><div><b>${esc(c.titulo || 'Corte')}</b>
-              <div class="cx-prod-sub">${nf1.format(c.inicio)}s a ${nf1.format(c.fim)}s · ${esc(c.motivo || '')}</div>
+              <div class="cx-prod-sub">${esc(c.inicio_txt || '')} → ${esc(c.fim_txt || '')} · ${esc(c.motivo || '')}</div>
               <video controls preload="metadata" src="${c.url}" style="width:100%;max-width:320px;border-radius:8px;margin-top:6px"></video></div>
               <a class="bt-sec mini" href="${c.url}" target="_blank" rel="noopener">${ic('baixar')}Baixar</a></div>`).join('')}</div>`
-            : '<p class="nota" style="margin-top:10px">Nenhum corte gerado ainda.</p>'}
+            : ''}
         </div>
       </div>` : ''}`;
   }
@@ -759,19 +1002,21 @@
     if (bt) bt.disabled = true;
     S.cortesStatus = 'Baixando e transcrevendo o vídeo… pode levar alguns minutos.';
     if (status) status.textContent = S.cortesStatus;
+    carregando('Baixando e transcrevendo o vídeo… pode levar minutos.');
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/analisar',
         { url, idioma: ($('#cxRefIdioma') || {}).value || 'auto' });
       S.referencia = r;
-      S.cortes = [];
+      S.cortes = []; S.cortesSugeridos = []; S.cortesSel = {};
+      S.cortesBuscando = false; S.cortesTentado = false;
       S.cortesStatus = 'Vídeo analisado: ' + nf1.format(r.duracao || 0) + ' s, ' + (r.total_segmentos || 0) + ' trechos.';
       render();
-      mostrar('Vídeo analisado. Escolha refazer ou gerar cortes.', 'ok');
+      mostrar('Vídeo analisado. Escolha refazer ou sugerir cortes.', 'ok');
     } catch (e) {
       S.cortesStatus = 'Falhou: ' + e.message;
       if (status) status.textContent = S.cortesStatus;
       mostrar('Não consegui analisar: ' + e.message, 'erro');
-    } finally { if (bt) bt.disabled = false; }
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   async function refazerVideo() {
@@ -798,24 +1043,80 @@
     } finally { if (bt) bt.disabled = false; }
   }
 
-  async function gerarCortes() {
+  async function sugerirCortes() {
+    if (!S.referencia || S.cortesBuscando) return;
+    S.cortesBuscando = true;
+    S.cortesTentado = true;
+    S.cortesStatus = 'Escolhendo os melhores momentos…';
+    carregando('Escolhendo os melhores momentos…');
+    render();
+    try {
+      const qtd = Math.max(3, Math.min(8, Math.round((Number(S.referencia.duracao) || 0) / 30) || 5));
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/cortes/sugerir', {
+        id: S.referencia.id,
+        quantidade: qtd,
+      });
+      S.cortesSugeridos = r.cortes || [];
+      S.cortesSel = {};
+      if (r.fonte) S.referencia.fonte = r.fonte;
+      S.cortesStatus = S.cortesSugeridos.length + ' corte(s) sugerido(s). Marque os que quiser montar.';
+      mostrar('Cortes sugeridos. Marque e monte.', 'ok');
+    } catch (e) {
+      S.cortesStatus = 'Falhou: ' + e.message;
+      mostrar('Não consegui sugerir: ' + e.message, 'erro');
+    } finally {
+      pararCarregando();
+      S.cortesBuscando = false;
+      render();
+    }
+  }
+
+  async function montarCortes() {
     if (!S.referencia) return;
-    const bt = $('[data-acao="gerar-cortes"]');
+    const selecionados = S.cortesSugeridos.filter((_, i) => S.cortesSel[i] !== false);
+    if (!selecionados.length) { mostrar('Marque pelo menos um corte.', 'erro'); return; }
+    const bt = $('[data-acao="montar-cortes"]');
     if (bt) bt.disabled = true;
-    S.cortesStatus = 'Escolhendo e cortando os melhores momentos…';
     const status = $('#cxRefStatus');
+    S.cortesStatus = 'Cortando ' + selecionados.length + ' trecho(s)…';
     if (status) status.textContent = S.cortesStatus;
     try {
-      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/cortes', {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/cortes/montar', {
         id: S.referencia.id,
-        quantidade: Number(($('#cxCortesQtd') || {}).value) || 5,
+        selecionados: selecionados.map((c) => ({ inicio: c.inicio, fim: c.fim, titulo: c.titulo, motivo: c.motivo })),
       });
       S.cortes = r.cortes || [];
-      S.cortesStatus = S.cortes.length + ' corte(s) gerado(s).';
+      S.cortesStatus = S.cortes.length + ' corte(s) montado(s).';
       render();
       mostrar('Cortes prontos.', 'ok');
     } catch (e) {
-      mostrar('Não consegui cortar: ' + e.message, 'erro');
+      mostrar('Não consegui montar: ' + e.message, 'erro');
+    } finally { if (bt) bt.disabled = false; }
+  }
+
+  async function montarNoticia() {
+    if (!S.referencia) return;
+    const selecionados = S.cortesSugeridos.filter((_, i) => S.cortesSel[i] !== false);
+    if (!selecionados.length) { mostrar('Marque pelo menos um corte.', 'erro'); return; }
+    const bt = $('[data-acao="montar-noticia"]');
+    if (bt) bt.disabled = true;
+    const formatos = ((S.dados && S.dados.formatos) || []).filter((f) => f.ativo !== false).map((f) => f.id);
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/video/noticia', {
+        id: S.referencia.id,
+        selecionados: selecionados.map((c) => ({ inicio: c.inicio, fim: c.fim, titulo: c.titulo, gancho: c.gancho, motivo: c.motivo })),
+        instrucoes: ($('#cxRefInstr') || {}).value || '',
+        estilo: ($('#cxRefEstilo') || {}).value || undefined,
+        formatos,
+      });
+      S.producao = { ...r.producao, plano: r.plano };
+      S.plano = r.plano;
+      S.aba = 'produzir';
+      render();
+      pollProducao(r.producao.id);
+      mostrar('Notícia começou a ser produzida.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui montar a notícia: ' + e.message, 'erro');
     } finally { if (bt) bt.disabled = false; }
   }
 
@@ -841,8 +1142,10 @@
             <p class="fraco">Aplica um pacote pronto de tema, tom, visual, estilo e regras. Depois você pode editar tudo.</p></div>
             <button type="button" class="bt-sec" data-acao="aplicar-playbook">${ic('ok')}Aplicar</button></div>
           <div class="cx-campo"><label for="ajPlaybook">Playbook</label>
-            <select id="ajPlaybook">${(S.playbooks || []).map((p) =>
-              `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('')}</select></div>
+            <select id="ajPlaybook">${(S.playbooks || []).map((p) => {
+              const sel = (S.playbookSel || (S.dados && S.dados.playbook)) === p.id;
+              return `<option value="${esc(p.id)}" ${sel ? 'selected' : ''}>${esc(p.nome)}</option>`;
+            }).join('')}</select></div>
         </div>
         <div class="cx-card">
           <div class="cx-card-cab">
@@ -917,12 +1220,11 @@
               <select id="ajPreset">${opPreset}</select></div>
             <div class="cx-campo"><label for="ajVoz">Voz</label>
               <select id="ajVoz">${opVoz}</select></div>
-            <div class="cx-campo"><label for="ajEstilo">Estilo visual</label>
-              <select id="ajEstilo">${estilosDisponiveis().map((e) =>
-                `<option value="${esc(e.id)}" ${((pr.estilo || 'auto') === e.id) ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label>Estilo visual</label>
+              ${seletorEstilo('ajEstilo', pr.estilo || 'auto')}</div>
           </div>
           <div class="cx-check-linha">
-            <label class="cx-check"><input type="checkbox" id="ajLegendas" ${pr.legendas !== false ? 'checked' : ''}>Legendas nos formatos verticais</label>
+            <label class="cx-check"><input type="checkbox" id="ajLegendas" ${pr.legendas ? 'checked' : ''}>Legendas nos formatos verticais</label>
             <label class="cx-check"><input type="checkbox" id="ajFalar" ${pr.falar_cenas !== false ? 'checked' : ''}>Gerar narração por cena</label>
           </div>
           <div class="cx-secao-cab"><h3>Formatos a montar</h3>
@@ -992,7 +1294,7 @@
         <span>×</span><input data-fmt-altura type="number" min="240" step="2" value="${Number(f.altura) || 1920}" aria-label="Altura"></div>
       <select data-fmt-plataforma aria-label="Plataforma">${Object.entries(Rotulo).map(([k, v]) =>
         `<option value="${k}" ${f.plataforma === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-      <label class="cx-check cx-centro" title="Legendas"><input type="checkbox" data-fmt-legendas ${f.legendas !== false ? 'checked' : ''}></label>
+      <label class="cx-check cx-centro" title="Legendas"><input type="checkbox" data-fmt-legendas ${f.legendas ? 'checked' : ''}></label>
       <button type="button" class="ic-bt" data-acao="del-formato" aria-label="Tirar formato">${ic('lixo')}</button>
     </div>`;
   }
@@ -1049,7 +1351,7 @@
       return `<div class="cx-card cx-cred-card">
         <div class="cx-cred-cab"><h3>${esc(Rotulo[p] || p)}</h3>
           <span class="cx-selo ${c.configurado ? 'ok' : 'pendente'}">${c.configurado ? 'conectado' : 'não conectado'}</span></div>
-        <p class="nota">${esc(ajuda[p])}</p>
+        <p class="nota cx-cred-nota">${esc(ajuda[p])}</p>
         <div class="cx-form" data-cred="${p}">${lista.map((def) => campoCred(p, def, c)).join('')}</div>
         <div class="cx-acoes"><button type="button" class="bt-sec" data-acao="salvar-cred" data-plat="${p}">Salvar ${esc(Rotulo[p] || p)}</button></div>
       </div>`;
@@ -1075,6 +1377,7 @@
       fala: ($('.cx-fala', el) || {}).value || '',
       imagem: ($('.cx-prompt', el) || {}).value || '',
       personagem: ($('.cx-personagem', el) || {}).value || '',
+      falar: !!($('[data-cena-falar]', el) || {}).checked,
     }));
     return p;
   }
@@ -1084,30 +1387,67 @@
   }
 
   function inspiracaoAtual() {
-    const url = (($('#cxInspiracaoUrl') || {}).value || '').trim();
+    const url = (($('#cxInspiracaoUrl') || {}).value || S.inspiracaoUrl || '').trim();
     if (S.inspiracao && S.inspiracao.url === url) return S.inspiracao;
     return null;
   }
 
-  async function lerInspiracao() {
-    const url = (($('#cxInspiracaoUrl') || {}).value || '').trim();
+  function lerInspiracao() {
+    const url = (($('#cxInspiracaoUrl') || {}).value || S.inspiracaoUrl || '').trim();
+    if (!url) { mostrar('Cole a URL primeiro.', 'erro'); return Promise.resolve(null); }
+    S.inspiracaoUrl = url;
+    if (S.inspiracaoEmCurso && S.inspiracaoEmCurso.url === url) return S.inspiracaoEmCurso.promessa;
+    const promessa = analisarInspiracao(url);
+    S.inspiracaoEmCurso = { url, promessa };
+    promessa.finally(() => {
+      if (S.inspiracaoEmCurso && S.inspiracaoEmCurso.promessa === promessa) S.inspiracaoEmCurso = null;
+    });
+    return promessa;
+  }
+
+  async function esperarInspiracao(id, status) {
+    if (!id) throw new Error('A análise não começou.');
+    for (;;) {
+      await new Promise((ok) => setTimeout(ok, 3000));
+      const d = await pedir('/api/inspiracao/' + encodeURIComponent(id));
+      if (d.etapa) {
+        if (status) status.textContent = 'Analisando a referência… (' + d.etapa + ')';
+        carregando('Analisando a referência… (' + d.etapa + ')');
+      }
+      if (d.estado === 'pronto') return d.resultado || {};
+      if (d.estado === 'erro') throw new Error(d.erro || 'A análise falhou.');
+    }
+  }
+
+  async function analisarInspiracao(url) {
     const status = $('#cxInspiracaoStatus');
-    if (!url) { if (status) status.textContent = 'Cole a URL primeiro.'; return; }
     const bt = $('[data-acao="ler-inspiracao"]');
     if (bt) bt.disabled = true;
-    if (status) status.textContent = 'Lendo a referência…';
+    if (status) { status.className = 'nota'; status.textContent = 'Analisando a referência…'; }
+    carregando('Analisando a referência… pode levar 1-2 min.');
     try {
-      const r = await pedir('/api/inspiracao', { url });
+      const start = await pedir('/api/inspiracao', { url });
+      const r = await esperarInspiracao(start.id, status);
       S.inspiracao = r;
-      if (status) status.textContent = 'Referência: ' + (r.titulo || url) + (r.autor ? ' de ' + r.autor : '');
+      S.inspiracaoUrl = url;
+      const marcas = [r.ritmo ? 'ritmo' : '', r.visual ? 'visual' : ''].filter(Boolean).join(' e ');
+      if (status) {
+        status.className = 'nota';
+        status.textContent = 'Referência: ' + (r.titulo || url) + (r.autor ? ' de ' + r.autor : '') +
+          (marcas ? ' — ' + marcas + ' analisados' : '');
+      }
+      mostrar('Referência analisada.', 'ok');
+      return r;
     } catch (e) {
       S.inspiracao = null;
       if (status) { status.textContent = e.message; status.className = 'nota erro'; }
-    } finally { if (bt) bt.disabled = false; }
+      mostrar('Não consegui analisar a referência: ' + e.message, 'erro');
+      return null;
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   async function garantirInspiracao() {
-    const url = (($('#cxInspiracaoUrl') || {}).value || '').trim();
+    const url = (($('#cxInspiracaoUrl') || {}).value || S.inspiracaoUrl || '').trim();
     if (url && (!S.inspiracao || S.inspiracao.url !== url)) await lerInspiracao();
     return inspiracaoAtual();
   }
@@ -1116,24 +1456,31 @@
     const briefing = (($('#cxBriefing') || {}).value || '').trim();
     if (!briefing) { mostrar('Escreva o briefing antes de gerar o roteiro.', 'erro'); return; }
     S.briefing = briefing;
+    const estilo = estiloEscolhido();
     const bt = $('[data-acao="gerar-plano"]');
     if (bt) { bt.disabled = true; bt.textContent = 'Lendo o briefing…'; }
+    carregando('Escrevendo o roteiro…');
     try {
       const inspiracao = await garantirInspiracao();
+      carregando('Escrevendo o roteiro…');
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/plano', {
         briefing,
         duracao: Number(($('#cxDuracao') || {}).value) || undefined,
-        estilo: ($('#cxEstilo') || {}).value || undefined,
+        estilo,
         parte: Number(($('#cxParte') || {}).value) || 0,
         personagens: personagensEscolhidos(),
         inspiracao,
       });
       S.plano = r.plano;
-      mostrar('Roteiro pronto. Revise as cenas e mande produzir.', 'ok');
+      lembrarEstilo(estilo);
+      S.duracaoDraft = ($('#cxDuracao') || {}).value || S.duracaoDraft;
+      S.parteDraft = ($('#cxParte') || {}).value || S.parteDraft;
+      mostrar('Roteiro completo pronto. Revise as cenas e clique em Produzir tudo.', 'ok');
       render();
     } catch (e) {
       mostrar('Não consegui montar o roteiro: ' + e.message, 'erro');
     } finally {
+      pararCarregando();
       if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('brilho') + 'Só o roteiro'; }
     }
   }
@@ -1144,51 +1491,30 @@
     plano.cenas = plano.cenas.filter((c) => String(c.fala || '').trim());
     if (!plano.cenas.length) { mostrar('Nenhuma cena com fala para produzir.', 'erro'); return; }
     const formatos = $$('[data-formato]:checked').map((x) => x.dataset.formato);
+    if (!formatos.length) { mostrar('Marque pelo menos um formato para montar.', 'erro'); return; }
+    const estilo = estiloEscolhido();
     const bt = $('[data-acao="produzir"]');
     if (bt) { bt.disabled = true; bt.textContent = 'Começando…'; }
+    carregando('Preparando a produção…');
     try {
+      const inspiracao = await garantirInspiracao();
+      carregando('Preparando a produção…');
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir',
-        { plano, briefing: S.briefing, formatos, inspiracao: inspiracaoAtual(),
-          estilo: ($('#cxEstilo') || {}).value || undefined,
+        { plano, briefing: S.briefing, formatos, inspiracao,
+          estilo,
+          legendas: $('#cxLegendas') ? $('#cxLegendas').checked : undefined,
           parte: Number(($('#cxParte') || {}).value) || 0 });
-      S.producao = { ...r.producao, plano: r.plano || S.plano };
+      S.plano = r.plano || plano;
+      S.producao = { ...r.producao, plano: S.plano };
+      lembrarEstilo(estilo);
       mostrar('Produção começou. A voz vem primeiro; depois as imagens e a montagem.', 'ok');
       render();
       pollProducao(r.producao.id);
     } catch (e) {
       mostrar('A produção não começou: ' + e.message, 'erro');
     } finally {
+      pararCarregando();
       if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('play') + 'Produzir tudo'; }
-    }
-  }
-
-  async function produzirDireto() {
-    const briefing = (($('#cxBriefing') || {}).value || '').trim();
-    if (!briefing) { mostrar('Escreva o briefing antes de gerar o vídeo completo.', 'erro'); return; }
-    const formatos = $$('[data-formato]:checked').map((x) => x.dataset.formato);
-    const bt = $('[data-acao="produzir-direto"]');
-    if (bt) { bt.disabled = true; bt.textContent = 'Começando a produção…'; }
-    try {
-      const inspiracao = await garantirInspiracao();
-      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/produzir', {
-        briefing,
-        duracao: Number(($('#cxDuracao') || {}).value) || undefined,
-        estilo: ($('#cxEstilo') || {}).value || undefined,
-        parte: Number(($('#cxParte') || {}).value) || 0,
-        formatos,
-        personagens: personagensEscolhidos(),
-        inspiracao,
-      });
-      S.briefing = briefing;
-      S.plano = r.plano;
-      S.producao = { ...r.producao, plano: r.plano };
-      mostrar('Produção completa começou: roteiro, voz, imagens e montagem.', 'ok');
-      render();
-      pollProducao(r.producao.id);
-    } catch (e) {
-      mostrar('A produção não começou: ' + e.message, 'erro');
-    } finally {
-      if (bt) { bt.disabled = false; if (bt.isConnected) bt.innerHTML = ic('play') + 'Gerar vídeo completo'; }
     }
   }
 
@@ -1199,7 +1525,7 @@
         const d = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/producoes/' + encodeURIComponent(pid));
         S.producao = d;
         const cx = $('#cxProgresso');
-        if (cx) cx.innerHTML = cartaoProgresso(d);
+        if (cx) { cx.innerHTML = cartaoProgresso(d); rolarLogs(); }
         if (['concluido', 'aprovado', 'aguardando_aprovacao', 'rejeitado', 'erro', 'cancelado'].includes(d.estado)) {
           pararPoll();
           S.analiseCarregada = false;
@@ -1218,6 +1544,19 @@
   }
 
   function pararPoll() { if (S.poll) { clearInterval(S.poll); S.poll = null; } }
+
+  function iniciarPollProducoes() {
+    if (S.pollLista) return;
+    S.pollLista = setInterval(async () => {
+      if (S.aba !== 'produzir' || !S.atual) return;
+      try {
+        const d = await pedir('/api/canais/' + encodeURIComponent(S.atual));
+        S.dados = d;
+        const alvo = $('#cxListaProducoes');
+        if (alvo) alvo.innerHTML = listaProducoes();
+      } catch (e) { /* o poll da produção reporta os erros */ }
+    }, 6000);
+  }
 
   // ================================================================ agenda
   function preencherAgendar(pid, agora = false) {
@@ -1307,6 +1646,21 @@
     } finally { bt.disabled = false; }
   }
 
+  async function apagarProducao(pid) {
+    if (!confirm('Apagar esta produção por completo? Remove imagens, vídeos, áudio e o histórico. Não tem volta.')) return;
+    carregando('Apagando a produção…');
+    try {
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/producoes/' +
+        encodeURIComponent(pid) + '/apagar', {});
+      if (S.producao && S.producao.id === pid) { S.producao = null; S.plano = null; }
+      await carregarCanal(false);
+      render();
+      mostrar('Produção apagada' + (r && r.mb ? ' (' + r.mb + ' MB liberados).' : '.'), 'ok');
+    } catch (e) {
+      mostrar('Não consegui apagar: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
   async function proximaParte(pid) {
     if (!confirm('Gerar a próxima parte com o mesmo elenco e estilo? Ela entra na fila agora.')) return;
     const bt = $('[data-acao="proxima-parte"][data-id="' + pid + '"]');
@@ -1355,67 +1709,208 @@
     }
   }
 
+  async function enviarFotoPersona(i, file, inputEl) {
+    const el = inputEl ? inputEl.closest('.cx-persona') : null;
+    const nome = el ? (($('.cx-pers-nome', el) || {}).value || '').trim() : '';
+    if (!nome) { mostrar('Dê um nome ao personagem antes de enviar a foto.', 'erro'); return; }
+    if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    fd.append('nome', nome);
+    carregando('Enviando a foto de ' + nome + '…');
+    try {
+      const r = await fetch('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato/upload',
+        { method: 'POST', body: fd });
+      const txt = await r.text();
+      if (!r.ok) throw new Error((txt || ('Erro ' + r.status)).slice(0, 300));
+      await carregarCanal(false);
+      render();
+      mostrar('Foto de ' + nome + ' salva.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui enviar a foto: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
+  async function salvarPersonagensNoCanal() {
+    const p = lerPlano();
+    S.plano = p;
+    const novos = (p.personagens || []).filter((x) => String((x || {}).nome || '').trim());
+    if (!novos.length) { mostrar('Nenhum personagem no roteiro para salvar.', 'erro'); return; }
+    const ctx = (S.dados && S.dados.contexto) || {};
+    const mapa = new Map((ctx.personagens || []).map((x) => [String((x || {}).nome || '').toLowerCase(), x]));
+    novos.forEach((x) => { const k = String(x.nome).toLowerCase(); mapa.set(k, { ...(mapa.get(k) || {}), ...x }); });
+    carregando('Salvando os personagens no canal…');
+    try {
+      await pedir('/api/canais/' + encodeURIComponent(S.atual),
+        { contexto: { ...ctx, personagens: [...mapa.values()] } });
+      await carregarCanal(false);
+      render();
+      mostrar('Personagens salvos no canal.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui salvar os personagens: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
+  async function ligarFalar() {
+    const d = S.falarDisp || {};
+    if (d.instalado === false) {
+      mostrar('O motor de pessoa falando não está instalado. Instale na tela "Pessoa falando" e volte.', 'erro');
+      return;
+    }
+    carregando('Ligando a ComfyUI para o personagem falar…');
+    try {
+      await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/falar-ligar', {});
+      for (let i = 0; i < 30; i++) {
+        await new Promise((ok) => setTimeout(ok, 3000));
+        await carregarFalarDisponivel(true);
+        if (S.falarDisp && S.falarDisp.disponivel) break;
+      }
+      render();
+      if (S.falarDisp && S.falarDisp.disponivel) mostrar('Pronto: agora dá para marcar "Falar".', 'ok');
+      else if (S.falarDisp && !S.falarDisp.instalado) mostrar('A ComfyUI subiu, mas falta instalar o motor de pessoa falando.', 'erro');
+      else mostrar('A ComfyUI ainda não respondeu. Tente de novo em instantes.', 'erro');
+    } catch (e) {
+      mostrar('Não consegui ligar: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
+  async function toggleSalvarPersona(nome) {
+    if (!String(nome || '').trim()) { mostrar('Dê um nome ao personagem antes de salvar no canal.', 'erro'); return; }
+    if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
+    const ctx = (S.dados && S.dados.contexto) || {};
+    const atuais = ctx.personagens || [];
+    const chave = String(nome || '').toLowerCase();
+    const jaTem = atuais.some((x) => String((x || {}).nome || '').toLowerCase() === chave);
+    let novos;
+    if (jaTem) {
+      novos = atuais.filter((x) => String((x || {}).nome || '').toLowerCase() !== chave);
+    } else {
+      const p = ((S.dados.personagens_disponiveis || []).find((x) => String(x.nome).toLowerCase() === chave))
+        || ((S.plano && S.plano.personagens) || []).find((x) => String((x || {}).nome || '').toLowerCase() === chave)
+        || { nome };
+      novos = [...atuais, { nome: p.nome || nome, papel: p.papel || 'principal',
+        descricao: p.descricao || '', visual: p.visual || '' }];
+    }
+    carregando(jaTem ? 'Tirando do canal…' : 'Salvando no canal…');
+    try {
+      await pedir('/api/canais/' + encodeURIComponent(S.atual), { contexto: { ...ctx, personagens: novos } });
+      await carregarCanal(false);
+      render();
+      mostrar(jaTem ? (nome + ' saiu do canal.') : (nome + ' salvo no canal.'), 'ok');
+    } catch (e) {
+      mostrar('Não consegui salvar: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
   async function gerarRetratos() {
-    const disponiveis = (S.dados && S.dados.personagens_disponiveis) || [];
+    if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
     const retratos = (S.dados && S.dados.retratos) || {};
-    const faltam = disponiveis.filter((p) => !retratos[p.nome]);
+    const base = [];
+    const vistos = new Set();
+    for (const p of (S.plano && S.plano.personagens) || []) {
+      const nome = String((p || {}).nome || '').trim();
+      if (nome && !vistos.has(nome.toLowerCase())) { vistos.add(nome.toLowerCase()); base.push(p); }
+    }
+    if (!base.length) {
+      for (const p of (S.dados && S.dados.personagens_disponiveis) || []) {
+        const nome = String((p || {}).nome || '').trim();
+        if (nome && !vistos.has(nome.toLowerCase())) { vistos.add(nome.toLowerCase()); base.push(p); }
+      }
+    }
+    const faltam = base.filter((p) => !retratos[p.nome]);
     if (!faltam.length) { mostrar('Todos os personagens já têm retrato.', 'ok'); return; }
     const bt = $('[data-acao="gerar-retratos"]');
     if (bt) bt.disabled = true;
-    mostrar('Gerando ' + faltam.length + ' retrato(s) com a imagem local…', 'ok');
-    const erros = [];
-    for (const p of faltam) {
-      try {
-        await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato', {
-          nome: p.nome, visual: p.visual, descricao: p.descricao,
-          estilo: ((S.dados.producao || {}).estilo) || 'auto',
-        });
-      } catch (e) { erros.push(p.nome + ': ' + e.message); }
-    }
-    await carregarCanal(false);
-    render();
-    mostrar(erros.length ? 'Retratos gerados com avisos. ' + erros.join(' · ') : 'Retratos gerados.', erros.length ? 'erro' : 'ok');
+    const estilo = estiloEscolhido();
+    carregando('Analisando a referência e gerando ' + faltam.length + ' retrato(s)…');
+    try {
+      const inspiracao = await garantirInspiracao();
+      carregando('Gerando ' + faltam.length + ' retrato(s) com a imagem local…');
+      const erros = [];
+      for (const p of faltam) {
+        try {
+          await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato', {
+            nome: p.nome, visual: p.visual, descricao: p.descricao,
+            estilo, inspiracao,
+          });
+        } catch (e) { erros.push(p.nome + ': ' + e.message); }
+      }
+      lembrarEstilo(estilo);
+      await carregarCanal(false);
+      render();
+      mostrar(erros.length ? 'Retratos gerados com avisos. ' + erros.join(' · ') : 'Retratos gerados.', erros.length ? 'erro' : 'ok');
+    } catch (e) {
+      mostrar('Não consegui gerar os retratos: ' + e.message, 'erro');
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   async function gerarPersonagens() {
+    const briefing = (($('#cxBriefing') || {}).value || S.briefing || '').trim();
+    if (!briefing && !S.plano) {
+      mostrar('Escreva o briefing antes de gerar personagens.', 'erro');
+      return;
+    }
+    S.briefing = briefing;
+    if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
+    const estilo = estiloEscolhido();
+    const bt = $('[data-acao="gerar-personagens"]');
+    if (bt) bt.disabled = true;
+    carregando('Lendo o briefing, o estilo e a referência…');
     try {
-      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/gerar', {});
-      S.personagensNovos = (r.novos || []).map((p) => p.nome);
+      const inspiracao = await garantirInspiracao();
+      carregando('Criando personagens para este vídeo…');
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/gerar', {
+        briefing, estilo, inspiracao, plano: S.plano,
+      });
+      const novos = r.novos || [];
+      S.personagensNovos = novos.map((p) => p.nome);
+      if (S.plano && novos.length) {
+        const existentes = new Set((S.plano.personagens || []).map((p) => String((p || {}).nome || '').toLowerCase()));
+        S.plano.personagens = [...(S.plano.personagens || []),
+          ...novos.filter((p) => !existentes.has(String(p.nome || '').toLowerCase()))];
+      }
+      lembrarEstilo(estilo);
       await carregarCanal(false);
       render();
-      mostrar((r.novos || []).length + ' personagem(ns) criado(s) e salvo(s) no canal.', 'ok');
+      mostrar(novos.length + ' personagem(ns) criado(s) para este vídeo e salvo(s) no canal.', 'ok');
     } catch (e) {
       mostrar('Não consegui criar personagens: ' + e.message, 'erro');
-    }
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   async function aplicarPlaybook() {
-    const pb = ($('#ajPlaybook') || {}).value;
+    const pb = S.playbookSel || ($('#ajPlaybook') || {}).value;
     if (!pb) return;
     if (!confirm('Aplicar este playbook? O tema, o tom, o visual, as regras e o estilo atuais serão substituídos. Personagens, voz e contas ficam.')) return;
+    S.playbookSel = pb;
+    carregando('Aplicando o playbook…');
     try {
       await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/playbook', { playbook: pb });
       await carregarCanal(false);
+      S.playbookSel = pb;
       S.aba = 'ajustes';
       render();
       mostrar('Playbook aplicado. Revise e salve se quiser ajustar.', 'ok');
     } catch (e) {
       mostrar('Não consegui aplicar o playbook: ' + e.message, 'erro');
-    }
+    } finally { pararCarregando(); }
   }
 
   async function sugerirPautas() {
     const bt = $('[data-acao="sugerir-pautas"]');
     if (bt) bt.disabled = true;
-    mostrar('Sugerindo pautas com a IA local…', 'ok');
+    const direcionamento = (($('#cxPautaPedido') || {}).value || S.pautaPedido || '').trim();
+    S.pautaPedido = direcionamento;
+    carregando(direcionamento ? 'Sugerindo pautas sobre: ' + direcionamento : 'Sugerindo pautas com a IA local…');
     try {
-      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/pautas', { quantas: 8 });
+      const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/pautas',
+        { quantas: 8, direcionamento });
       S.pautas = r.pautas || [];
       render();
       mostrar(S.pautas.length + ' pauta(s) sugerida(s).', 'ok');
     } catch (e) {
       mostrar('Não consegui sugerir pautas: ' + e.message, 'erro');
-    } finally { if (bt) bt.disabled = false; }
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   function usarPauta(i) {
@@ -1423,6 +1918,7 @@
     const campo = $('#cxBriefing');
     if (!p || !campo) return;
     campo.value = [p.titulo, p.angulo, p.gancho].filter(Boolean).join('. ');
+    S.briefing = campo.value;
     campo.focus();
     mostrar('Pauta colocada no briefing. Ajuste o que quiser e gere o roteiro.', 'ok');
   }
@@ -1430,7 +1926,7 @@
   async function atualizarAnalise() {
     const bt = $('[data-acao="atualizar-analise"]');
     if (bt) bt.disabled = true;
-    mostrar('Coletando números no YouTube, TikTok, Instagram e Facebook… pode levar alguns segundos.', 'ok');
+    carregando('Coletando números das plataformas… pode levar alguns segundos.');
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/analytics/coletar',
         { dias: S.analiseDias });
@@ -1443,7 +1939,7 @@
       mostrar(erros.length ? 'Números atualizados com avisos. ' + erros.join(' · ') : 'Números atualizados.', erros.length ? 'erro' : 'ok');
     } catch (e) {
       mostrar('Não consegui coletar: ' + e.message, 'erro');
-    } finally { if (bt) bt.disabled = false; }
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   // ================================================================ contexto com IA
@@ -1467,6 +1963,7 @@
     if (!alvo) return;
     botao.disabled = true;
     statusIA('Lendo o campo com a IA local…');
+    carregando('Lendo o campo com a IA local…');
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/contexto/ia',
         { campo, texto: alvo.value || '' });
@@ -1474,7 +1971,7 @@
       statusIA('Pronto. Revise o texto e clique em Salvar canal.');
     } catch (e) {
       statusIA('A IA não conseguiu melhorar: ' + e.message, true);
-    } finally { botao.disabled = false; }
+    } finally { pararCarregando(); botao.disabled = false; }
   }
 
   async function gerarContexto() {
@@ -1491,6 +1988,7 @@
     const bt = $('[data-acao="ia-contexto"]');
     if (bt) bt.disabled = true;
     statusIA('Gerando o contexto do canal com a IA local… pode levar até um minuto.');
+    carregando('Gerando o contexto do canal… pode levar até um minuto.');
     try {
       const r = await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/contexto/ia',
         { gerar: true, nome, tema });
@@ -1508,7 +2006,7 @@
       statusIA('Contexto gerado. Revise os campos e clique em Salvar canal.');
     } catch (e) {
       statusIA('A IA não conseguiu gerar: ' + e.message, true);
-    } finally { if (bt) bt.disabled = false; }
+    } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
   async function sugerirDescricao() {
@@ -1682,6 +2180,71 @@
     $('#agendarPlataformas') && $('#agendarPlataformas').addEventListener('change', atualizarAvisoAgendar);
 
     document.addEventListener('click', aoClicar);
+    document.addEventListener('click', (ev) => {
+      if (ev.target.closest && ev.target.closest('.cx-estilo-picker')) return;
+      fecharEstilos();
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') fecharEstilos();
+    });
+    document.addEventListener('click', (ev) => {
+      const alvo = ev.target.closest && ev.target.closest('[data-ampliar]');
+      if (!alvo) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      abrirFoto(alvo.dataset.ampliar);
+    });
+    iniciarPollProducoes();
+    document.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (!t || !t.id) return;
+      if (t.id === 'cxBriefing') S.briefing = t.value;
+      else if (t.id === 'cxPautaPedido') S.pautaPedido = t.value;
+      else if (t.id === 'cxInspiracaoUrl') {
+        S.inspiracaoUrl = t.value.trim();
+        if (S.inspiracao && S.inspiracao.url !== S.inspiracaoUrl) S.inspiracao = null;
+      }
+    });
+    document.addEventListener('change', (ev) => {
+      const t = ev.target;
+      if (t && t.id === 'cxDuracao') S.duracaoDraft = t.value;
+      else if (t && t.id === 'cxEstilo') S.estiloDraft = t.value;
+      else if (t && t.id === 'cxParte') S.parteDraft = t.value;
+      else if (t && t.id === 'cxLegendas') S.legendasDraft = t.checked;
+      else if (t && t.dataset && t.dataset.formato) {
+        S.formatosDraft = $$('[data-formato]:checked').map((x) => x.dataset.formato);
+      }
+      if (ev.target && ev.target.id === 'ajPlaybook') { S.playbookSel = ev.target.value; return; }
+      const foto = ev.target.closest && ev.target.closest('[data-foto-persona]');
+      if (foto && foto.files && foto.files[0]) {
+        enviarFotoPersona(Number(foto.dataset.fotoPersona), foto.files[0], foto);
+        return;
+      }
+      const cb = ev.target.closest('[data-corte]');
+      if (!cb) return;
+      S.cortesSel[Number(cb.dataset.corte)] = cb.checked;
+      const lbl = $('#cxCortesBtLbl');
+      if (lbl) lbl.textContent = 'Montar selecionados (' + S.cortesSugeridos.filter((_, i) => S.cortesSel[i] !== false).length + ')';
+    });
+    document.addEventListener('dragover', (ev) => {
+      const z = ev.target.closest && ev.target.closest('.cx-pers-foto');
+      if (!z) return;
+      ev.preventDefault();
+      z.classList.add('cx-drop-on');
+    });
+    document.addEventListener('dragleave', (ev) => {
+      const z = ev.target.closest && ev.target.closest('.cx-pers-foto');
+      if (z) z.classList.remove('cx-drop-on');
+    });
+    document.addEventListener('drop', (ev) => {
+      const z = ev.target.closest && ev.target.closest('.cx-pers-foto');
+      if (!z) return;
+      ev.preventDefault();
+      z.classList.remove('cx-drop-on');
+      const input = z.querySelector('[data-foto-persona]');
+      const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if (input && file) enviarFotoPersona(Number(input.dataset.fotoPersona), file, input);
+    });
     document.addEventListener('pointermove', tooltipGrafico);
     document.addEventListener('pointerleave', () => {
       $$('.cx-tip').forEach((t) => t.classList.remove('on'));
@@ -1692,26 +2255,51 @@
     const b = ev.target.closest('[data-canal], [data-aba], [data-acao], [data-dias]');
     if (!b) return;
     if (b.dataset.canal) { ev.preventDefault(); await selecionar(b.dataset.canal); return; }
-    if (b.dataset.aba) { ev.preventDefault(); S.aba = b.dataset.aba; render(); if (S.aba === 'analise') carregarAnalise(true); return; }
+    if (b.dataset.aba) {
+      ev.preventDefault();
+      S.aba = b.dataset.aba;
+      if (S.aba === 'produzir' && S.producao && !['preparando', 'voz', 'imagens', 'montagem'].includes(S.producao.estado)) {
+        S.producao = null; S.plano = null;
+      }
+      render();
+      if (S.aba === 'analise') carregarAnalise(true);
+      return;
+    }
     if (b.dataset.dias) { ev.preventDefault(); S.analiseDias = Number(b.dataset.dias) || 30; S.analiseCarregada = false; S.analise = null; render(); carregarAnalise(true); return; }
     const acao = b.dataset.acao;
     if (!acao) return;
     ev.preventDefault();
     if (acao === 'novo-canal') { abrirNovoCanal(); return; }
     if (acao === 'ir-produzir') { S.aba = 'produzir'; render(); return; }
+    if (acao === 'nova-producao') {
+      S.producao = null; S.plano = null; S.briefing = ''; S.personagensNovos = [];
+      S.parteDraft = null; S.formatosDraft = null; S.legendasDraft = null;
+      render(); return;
+    }
     if (acao === 'ir-ajustes') { S.aba = 'ajustes'; render(); return; }
     if (acao === 'abrir-agenda') { S.aba = 'agenda'; render(); return; }
+    if (acao === 'abrir-estilos') { alternarEstilos(b); return; }
+    if (acao === 'escolher-estilo') { escolherEstilo(b); return; }
     if (acao === 'gerar-plano') { await gerarPlano(); return; }
     if (acao === 'produzir') { await produzir(); return; }
-    if (acao === 'produzir-direto') { await produzirDireto(); return; }
     if (acao === 'gerar-personagens') { await gerarPersonagens(); return; }
     if (acao === 'gerar-retratos') { await gerarRetratos(); return; }
+    if (acao === 'salvar-personagens') { await salvarPersonagensNoCanal(); return; }
+    if (acao === 'salvar-persona' || acao === 'toggle-persona-canal') {
+      const bloco = b.closest('.cx-persona-bloco');
+      const nome = bloco ? (($('.cx-pers-nome', bloco) || {}).value || b.dataset.nome) : b.dataset.nome;
+      await toggleSalvarPersona(nome);
+      return;
+    }
+    if (acao === 'ligar-falar') { await ligarFalar(); return; }
     if (acao === 'sugerir-pautas') { await sugerirPautas(); return; }
     if (acao === 'usar-pauta') { usarPauta(Number(b.dataset.i)); return; }
     if (acao === 'aplicar-playbook') { await aplicarPlaybook(); return; }
     if (acao === 'analisar-video') { await analisarVideo(); return; }
     if (acao === 'refazer-video') { await refazerVideo(); return; }
-    if (acao === 'gerar-cortes') { await gerarCortes(); return; }
+    if (acao === 'sugerir-cortes') { await sugerirCortes(); return; }
+    if (acao === 'montar-cortes') { await montarCortes(); return; }
+    if (acao === 'montar-noticia') { await montarNoticia(); return; }
     if (acao === 'atualizar-analise') { await atualizarAnalise(); return; }
     if (acao === 'ia-campo') { await melhorarCampo(b); return; }
     if (acao === 'ia-contexto') { await gerarContexto(); return; }
@@ -1758,7 +2346,7 @@
     }
     if (acao === 'add-formato') {
       const cx = $('#cxFormatos');
-      if (cx) { cx.insertAdjacentHTML('beforeend', linhaFormato({ nome: 'Novo formato', plataforma: 'youtube', largura: 1080, altura: 1920, legendas: true, ativo: true })); posRender(); }
+      if (cx) { cx.insertAdjacentHTML('beforeend', linhaFormato({ nome: 'Novo formato', plataforma: 'youtube', largura: 1080, altura: 1920, legendas: false, ativo: true })); posRender(); }
       return;
     }
     if (acao === 'del-formato') {
@@ -1789,6 +2377,7 @@
     }
     if (acao === 'abrir-agendar') { preencherAgendar(b.dataset.id, b.dataset.agora === '1'); return; }
     if (acao === 'aprovar-producao') { await aprovarProducao(b.dataset.id); return; }
+    if (acao === 'apagar-producao') { await apagarProducao(b.dataset.id); return; }
     if (acao === 'rejeitar-producao') { await rejeitarProducao(b.dataset.id); return; }
     if (acao === 'proxima-parte') { await proximaParte(b.dataset.id); return; }
     if (acao === 'publicar-agora') {
@@ -1879,8 +2468,28 @@
   }
 
   // ================================================================ ícones
+  function abrirFoto(url) {
+    if (!url) return;
+    let el = $('#cxFotoGrande');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cxFotoGrande';
+      el.className = 'cx-foto-grande';
+      el.innerHTML = '<img alt=""><button type="button" class="cx-foto-fechar" aria-label="Fechar">×</button>';
+      el.addEventListener('click', () => el.classList.remove('on'));
+      document.body.appendChild(el);
+    }
+    el.querySelector('img').src = url;
+    el.classList.add('on');
+  }
+
+  function rolarLogs() {
+    $$('.cx-log').forEach((el) => { el.scrollTop = el.scrollHeight; });
+  }
+
   function posRender() {
     $$('#vCanais [data-ic]').forEach((el) => { if (!el.firstElementChild) el.innerHTML = ic(el.dataset.ic); });
+    rolarLogs();
     if ($('#ajHoraNova')) atualizarHoras();
     // tooltip das barras de horário
     const barras = $('#cxBarrasHoras');

@@ -49,6 +49,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 import urllib.parse
@@ -5402,11 +5403,20 @@ async def api_canal_retrato(req):
     visual = str(b.get("visual") or "").strip()
     desc = str(b.get("descricao") or "").strip()
     est = canais.estilo_de(canal, b.get("estilo"))
-    prompt = ("character reference portrait of %s, %s, %s, head and shoulders, clear face, "
-              "neutral background, cinematic lighting, no text, no watermark"
-              % (nome, visual, desc)).strip(", ")
-    if est.get("prompt"):
-        prompt += ", " + est["prompt"]
+    ctx = canais.contexto(cid)
+    insp = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else {}
+    insp_visual = str(insp.get("visual") or "").strip()
+    identidade = str(ctx.get("identidade_visual") or "").strip()
+    partes = [
+        "character reference portrait of %s" % nome,
+        visual,
+        desc,
+        identidade,
+        ("reference look: " + insp_visual) if insp_visual else "",
+        est.get("prompt") or "",
+        "head and shoulders, clear face, even lighting, plain background, no text, no watermark",
+    ]
+    prompt = ", ".join(p for p in partes if p).strip(", ")
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", sem_acento(nome).lower()).strip("-")[:60] or "personagem"
     destino = canais.pasta_retratos(cid) / (slug + ".png")
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -5419,6 +5429,66 @@ async def api_canal_retrato(req):
     canais.salvar_retrato(cid, nome, destino)
     return web.json_response({"nome": nome, "arquivo": destino.name,
                               "url": "/api/canais/%s/personagens/retrato/%s" % (cid, destino.name)})
+
+
+async def api_canal_retrato_upload(req):
+    """Guarda uma imagem enviada pelo usuário como retrato do personagem."""
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    dados = await req.post()
+    arq = dados.get("arquivo")
+    nome = str(dados.get("nome") or "").strip()
+    if not nome:
+        raise web.HTTPBadRequest(text="Diga o nome do personagem antes de enviar a foto.")
+    if arq is None or not getattr(arq, "filename", ""):
+        raise web.HTTPBadRequest(text="Envie uma imagem.")
+    ext = Path(arq.filename).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise web.HTTPBadRequest(text="Use uma imagem PNG, JPG ou WEBP.")
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", sem_acento(nome).lower()).strip("-")[:60] or "personagem"
+    destino = canais.pasta_retratos(cid) / (slug + ext)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destino.write_bytes(arq.file.read())
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui salvar a imagem: " + str(exc)[:200])
+    d = canais.salvar_retrato(cid, nome, destino)
+    return web.json_response({"nome": nome, "arquivo": destino.name, "retratos": d,
+                              "url": "/api/canais/%s/personagens/retrato/%s" % (cid, destino.name)})
+
+
+async def api_canal_falar_disponivel(req):
+    """Diz se dá para gerar personagem falando: motor de apresentador instalado + ComfyUI no ar."""
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    presets = [p for p in (PRESETS.get("video") or [])
+               if isinstance(p, dict) and p.get("tipo") == "apresentador" and not p.get("desligado")]
+    instalado = False
+    cat = None
+    for p in presets:
+        try:
+            if p.get("motor_externo") == "latentsync":
+                est = latentsync_motor.estado_ia(p.get("versao_motor") or "1.5")
+            else:
+                cat = cat or ias.catalogo()
+                est = ias.estado_de(p.get("nome"), cat)
+        except Exception:
+            est = {}
+        if est.get("instalada"):
+            instalado = True
+            break
+    comfy = porta_aberta(_porta_url(COMFY) or 8188)
+    return web.json_response({
+        "disponivel": bool(instalado and comfy),
+        "instalado": bool(instalado), "comfy": bool(comfy),
+        "motores": [p.get("nome") for p in presets],
+    })
+
+
+async def api_canal_falar_ligar(req):
+    _canal_ou_erro(req.match_info["cid"])
+    pedir_ligar("video")
+    return web.json_response({"ligando": True})
 
 
 async def api_canal_retrato_arquivo(req):
@@ -5487,15 +5557,26 @@ async def api_canal_video_refazer(req):
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
 
-async def api_canal_video_cortes(req):
-    cid = req.match_info["cid"]
-    canal = _canal_ou_erro(cid)
-    b = await req.json()
-    rid = str(b.get("id") or "")
+def _mmss(seg):
+    seg = max(0.0, float(seg or 0))
+    m = int(seg // 60)
+    s = int(seg % 60)
+    return "%02d:%02d" % (m, s)
+
+
+def _ref_dados(cid, rid):
     arq = _ref_dir(cid, rid) / "referencia.json"
     if not arq.is_file():
         raise web.HTTPBadRequest(text="Analise o vídeo primeiro.")
-    d = json.loads(arq.read_text(encoding="utf-8"))
+    return json.loads(arq.read_text(encoding="utf-8"))
+
+
+async def api_canal_video_cortes_sugerir(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    b = await req.json()
+    rid = str(b.get("id") or "")
+    d = _ref_dados(cid, rid)
     segs = d.get("segmentos") or []
     ctx = canais.contexto(cid)
     try:
@@ -5503,20 +5584,157 @@ async def api_canal_video_cortes(req):
             _pedir_texto, segs, int(b.get("quantidade") or 5), ctx)
     except Exception as exc:
         raise web.HTTPBadGateway(text="Não consegui escolher os cortes: " + str(exc)[:300])
+    saida = []
+    for c in escolhas:
+        ini, fim = float(c.get("inicio") or 0), float(c.get("fim") or 0)
+        saida.append({**c, "inicio": round(ini, 2), "fim": round(fim, 2),
+                      "duracao": round(max(0.0, fim - ini), 2),
+                      "inicio_txt": _mmss(ini), "fim_txt": _mmss(fim)})
+    return web.json_response({
+        "id": rid, "cortes": saida, "duracao": d.get("duracao") or 0,
+        "fonte": Path(d.get("video") or "").name,
+    })
+
+
+async def api_canal_video_cortes_montar(req):
+    cid = req.match_info["cid"]
+    _canal_ou_erro(cid)
+    b = await req.json()
+    rid = str(b.get("id") or "")
+    d = _ref_dados(cid, rid)
+    segs = d.get("segmentos") or []
+    video = d.get("video")
+    if not video or not Path(video).is_file():
+        raise web.HTTPBadRequest(text="O arquivo do vídeo analisado não está mais disponível. Analise de novo.")
+    pedidos = b.get("selecionados") or []
+    if not isinstance(pedidos, list) or not pedidos:
+        raise web.HTTPBadRequest(text="Marque pelo menos um corte.")
+    dur_total = float(d.get("duracao") or 0)
+    formato = b.get("formato") or "9:16"
     pasta = _ref_dir(cid, rid) / "cortes"
     pasta.mkdir(parents=True, exist_ok=True)
-    formato = b.get("formato") or "9:16"
     saida = []
-    for i, c in enumerate(escolhas, 1):
+    for i, c in enumerate(pedidos[:20], 1):
+        try:
+            ini = max(0.0, float(c.get("inicio") or 0))
+            fim = float(c.get("fim") or 0)
+        except (TypeError, ValueError):
+            continue
+        if dur_total:
+            fim = min(fim, dur_total)
+        if fim - ini < 1.0:
+            continue
         destino = pasta / ("corte-%02d.mp4" % i)
         try:
-            await asyncio.to_thread(video_refazer.cortar, d.get("video"), c["inicio"], c["fim"],
+            await asyncio.to_thread(video_refazer.cortar, video, ini, fim,
                                     destino, segs, formato)
         except Exception as exc:
             raise web.HTTPBadGateway(text="Falha ao cortar o trecho %d: %s" % (i, str(exc)[:300]))
-        saida.append({**c, "arquivo": destino.name,
-                      "url": "/api/canais/%s/referencias/%s/cortes/%s" % (cid, rid, destino.name)})
+        saida.append({
+            "inicio": round(ini, 2), "fim": round(fim, 2),
+            "inicio_txt": _mmss(ini), "fim_txt": _mmss(fim),
+            "titulo": str(c.get("titulo") or "")[:120],
+            "motivo": str(c.get("motivo") or "")[:300],
+            "arquivo": destino.name,
+            "url": "/api/canais/%s/referencias/%s/cortes/%s" % (cid, rid, destino.name),
+        })
+    if not saida:
+        raise web.HTTPBadRequest(text="Nenhum trecho válido para montar.")
     return web.json_response({"cortes": saida, "id": rid})
+
+
+async def api_canal_video_noticia(req):
+    cid = req.match_info["cid"]
+    canal = _canal_ou_erro(cid)
+    b = await req.json()
+    rid = str(b.get("id") or "")
+    d = _ref_dados(cid, rid)
+    segs = d.get("segmentos") or []
+    if not segs:
+        raise web.HTTPBadRequest(text="A transcrição desse vídeo está vazia. Analise de novo.")
+    video = d.get("video")
+    if not video or not Path(video).is_file():
+        raise web.HTTPBadRequest(text="O vídeo analisado não está mais disponível. Analise de novo.")
+    dur_total = float(d.get("duracao") or 0)
+    sel = b.get("selecionados") or []
+    if not isinstance(sel, list) or not sel:
+        raise web.HTTPBadRequest(text="Marque pelo menos um corte para montar a notícia.")
+    cortes = []
+    for c in sel[:12]:
+        try:
+            ini = max(0.0, float(c.get("inicio") or 0))
+            fim = float(c.get("fim") or 0)
+        except (TypeError, ValueError):
+            continue
+        if dur_total:
+            fim = min(fim, dur_total)
+        if fim - ini < 1.0:
+            continue
+        cortes.append({"inicio": round(ini, 2), "fim": round(fim, 2),
+                       "titulo": str(c.get("titulo") or "")[:120],
+                       "gancho": str(c.get("gancho") or "")[:200],
+                       "motivo": str(c.get("motivo") or "")[:300]})
+    if not cortes:
+        raise web.HTTPBadRequest(text="Nenhum trecho válido selecionado.")
+    ctx = canais.contexto(cid)
+    estilo = b.get("estilo")
+    try:
+        itens = await video_refazer.roteiro_noticia(
+            _pedir_texto, canal, ctx, cortes, b.get("instrucoes") or "", estilo)
+    except Exception as exc:
+        raise web.HTTPBadGateway(text="Não consegui escrever a notícia: " + str(exc)[:300])
+    estilo_prompt = canais.estilo_de(canal, estilo).get("prompt") or ""
+    cenas = []
+    for it in itens:
+        if it.get("tipo") == "corte":
+            n = int(it.get("n") or 0) - 1
+            if 0 <= n < len(cortes):
+                c = cortes[n]
+                cenas.append({"tipo": "corte", "inicio": c["inicio"], "fim": c["fim"],
+                              "rotulo": c["titulo"], "titulo": c["titulo"]})
+        else:
+            fala = str(it.get("texto") or "").strip()
+            if not fala:
+                continue
+            imagem = roteirista._imagem_de_apoio(ctx, fala)
+            if estilo_prompt:
+                imagem += ", " + estilo_prompt
+            cenas.append({"tipo": "fala", "fala": fala, "imagem": imagem, "personagem": ""})
+    if not cenas:
+        raise web.HTTPBadGateway(text="O roteiro da notícia ficou vazio.")
+    for i, c in enumerate(cenas, 1):
+        c["n"] = i
+    n_fala = sum(1 for c in cenas if c.get("tipo") == "fala")
+    total_est = sum(max(0.5, c["fim"] - c["inicio"]) for c in cenas if c.get("tipo") == "corte")
+    total_est += n_fala * 4.0
+    plano = {
+        "modo": "noticia",
+        "referencia_id": rid,
+        "titulo": (cortes[0].get("titulo") or "Notícia")[:90],
+        "gancho": next((c["fala"] for c in cenas if c.get("tipo") == "fala"), "")[:300],
+        "publico_alvo": ctx.get("publico") or "",
+        "tom": ctx.get("tom") or "",
+        "duracao_estimada": round(total_est, 1),
+        "duracao_alvo": round(total_est, 1),
+        "duracao_minima": round(total_est, 1),
+        "estilo": canais.estilo_de(canal, estilo).get("id") or "auto",
+        "personagens": [dict(p) for p in (ctx.get("personagens") or [])],
+        "cenas": cenas,
+        "legenda": " ".join(c.get("fala") or "" for c in cenas)[:2000],
+        "hashtags": list(ctx.get("hashtags") or []),
+        "cta": ctx.get("chamada_final") or "",
+        "observacoes": "Falas do narrador intercaladas com cortes do vídeo original.",
+        "motor": "noticia",
+        "canal_id": canal.get("id"),
+        "criado": time.time(),
+    }
+    producao = esteira.criar(canal, plano, "Notícia: " + str(d.get("url") or ""),
+                             b.get("formatos"))
+    producao["etapas"].setdefault("voz", {})["total"] = n_fala
+    producao["etapas"].setdefault("imagens", {})["total"] = n_fala
+    canais.gravar_producao(cid, producao["id"], producao)
+    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
 
 async def api_canal_referencia_arquivo(req):
@@ -5538,14 +5756,22 @@ async def api_canal_pautas(req):
         b = await req.json()
     except ValueError:
         b = {}
+    if not isinstance(b, dict):
+        b = {}
     ctx = canais.contexto(cid)
     try:
         top = analytics.dashboard(cid, canais.pasta_canal(cid), 90, canal).get("top") or []
     except Exception:
         top = []
     try:
+        existentes = [(p.get("titulo") or (p.get("plano") or {}).get("titulo") or "")
+                      for p in canais.lista_producoes(cid)]
+    except Exception:
+        existentes = []
+    try:
         pautas = await roteirista.sugerir_pautas(
-            _pedir_texto, canal, ctx, top, int(b.get("quantas") or 8))
+            _pedir_texto, canal, ctx, top, int(b.get("quantas") or 8), evitar=existentes,
+            direcionamento=b.get("direcionamento") or b.get("pedido"))
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
@@ -5563,6 +5789,7 @@ async def api_canal_playbook(req):
     canais.gravar_contexto(cid, pb.get("contexto") or {})
     if pb.get("producao"):
         canais.atualizar(cid, {"producao": pb["producao"]})
+    canais.atualizar(cid, {"playbook": pb["id"]})
     return web.json_response(_resumo_canal(canais.obter(cid)))
 
 
@@ -5572,8 +5799,18 @@ async def api_canal_personagens_gerar(req):
     ctx = canais.contexto(cid)
     atuais = ctx.get("personagens") or []
     try:
+        b = await req.json()
+    except ValueError:
+        b = {}
+    if not isinstance(b, dict):
+        b = {}
+    inspiracao = b.get("inspiracao") if isinstance(b.get("inspiracao"), dict) else None
+    plano = b.get("plano") if isinstance(b.get("plano"), dict) else None
+    try:
         novos = await roteirista.gerar_personagens(
-            _pedir_texto, canal, ctx, canais.personagens_disponiveis(cid))
+            _pedir_texto, canal, ctx, canais.personagens_disponiveis(cid),
+            briefing=(b.get("briefing") or "").strip(), inspiracao=inspiracao,
+            estilo=b.get("estilo"), plano=plano)
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
@@ -5623,53 +5860,149 @@ def _personagens_da_requisicao(b, cid):
     return nomes, canais.personagens_disponiveis(cid)
 
 
-async def api_inspiracao(req):
-    """Lê o título/autor de um vídeo de referência sem baixar o vídeo.
+async def _descrever_referencia(contato):
+    """Pede ao modelo de visão uma direção de arte a partir dos quadros da referência."""
+    nome = "insp_%s.jpg" % uuid.uuid4().hex[:10]
+    destino = COMFY_DIR / "input" / nome
+    try:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(contato, destino)
+        res = await TEXTO.pedir(
+            "descrever_imagem",
+            "Descreva o estilo visual destas cenas de um vídeo: arte, cores, iluminação, "
+            "enquadramento, época e clima. Responda em português, curto e concreto, como uma "
+            "direção de arte. Não conte a história.",
+            {"imagem": nome}, None, placa_ocupada_para_texto, pasta_input=COMFY_DIR / "input")
+        txt = (res or {}).get("texto") if isinstance(res, dict) else str(res or "")
+        return re.sub(r"\s+", " ", str(txt or "")).strip()[:500]
+    except Exception as exc:
+        print("[estudio] não consegui descrever a referência: %r" % (exc,), flush=True)
+        return ""
+    finally:
+        try:
+            destino.unlink()
+        except OSError:
+            pass
 
-    É o suficiente para o roteirista se inspirar no clima e no formato. Instagram não tem
-    oEmbed público sem token: nesse caso a tela pede para descrever o estilo no briefing.
-    """
+
+INSPIRACAO_JOBS = {}
+
+
+def _insp_guardar(jid, dados):
+    INSPIRACAO_JOBS[jid] = dados
+
+
+def _insp_limpar():
+    agora = time.time()
+    for k in [k for k, v in list(INSPIRACAO_JOBS.items())
+              if agora - float(v.get("criado") or 0) > 3600]:
+        INSPIRACAO_JOBS.pop(k, None)
+
+
+async def _rodar_inspiracao(jid, url, plataforma, endereco):
+    titulo = autor = ""
+    try:
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+                async with s.get(endereco, headers={"User-Agent": "Mozilla/5.0"}) as r:
+                    txt = await r.text()
+                    if r.status < 400:
+                        d = json.loads(txt) if txt else {}
+                        titulo = str(d.get("title") or "")[:300]
+                        autor = str(d.get("author_name") or "")[:200]
+        except Exception as exc:
+            print("[estudio] metadados da referência falharam: %r" % (exc,), flush=True)
+
+        _insp_guardar(jid, {"estado": "rodando", "etapa": "baixando e transcrevendo o trecho",
+                            "url": url, "criado": time.time()})
+        pasta = Path(tempfile.mkdtemp(prefix="insp_"))
+        try:
+            try:
+                analise = await asyncio.to_thread(video_refazer.analisar_referencia, url, pasta, 75)
+            except Exception as exc:
+                print("[estudio] análise da referência falhou: %r" % (exc,), flush=True)
+                analise = {}
+            ritmo = video_refazer.ritmo_de(analise.get("segmentos") or [],
+                                           analise.get("duracao") or 0) if analise else ""
+            visual = ""
+            contato = analise.get("contato") if analise else ""
+            if contato and Path(contato).is_file():
+                _insp_guardar(jid, {"estado": "rodando", "etapa": "descrevendo o estilo visual",
+                                    "url": url, "criado": time.time()})
+                visual = await _descrever_referencia(contato)
+            amostra = (analise.get("texto") or "")[:700] if analise else ""
+            partes = [p for p in [ritmo, visual, ("Trecho falado: " + amostra) if amostra else ""] if p]
+            texto = (("Referência analisada. " + " | ".join(partes))[:1400] if partes else
+                     "Referência de estilo: %s de %s." % (titulo or "vídeo", autor or "autor desconhecido"))
+            _insp_guardar(jid, {
+                "estado": "pronto", "url": url, "criado": time.time(),
+                "resultado": {
+                    "url": url, "plataforma": plataforma,
+                    "titulo": titulo or "Referência", "autor": autor,
+                    "duracao": (analise.get("duracao") if analise else 0) or 0,
+                    "ritmo": ritmo, "visual": visual, "descricao": amostra,
+                    "miniatura": "", "texto": texto,
+                },
+            })
+        finally:
+            shutil.rmtree(pasta, ignore_errors=True)
+    except Exception as exc:
+        _insp_guardar(jid, {"estado": "erro", "url": url, "criado": time.time(),
+                            "erro": str(exc)[:300]})
+
+
+async def api_inspiracao(req):
+    """Inicia a análise da referência em segundo plano e devolve o id para acompanhar."""
     b = await req.json()
     url = str(b.get("url") or "").strip()
     if not url.startswith(("http://", "https://")):
         raise web.HTTPBadRequest(text="Cole uma URL http(s) de um vídeo.")
     baixo = url.lower()
-    if "youtube.com" in baixo or "youtu.be" in baixo:
-        plataforma = "youtube"
-        endereco = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url, safe="")
-    elif "tiktok.com" in baixo:
-        plataforma = "tiktok"
-        endereco = "https://www.tiktok.com/oembed?url=" + urllib.parse.quote(url, safe="")
-    elif "instagram.com" in baixo:
+    if "instagram.com" in baixo:
         raise web.HTTPBadRequest(text="O Instagram não tem leitura pública de referência. "
                                       "Descreva o estilo no briefing ou use YouTube/TikTok.")
+    if "youtube.com" in baixo or "youtu.be" in baixo:
+        plataforma, endereco = "youtube", (
+            "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url, safe=""))
+    elif "tiktok.com" in baixo:
+        plataforma, endereco = "tiktok", (
+            "https://www.tiktok.com/oembed?url=" + urllib.parse.quote(url, safe=""))
     else:
         raise web.HTTPBadRequest(text="Use uma URL do YouTube, TikTok ou Instagram.")
+    _insp_limpar()
+    jid = uuid.uuid4().hex[:12]
+    _insp_guardar(jid, {"estado": "rodando", "etapa": "começando", "url": url, "criado": time.time()})
+    em_segundo_plano(_rodar_inspiracao(jid, url, plataforma, endereco))
+    return web.json_response({"id": jid, "estado": "rodando", "etapa": "começando"})
+
+
+async def api_inspiracao_status(req):
+    jid = Path(req.match_info["jid"]).name
+    job = INSPIRACAO_JOBS.get(jid)
+    if not job:
+        raise web.HTTPNotFound(text="Análise não encontrada ou expirada.")
+    return web.json_response(dict(job))
+
+
+def _lembrar_estilo(cid, canal, estilo):
+    """Guarda o estilo escolhido no vídeo como padrão do canal, para vir selecionado depois."""
+    estilo = str(estilo or "").strip()
+    if not estilo:
+        return canal
+    if (canal.get("producao") or {}).get("estilo") == estilo:
+        return canal
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
-            async with s.get(endereco, headers={"User-Agent": "Mozilla/5.0"}) as r:
-                txt = await r.text()
-                if r.status >= 400:
-                    raise web.HTTPBadGateway(text="Não consegui ler a referência (%s)." % r.status)
-                d = json.loads(txt) if txt else {}
-    except web.HTTPException:
-        raise
+        return canais.atualizar(cid, {"producao": {"estilo": estilo}})
     except Exception as exc:
-        raise web.HTTPBadGateway(text="Não consegui ler a referência: " + str(exc)[:200])
-    return web.json_response({
-        "url": url,
-        "plataforma": plataforma,
-        "titulo": str(d.get("title") or "")[:300],
-        "autor": str(d.get("author_name") or "")[:200],
-        "miniatura": str(d.get("thumbnail_url") or ""),
-        "texto": "Referência de estilo: %s, de %s." % (d.get("title") or "vídeo", d.get("author_name") or "autor desconhecido"),
-    })
+        print("[estudio] não consegui salvar o estilo do canal %s: %r" % (cid, exc), flush=True)
+        return canal
 
 
 async def api_canal_plano(req):
     cid = req.match_info["cid"]
     canal = _canal_ou_erro(cid)
     b = await req.json()
+    canal = _lembrar_estilo(cid, canal, b.get("estilo"))
     briefing = (b.get("briefing") or "").strip()
     if not briefing:
         raise web.HTTPBadRequest(text="Escreva o que você quer postar.")
@@ -5691,19 +6024,53 @@ async def api_canal_plano(req):
     return web.json_response({"plano": plano, "contexto": ctx, "personagens": disponiveis})
 
 
-async def _gerar_imagem_esteira(prompt, formato, destino, preset, qualidade):
+def _preset_para_prompt(preset):
+    """Escolhe um preset que aceita 'prompt'. O H3 (só referência) não serve para retrato/texto puro."""
+    aba, p = preset_ou_none(preset)
+    if aba == "imagem" and p and "prompt" in (p.get("modos") or []):
+        return preset
+    for cand in (PRESETS.get("imagem") or []):
+        if isinstance(cand, dict) and not cand.get("desligado") and "prompt" in (cand.get("modos") or []):
+            return cand.get("id")
+    return "z_image_turbo"
+
+
+async def _gerar_imagem_esteira(prompt, formato, destino, preset, qualidade,
+                                referencia=None, sujeito=None, visual=None):
     """Gera uma cena pela rota de imagem do próprio estúdio, marcada como oculta.
 
     Ir pela rota (em vez de falar com a ComfyUI) reaproveita a fila, a espera pela placa e a
     conversão de formato que a tela já usa. `ocultos=1` é só para esta esteira enxergar o
     próprio trabalho: a Fila e Minhas criações continuam sem ele.
+
+    `referencia` é o retrato do personagem: quando o preset aceita imagem de referência
+    (h3_imagem), a cena é gerada com ela para manter o rosto. Sem suporte, cai no texto.
     """
     aba, p = preset_ou_none(preset)
     if aba != "imagem" or not p:
         preset = "z_image_turbo"
+        aba, p = preset_ou_none(preset)
+    modos = (p or {}).get("modos") or []
+    usa_ref = bool(referencia) and Path(referencia).is_file() and p and p.get("referencias") and "referencia" in modos
+    if not usa_ref and "prompt" not in modos:
+        preset = _preset_para_prompt(preset)
+        aba, p = preset_ou_none(preset)
     base = "http://127.0.0.1:%d" % PORTA
     corpo = {"preset": preset, "modo": "prompt", "prompt": prompt,
              "formato": formato or "9:16", "qualidade": qualidade or "Normal", "oculto": True}
+    if usa_ref:
+        nome_ref = "ref_%s%s" % (uuid.uuid4().hex[:10], Path(referencia).suffix or ".png")
+        try:
+            (COMFY_DIR / "input").mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(referencia, COMFY_DIR / "input" / nome_ref)
+            sujeito = str(sujeito or "the character").strip()
+            visual = str(visual or "").strip()
+            corpo["modo"] = "referencia"
+            corpo["imagens"] = [nome_ref]
+            corpo["prompt"] = ("<Subject 1> is %s in <Picture 1>%s. %s"
+                               % (sujeito, (": " + visual) if visual else "", prompt or "")).strip()
+        except OSError as exc:
+            print("[estudio] não consegui usar o retrato como referência: %r" % (exc,), flush=True)
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
         jid = None
         for tentativa in range(4):
@@ -5786,19 +6153,48 @@ async def _rodar_esteira(cid, pid):
         def log(msg):
             print("[canal %s] %s" % (canal.get("nome") or cid, msg), flush=True)
 
-        await esteira.produzir(producao, canal, {
-            "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
-            "cancelado": cancelado, "log": log})
+        plano_atual = producao.get("plano") or {}
+        if plano_atual.get("modo") == "noticia":
+            rid = str(plano_atual.get("referencia_id") or "")
+            arq = _ref_dir(cid, rid) / "referencia.json"
+            if not arq.is_file():
+                producao["estado"] = "erro"
+                producao["erro"] = "O vídeo de referência não está mais disponível. Analise de novo."
+                canais.gravar_producao(cid, pid, producao)
+                return
+            ref = json.loads(arq.read_text(encoding="utf-8"))
+
+            async def cortar_ref(video, inicio, fim, destino, formato):
+                return await asyncio.to_thread(
+                    video_refazer.cortar, video, inicio, fim, destino,
+                    ref.get("segmentos") or [], formato)
+
+            await esteira.produzir_noticia(producao, canal, {
+                "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
+                "cortar": cortar_ref, "video_fonte": ref.get("video"),
+                "cancelado": cancelado, "log": log})
+        else:
+            await esteira.produzir(producao, canal, {
+                "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
+                "cancelado": cancelado, "log": log})
         if producao.get("estado") == "concluido":
             _agendar_automatico(canal, producao)
     except Exception as exc:
         print("[estudio] esteira do canal %s falhou: %r" % (cid, exc), flush=True)
+        try:
+            p = canais.ler_producao(cid, pid)
+            p["estado"] = "erro"
+            p["erro"] = ("Falha ao iniciar a produção: " + str(exc))[:600]
+            canais.gravar_producao(cid, pid, p)
+        except Exception:
+            pass
 
 
 async def api_canal_produzir(req):
     cid = req.match_info["cid"]
     canal = _canal_ou_erro(cid)
     b = await req.json()
+    canal = _lembrar_estilo(cid, canal, b.get("estilo"))
     ctx = canais.contexto(cid)
     plano = b.get("plano")
     briefing = (b.get("briefing") or "").strip()
@@ -5817,16 +6213,22 @@ async def api_canal_produzir(req):
         except Exception as e:
             raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
     elif inspiracao and not plano.get("inspiracao"):
-        plano["inspiracao"] = {k: inspiracao.get(k) for k in ("url", "plataforma", "titulo", "autor", "descricao")}
+        plano["inspiracao"] = {k: inspiracao.get(k) for k in (
+            "url", "plataforma", "titulo", "autor", "descricao", "ritmo", "visual", "duracao")}
     if b.get("estilo"):
         plano["estilo"] = b.get("estilo")
     if b.get("parte"):
         plano["parte"] = int(b.get("parte") or 0)
+    if b.get("legendas") is not None:
+        plano["legendas"] = bool(b.get("legendas"))
     for i, c in enumerate(plano.get("cenas") or [], 1):
         if not str(c.get("fala") or "").strip():
             raise web.HTTPBadRequest(text="A cena %d está sem fala." % i)
         c["n"] = i
-    producao = esteira.criar(canal, plano, briefing, b.get("formatos"))
+    formatos = b.get("formatos")
+    if isinstance(formatos, list) and not formatos:
+        raise web.HTTPBadRequest(text="Marque pelo menos um formato para montar.")
+    producao = esteira.criar(canal, plano, briefing, formatos)
     em_segundo_plano(_rodar_esteira(cid, producao["id"]))
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
@@ -5868,6 +6270,39 @@ async def api_canal_producoes(req):
     cid = req.match_info["cid"]
     _canal_ou_erro(cid)
     return web.json_response({"producoes": [esteira.resumo(p) for p in canais.lista_producoes(cid)]})
+
+
+async def api_canal_producao_apagar(req):
+    """Apaga a produção por inteiro: imagens, vídeos, áudio, roteiro e o histórico."""
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    _canal_ou_erro(cid)
+    pasta = canais.pasta_producao(cid, pid)
+    if not pid or not (pasta / "producao.json").is_file():
+        raise web.HTTPNotFound(text="Produção não encontrada.")
+    try:
+        p = canais.ler_producao(cid, pid)
+    except Exception:
+        p = {}
+    if p.get("estado") in ("preparando", "voz", "imagens", "montagem"):
+        raise web.HTTPBadRequest(text="Essa produção ainda está gerando. Cancele antes de apagar.")
+    total = 0
+    try:
+        for arq in pasta.rglob("*"):
+            if arq.is_file():
+                total += arq.stat().st_size
+    except OSError:
+        pass
+    try:
+        shutil.rmtree(pasta)
+    except OSError as exc:
+        raise web.HTTPBadGateway(text="Não consegui apagar a pasta: " + str(exc)[:200])
+    try:
+        for a in canais.agenda_listar(cid):
+            if a.get("producao_id") == pid:
+                canais.agenda_remover(a.get("id"))
+    except Exception as exc:
+        print("[estudio] não consegui tirar a produção %s da agenda: %r" % (pid, exc), flush=True)
+    return web.json_response({"ok": True, "mb": round(total / 1048576, 2)})
 
 
 async def api_canal_producao(req):
@@ -6243,6 +6678,7 @@ app.add_routes([
     web.get("/api/canais", api_canais), web.post("/api/canais", api_canais),
     web.post("/api/canais/sugerir", api_canais_sugerir),
     web.post("/api/inspiracao", api_inspiracao),
+    web.get("/api/inspiracao/{jid}", api_inspiracao_status),
     web.get("/api/canais/{cid}", api_canal), web.post("/api/canais/{cid}", api_canal),
     web.delete("/api/canais/{cid}", api_canal),
     web.get("/api/canais/{cid}/contexto", api_canal_contexto), web.post("/api/canais/{cid}/contexto", api_canal_contexto),
@@ -6251,14 +6687,20 @@ app.add_routes([
     web.post("/api/canais/{cid}/pautas", api_canal_pautas),
     web.post("/api/canais/{cid}/video/analisar", api_canal_video_analisar),
     web.post("/api/canais/{cid}/video/refazer", api_canal_video_refazer),
-    web.post("/api/canais/{cid}/video/cortes", api_canal_video_cortes),
+    web.post("/api/canais/{cid}/video/cortes/sugerir", api_canal_video_cortes_sugerir),
+    web.post("/api/canais/{cid}/video/cortes/montar", api_canal_video_cortes_montar),
+    web.post("/api/canais/{cid}/video/noticia", api_canal_video_noticia),
     web.get("/api/canais/{cid}/referencias/{rid}/{arquivo:.+}", api_canal_referencia_arquivo),
     web.post("/api/canais/{cid}/playbook", api_canal_playbook),
     web.post("/api/canais/{cid}/personagens/retrato", api_canal_retrato),
+    web.post("/api/canais/{cid}/personagens/retrato/upload", api_canal_retrato_upload),
+    web.get("/api/canais/{cid}/falar-disponivel", api_canal_falar_disponivel),
+    web.post("/api/canais/{cid}/falar-ligar", api_canal_falar_ligar),
     web.get("/api/canais/{cid}/personagens/retrato/{nome}", api_canal_retrato_arquivo),
     web.post("/api/canais/{cid}/plano", api_canal_plano),
     web.post("/api/canais/{cid}/produzir", api_canal_produzir),
     web.post("/api/canais/{cid}/producoes/{pid}/proxima-parte", api_canal_proxima_parte),
+    web.post("/api/canais/{cid}/producoes/{pid}/apagar", api_canal_producao_apagar),
     web.get("/api/canais/{cid}/producoes", api_canal_producoes),
     web.get("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
     web.post("/api/canais/{cid}/producoes/{pid}", api_canal_producao),

@@ -101,12 +101,14 @@ MODELOS = {
                   "vram_mib": 12800},
 }
 TAREFAS = ("melhorar_prompt", "letra", "roteiro", "canal_roteiro", "canal_personagens", "canal_pautas",
-           "traduzir", "descrever_imagem", "livre", "contexto")
+           "canal_campo", "traduzir", "descrever_imagem", "livre", "contexto")
 PAPEL_PADRAO = {"melhorar_prompt": "rapido", "letra": "principal", "roteiro": "principal", "canal_roteiro": "principal",
-                "canal_personagens": "rapido", "canal_pautas": "principal", "traduzir": "rapido",
+                "canal_personagens": "rapido", "canal_pautas": "principal", "canal_campo": "rapido",
+                "traduzir": "rapido",
                 "descrever_imagem": "rapido", "livre": "principal", "contexto": "rapido"}
 MAX_TOKENS = {"melhorar_prompt": 220,   # 70 palavras cabem em ~140; 220 e a rede de seguranca "letra": 1400, "roteiro": 1800, "traduzir": 2500, "descrever_imagem": 500,
-              "livre": 1200, "contexto": 3000, "canal_roteiro": 3000, "canal_personagens": 1600, "canal_pautas": 2000}
+              "livre": 1200, "contexto": 3000, "canal_roteiro": 3000, "canal_personagens": 1600, "canal_pautas": 2000,
+              "canal_campo": 700}
 ENTRADA_MAX = 12000  # caracteres
 
 
@@ -402,6 +404,9 @@ def sistema_melhorar(ficha, contexto):
         "Preserve tudo o que o usuário pediu (pessoas, objetos, quantidades, cores, textos entre aspas, etiquetas "
         "<Picture N>); acrescente só detalhes visuais que combinem com o pedido. Não invente marcas, pessoas reais "
         "nem textos escritos que ele não pediu.",
+        "Parta do pedido do usuário e melhore o que está escrito: não troque o assunto, o personagem ou a cena "
+        "por outro, e não imponha um estilo que ele não pediu. Se ele não citou um estilo, não acrescente um "
+        "rótulo genérico de estilo; descreva só o que se vê.",
     ]
     est = contexto.get("estilo")
     if est and _sem_acento(est) != "livre":
@@ -507,6 +512,24 @@ def sistema_canal_pautas(contexto):
             "sem markdown e sem explicação.")
 
 
+def sistema_canal_campo(contexto):
+    return "\n".join([
+        "Você reescreve UM campo da configuração de um canal de vídeos curtos.",
+        "Parta SEMPRE do texto atual escrito pelo usuário: preserve a ideia, o estilo e todos os "
+        "detalhes concretos que ele já colocou. O texto final tem de ser reconhecivelmente uma "
+        "melhora do texto dele, não uma substituição por outro estilo.",
+        "Acrescente só o que deixar o texto mais claro e útil (luz, cor, textura, enquadramento, "
+        "materiais, cenário, época, quem é e como fala). Não mude o assunto.",
+        "NUNCA troque o estilo pedido por um rótulo genérico. Se o texto fala em desenho animado 2D, "
+        "continue em desenho animado 2D; não escreva 'cinematográfico', 'realista', 'profissional' "
+        "nem outro estilo que o usuário não pediu.",
+        "Se o texto estiver vazio, crie do zero a partir do nome, do tema e do contexto do canal, "
+        "sem inventar fatos externos.",
+        "Escreva no português do Brasil, direto, sem título, sem markdown e sem explicação. "
+        "Responda só com o texto final do campo.",
+    ])
+
+
 def sistema_canal_personagens(contexto):
     return ("Você cria personagens para canais de vídeo. Responda apenas com o JSON array pedido, "
             "sem markdown e sem explicação.")
@@ -545,6 +568,8 @@ def montar_mensagens(tarefa, entrada, contexto, ficha=None, fichas_ias=None, ima
         sis, usr = sistema_canal_personagens(contexto), entrada
     elif tarefa == "canal_pautas":
         sis, usr = sistema_canal_pautas(contexto), entrada
+    elif tarefa == "canal_campo":
+        sis, usr = sistema_canal_campo(contexto), entrada
     elif tarefa == "traduzir":
         sis, usr = sistema_traduzir(contexto), entrada
     elif tarefa == "contexto":
@@ -576,7 +601,7 @@ def limpar_saida(tarefa, txt):
             t = t[1:-1].strip()
     if tarefa in ("melhorar_prompt", "descrever_imagem"):
         t = re.sub(r"\s*\n+\s*", " ", t).strip()  # um parágrafo só
-    if tarefa in ("letra", "roteiro", "canal_roteiro", "canal_personagens", "canal_pautas", "livre", "contexto"):
+    if tarefa in ("letra", "roteiro", "canal_roteiro", "canal_personagens", "canal_pautas", "canal_campo", "livre", "contexto"):
         t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
         t = re.sub(r"(?m)^#+\s*", "", t)
         t = re.sub(r"\n{3,}", "\n\n", t).strip()

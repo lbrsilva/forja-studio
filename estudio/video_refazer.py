@@ -314,3 +314,183 @@ def analisar(url, pasta, idioma="pt"):
              "texto": texto_de(segmentos), "quando": int(time.time())}
     (pasta / "referencia.json").write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
     return dados
+
+
+def _normalizar_roteiro_noticia(bruto, n):
+    if isinstance(bruto, dict):
+        bruto = bruto.get("roteiro") or bruto.get("cenas") or bruto.get("itens") or []
+    if not isinstance(bruto, list):
+        return None
+    itens = []
+    usados = set()
+    for x in bruto:
+        if not isinstance(x, dict):
+            continue
+        tipo = str(x.get("tipo") or "").strip().lower()
+        if tipo == "corte":
+            try:
+                k = int(x.get("n") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= k <= n:
+                itens.append({"tipo": "corte", "n": k})
+                usados.add(k)
+        else:
+            texto = str(x.get("texto") or x.get("fala") or "").strip()
+            if texto:
+                itens.append({"tipo": "fala", "texto": texto[:400]})
+    if not itens:
+        return None
+    final = []
+    for it in itens:
+        if it["tipo"] == "corte" and (not final or final[-1]["tipo"] != "fala"):
+            final.append({"tipo": "fala", "texto": "Olha o que ele disse."})
+        final.append(it)
+    for k in range(1, n + 1):
+        if k not in usados:
+            final.append({"tipo": "fala", "texto": "E não parou por aí."})
+            final.append({"tipo": "corte", "n": k})
+    return final
+
+
+def _roteiro_noticia_simples(n):
+    frases = ["Olha o que foi dito.", "E não parou por aí.", "Tem mais.", "E ainda..."]
+    itens = []
+    for i in range(1, n + 1):
+        itens.append({"tipo": "fala", "texto": frases[(i - 1) % len(frases)]})
+        itens.append({"tipo": "corte", "n": i})
+    return itens
+
+
+async def roteiro_noticia(pedir_texto, canal, contexto, cortes, instrucoes="", estilo=None):
+    """Falas do narrador intercaladas com os cortes escolhidos, para o formato notícia."""
+    linhas = []
+    for i, c in enumerate(cortes, 1):
+        linhas.append("%d) %.1fs-%.1fs | %s | %s | %s" % (
+            i, float(c.get("inicio") or 0), float(c.get("fim") or 0),
+            str(c.get("titulo") or ""), str(c.get("gancho") or ""), str(c.get("motivo") or "")))
+    pedido = (
+        "Você escreve o roteiro de um vídeo de notícia/repercussão para redes sociais.\n"
+        "O vídeo ALTERNA falas do narrador com CORTES do vídeo original.\n"
+        "Para cada corte, escreva uma fala curta de narrador que apresente ou comente o trecho.\n"
+        "Estrutura de exemplo: fala \"Olha o que ele disse ontem no Jornal Nacional\", corte 1, "
+        "fala \"E não contente, ele ainda disse\", corte 2.\n"
+        "Regras: falas curtas (1 a 2 frases), tom natural, não invente fato que não esteja nos cortes.\n"
+        "Instruções pontuais: %s\n\nCORTES DISPONÍVEIS:\n%s\n\n"
+        "Responda SÓ com JSON: [{\"tipo\":\"fala\",\"texto\":\"...\"},{\"tipo\":\"corte\",\"n\":1}, ...]\n"
+        "Use os cortes na ordem que fizer mais sentido narrativo."
+        % (instrucoes or "nenhuma", "\n".join(linhas)))
+    itens = None
+    try:
+        res = await pedir_texto("canal_roteiro", pedido)
+        bruto = roteirista._json_do_texto((res or {}).get("texto") if isinstance(res, dict) else res)
+        itens = _normalizar_roteiro_noticia(bruto, len(cortes))
+    except Exception:
+        itens = None
+    return itens or _roteiro_noticia_simples(len(cortes))
+
+
+def _duracao_video(video):
+    ff = shutil.which("ffprobe")
+    if not ff:
+        return None
+    r = subprocess.run([ff, "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
+                       capture_output=True, text=True)
+    try:
+        return float((r.stdout or "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def baixar_trecho(url, pasta, segundos=75, altura=480):
+    """Baixa só o começo da referência, em baixa resolução, para analisar rápido."""
+    pasta = Path(pasta)
+    pasta.mkdir(parents=True, exist_ok=True)
+    destino = pasta / "ref.%(ext)s"
+    cmd = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--no-warnings", "--force-overwrites",
+           "-o", str(destino),
+           "-f", "bv*[height<=%d]+ba/b[height<=%d]/b" % (altura, altura),
+           "--merge-output-format", "mp4",
+           "--download-sections", "*0-%d" % int(segundos)]
+    ff = shutil.which("ffmpeg")
+    if ff:
+        cmd += ["--ffmpeg-location", ff]
+    cmd.append(url)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=600)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("O download da referência passou de 10 minutos.")
+    arquivos = [p for p in sorted(pasta.glob("ref.*"), key=lambda x: x.stat().st_mtime, reverse=True)
+                if p.is_file() and p.stat().st_size > 0]
+    if r.returncode or not arquivos:
+        return baixar_video(url, pasta, altura)
+    return arquivos[0]
+
+
+def _frames_contato(video, pasta, n=3):
+    """Monta uma tira com alguns quadros do vídeo para o modelo de visão descrever o estilo."""
+    from PIL import Image
+    pasta = Path(pasta)
+    pasta.mkdir(parents=True, exist_ok=True)
+    dur = _duracao_video(video)
+    if not dur or dur <= 0:
+        return None
+    quadros = []
+    for i in range(n):
+        t = dur * (0.2 + 0.6 * (i / max(1, n - 1)))
+        q = pasta / ("frame_%d.jpg" % i)
+        try:
+            subprocess.run([_ffmpeg(), "-v", "error", "-y", "-ss", "%.2f" % t, "-i", str(video),
+                            "-frames:v", "1", "-vf", "scale=640:-2", str(q)],
+                           check=True, timeout=120)
+        except Exception:
+            continue
+        if q.is_file() and q.stat().st_size > 0:
+            quadros.append(q)
+    if not quadros:
+        return None
+    imgs = [Image.open(q).convert("RGB") for q in quadros]
+    h = max(im.height for im in imgs)
+    imgs = [im.resize((max(1, int(im.width * h / im.height)), h)) for im in imgs]
+    faixa = Image.new("RGB", (sum(im.width for im in imgs), h), (0, 0, 0))
+    x = 0
+    for im in imgs:
+        faixa.paste(im, (x, 0))
+        x += im.width
+    saida = pasta / "contato.jpg"
+    faixa.save(saida, quality=85)
+    return saida
+
+
+def analisar_referencia(url, pasta, segundos=75):
+    """Baixa um trecho, transcreve e extrai quadros para descrever estilo e ritmo da referência."""
+    pasta = Path(pasta)
+    pasta.mkdir(parents=True, exist_ok=True)
+    video = baixar_trecho(url, pasta, segundos)
+    audio = extrair_audio(video, pasta)
+    segmentos = transcrever(audio, None)
+    duracao = segmentos[-1]["fim"] if segmentos else (_duracao_video(video) or 0)
+    contato = _frames_contato(video, pasta)
+    return {"video": str(video), "audio": str(audio), "segmentos": segmentos,
+            "duracao": duracao, "texto": texto_de(segmentos),
+            "contato": str(contato) if contato else ""}
+
+
+def ritmo_de(segmentos, duracao):
+    """Resume o ritmo da fala para o roteirista imitar (sem copiar o conteúdo)."""
+    if not segmentos:
+        return ""
+    palavras = sum(len(str(s.get("texto") or "").split()) for s in segmentos)
+    dur = max(1.0, float(duracao or segmentos[-1]["fim"]))
+    wps = palavras / dur
+    frase = dur / max(1, len(segmentos))
+    if wps >= 3.2:
+        fala = "fala rápida"
+    elif wps >= 2.2:
+        fala = "fala em ritmo médio"
+    else:
+        fala = "fala pausada"
+    abertura = str(segmentos[0].get("texto") or "")[:140]
+    return "%s (~%.1f palavras/s), frases de ~%.1fs; abre com: \"%s\"" % (fala, wps, frase, abertura)
