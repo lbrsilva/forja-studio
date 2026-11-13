@@ -680,6 +680,8 @@
       <div class="cx-pers-barra">
         <button type="button" class="bt-sec mini${salvo ? ' cx-salvo' : ''}" data-acao="toggle-persona-canal" data-nome="${esc(p.nome || '')}">
           ${ic(salvo ? 'ok' : 'mais')}${salvo ? 'Salvo no canal' : 'Salvar no canal'}</button>
+        <button type="button" class="bt-sec mini" data-acao="gerar-retrato-persona" data-nome="${esc(p.nome || '')}">
+          ${ic('imagem')}Gerar foto com IA</button>
         <span class="nota">${url ? 'Foto pronta.' : 'Sem foto ainda: as cenas usam a aparência descrita.'}</span>
       </div>
     </div>`;
@@ -1850,6 +1852,29 @@
     } finally { pararCarregando(); if (bt) bt.disabled = false; }
   }
 
+  async function gerarRetratoPersona(nome) {
+    if (!String(nome || '').trim()) { mostrar('Dê um nome ao personagem antes de gerar a foto.', 'erro'); return; }
+    if (S.plano && $('#cxPersonagens')) S.plano = lerPlano();
+    const p = ((S.plano && S.plano.personagens) || [])
+      .find((x) => String((x || {}).nome || '').toLowerCase() === String(nome).toLowerCase());
+    if (!p) { mostrar('Personagem não encontrado no roteiro.', 'erro'); return; }
+    const estilo = estiloEscolhido();
+    carregando('Analisando a referência e gerando a foto de ' + nome + '…');
+    try {
+      const inspiracao = await garantirInspiracao();
+      carregando('Gerando a foto de ' + nome + ' com a imagem local…');
+      await pedir('/api/canais/' + encodeURIComponent(S.atual) + '/personagens/retrato', {
+        nome: p.nome, visual: p.visual, descricao: p.descricao, estilo, inspiracao, forcar: true,
+      });
+      lembrarEstilo(estilo);
+      await carregarCanal(false);
+      render();
+      mostrar('Foto de ' + nome + ' refeita.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui gerar a foto: ' + e.message, 'erro');
+    } finally { pararCarregando(); }
+  }
+
   async function gerarPersonagens() {
     const briefing = (($('#cxBriefing') || {}).value || S.briefing || '').trim();
     if (!briefing && !S.plano) {
@@ -2296,6 +2321,7 @@
     if (acao === 'produzir') { await produzir(); return; }
     if (acao === 'gerar-personagens') { await gerarPersonagens(); return; }
     if (acao === 'gerar-retratos') { await gerarRetratos(); return; }
+    if (acao === 'gerar-retrato-persona') { await gerarRetratoPersona(b.dataset.nome); return; }
     if (acao === 'salvar-personagens') { await salvarPersonagensNoCanal(); return; }
     if (acao === 'salvar-persona' || acao === 'toggle-persona-canal') {
       const bloco = b.closest('.cx-persona-bloco');
