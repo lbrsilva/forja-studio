@@ -117,6 +117,66 @@ PLAYBOOKS = [
         },
         "producao": {"estilo": "minimalista", "duracao_alvo": 45, "imagens_por_formato": "auto", "legendas": False},
     },
+    {
+        "id": "biblico_quadrinhos", "nome": "Bíblia em quadrinhos 60s",
+        "contexto": {
+            "tema": "histórias bíblicas reais focadas em personagens com desejos claros e conflitos urgentes",
+            "publico": "pessoas que gostam de narrativa rápida e histórias bíblicas",
+            "tom": "envolvente, emocional, com gancho e consequência",
+            "identidade_visual": "estilo desenho animado 2D, traço limpo, cores quentes, cenários bíblicos",
+            "regras": ["um conflito claro por vídeo", "coadjuvantes só quando essenciais",
+                       "final com pergunta que provoque reflexão", "mostre a consequência da escolha"],
+            "nao_fazer": ["explicar a moral o tempo todo", "personagem sem desejo",
+                          "objetos modernos em cena antiga", "animais ou personagens fora do elenco"],
+            "chamada_final": "o que você faria no lugar dele?",
+            "hashtags": ["#biblia", "#historia", "#fe"],
+        },
+        "producao": {"estilo": "quadrinhos", "duracao_alvo": 60, "legendas": True,
+                     "preset_imagem": "krea2", "qualidade": "Normal",
+                     "imagens_por_formato": "auto", "falar_cenas": True},
+        "preset": {
+            "versao": 1,
+            "roteiro": {"estrutura": "gancho, contexto, conflito, virada, consequência, pergunta",
+                        "cenas": 10, "gancho_seg": 3},
+            "planos": {"por_cena": 2, "tipos": ["aberto", "movimento", "fala", "detalhe"],
+                       "corte_seg": [2, 4]},
+            "movimento": {"ativo": True, "max_cenas": 2, "duracao": "2 s",
+                          "modelo": "wan22_5b", "modo": "qualidade"},
+            "audio": {"trilha": "original", "loudness": -14, "voz_por_personagem": True},
+            "legendas": {"estilo": "bloco", "palavras_por_bloco": 4},
+            "monetizacao": {"divulgacao_ia": True, "musica_original": True, "revisao_humana": True},
+        },
+    },
+    {
+        "id": "biblico_quadrinhos_longo", "nome": "Bíblia em quadrinhos 10 min",
+        "contexto": {
+            "tema": "histórias bíblicas completas, com personagens, conflito, consequência e contexto histórico",
+            "publico": "pessoas que gostam de narrativa longa e histórias bíblicas",
+            "tom": "envolvente, emocional, com pausas e revelações",
+            "identidade_visual": "estilo desenho animado 2D, traço limpo, cores quentes, cenários bíblicos",
+            "regras": ["uma história completa por vídeo", "coadjuvantes quando a trama pedir",
+                       "recap no começo e gancho no fim", "mostre a consequência da escolha"],
+            "nao_fazer": ["explicar a moral o tempo todo", "personagem sem desejo",
+                          "objetos modernos em cena antiga", "animais ou personagens fora do elenco"],
+            "chamada_final": "o que você faria no lugar dele?",
+            "hashtags": ["#biblia", "#historia", "#fe"],
+        },
+        "producao": {"estilo": "quadrinhos", "duracao_alvo": 600, "legendas": True,
+                     "preset_imagem": "krea2", "qualidade": "Normal",
+                     "imagens_por_formato": "auto", "falar_cenas": True},
+        "preset": {
+            "versao": 1,
+            "roteiro": {"estrutura": "gancho, contexto, conflito, obstáculos, virada, consequência, gancho final",
+                        "cenas": 24, "gancho_seg": 5},
+            "planos": {"por_cena": 2, "tipos": ["aberto", "movimento", "fala", "detalhe"],
+                       "corte_seg": [3, 5]},
+            "movimento": {"ativo": True, "max_cenas": 4, "duracao": "2 s",
+                          "modelo": "wan22_5b", "modo": "qualidade"},
+            "audio": {"trilha": "original", "loudness": -14, "voz_por_personagem": True},
+            "legendas": {"estilo": "bloco", "palavras_por_bloco": 4},
+            "monetizacao": {"divulgacao_ia": True, "musica_original": True, "revisao_humana": True},
+        },
+    },
 ]
 
 
@@ -125,6 +185,11 @@ def playbook_de(pid):
         if p["id"] == pid:
             return p
     return None
+
+
+def preset_de(pid):
+    pb = playbook_de(pid)
+    return (pb or {}).get("preset") or {}
 
 
 ESTILOS = [    {"id": "auto", "nome": "Automático", "instrucao": "", "prompt": ""},
@@ -423,7 +488,8 @@ def criar(nome, **extra):
     return c
 
 
-_CAMPOS = {"nome", "slug", "cor", "voz", "producao", "formatos", "publicacao", "analytics", "playbook", "arquivado"}
+_CAMPOS = {"nome", "slug", "cor", "voz", "producao", "formatos", "publicacao", "analytics", "playbook",
+           "preset", "preset_versao", "arquivado"}
 
 
 def atualizar(cid, campos):

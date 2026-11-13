@@ -106,6 +106,11 @@ def criar(canal, plano, briefing, formato_ids=None):
         "parte": int(plano.get("parte") or 0),
         "serie_id": plano.get("serie_id") or "",
         "estilo": plano.get("estilo") or (canal.get("producao") or {}).get("estilo") or "auto",
+        "preset": canal.get("preset") or canal.get("playbook") or "",
+        "preset_versao": int(canal.get("preset_versao") or 0),
+        "planos": sum(len(c.get("planos") or []) for c in plano.get("cenas") or []),
+        "movimento_cenas": sum(1 for c in plano.get("cenas") or []
+                               if (c.get("movimento") or {}).get("ativo")),
         "legendas": plano.get("legendas"),
         "duracao_minima": int(plano.get("duracao_minima") or plano.get("duracao_alvo") or
                               (canal.get("producao") or {}).get("duracao_alvo") or 45),
@@ -227,7 +232,7 @@ def _base_video_filtro(larg, alt, dur):
             % (larg, alt, larg, alt, larg, alt, FPS, PAUSA + 0.5, dur))
 
 
-def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=None, falas_video=None):
+def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=None, videos_por_cena=None):
     pasta = Path(pasta)
     larg = int(formato.get("largura") or 1080)
     alt = int(formato.get("altura") or 1920)
@@ -277,11 +282,11 @@ def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=No
             except Exception:
                 pass
         quadros = int(round(dur * FPS)) + 2
-        clipe_fala = (falas_video or {}).get(i)
+        clipe_fala = (videos_por_cena or {}).get(i)
         if clipe_fala and Path(clipe_fala).is_file():
             entradas = ["-i", str(clipe_fala)]
             grafo = _base_video_filtro(larg, alt, dur)
-            _log({}, "cena %d com boca sincronizada" % i, callbacks)
+            _log({}, "cena %d com vídeo" % i, callbacks)
         else:
             entradas = ["-loop", "1", "-framerate", str(FPS), "-i", str(imagens[i - 1])]
             grafo = _base_filtro(larg, alt, quadros, i % 2 == 1)
@@ -700,6 +705,43 @@ async def produzir(producao, canal, callbacks):
                 _etapa(producao, "imagens", "rodando", feito_img, total_imagens)
                 _gravar({"canal_id": cid, "id": pid}, producao)
         _etapa(producao, "imagens", "ok", total_imagens, total_imagens)
+        videos_por_cena = dict(falas_video)
+        videos_movimento = {}
+        cenas_mov = [i for i, c in enumerate(cenas, 1)
+                     if (c.get("movimento") or {}).get("ativo")
+                     and (c.get("movimento") or {}).get("modo") != "rapido"]
+        if cenas_mov and callbacks.get("gerar_video"):
+            (pasta / "videos").mkdir(parents=True, exist_ok=True)
+            grupo_mov = "9:16" if "9:16" in grupos else next(iter(grupos))
+            cenas_mov_dir = pasta / "cenas" / grupo_mov.replace(":", "x")
+            for i in cenas_mov:
+                if i in videos_por_cena:
+                    continue
+                if _cancelado(producao, callbacks):
+                    producao["estado"] = "cancelado"
+                    _etapa(producao, "imagens", "cancelado")
+                    _gravar({"canal_id": cid, "id": pid}, producao)
+                    return producao
+                destino_mov = pasta / "videos" / ("cena_%02d.mp4" % i)
+                if destino_mov.is_file() and destino_mov.stat().st_size > 1000:
+                    videos_movimento[i] = destino_mov
+                    continue
+                imagem_mov = cenas_mov_dir / ("cena_%02d.png" % i)
+                if not imagem_mov.is_file():
+                    _log(producao, "movimento da cena %d sem imagem; segue parado" % i, callbacks)
+                    continue
+                mov = cenas[i - 1].get("movimento") or {}
+                try:
+                    _log(producao, "movimento %d/%d" % (i, len(cenas_mov)), callbacks)
+                    await callbacks["gerar_video"](imagem_mov, destino_mov,
+                                                   mov.get("prompt") or "",
+                                                   mov.get("duracao") or "2 s", grupo_mov)
+                    if destino_mov.is_file():
+                        videos_movimento[i] = destino_mov
+                except Exception as exc:
+                    _log(producao, "movimento da cena %d falhou: %s" % (i, exc), callbacks)
+        for i, caminho in videos_movimento.items():
+            videos_por_cena.setdefault(i, caminho)
         producao["estado"] = "montagem"
         _gravar({"canal_id": cid, "id": pid}, producao)
 
@@ -716,7 +758,7 @@ async def produzir(producao, canal, callbacks):
             proporcao = _proporcao_do_grupo(producao, fmt, grupos)
             imagens_dir = pasta / "cenas" / proporcao.replace(":", "x")
             saida = montar_video(pasta, plano, duracoes, fmt, callbacks, imagens_dir=imagens_dir,
-                                 falas_video=falas_video)
+                                 videos_por_cena=videos_por_cena)
             chave = canais.chave_formato(fmt)
             arquivo_por_chave[chave] = str(saida)
             producao["arquivos"]["videos"][fmt["id"]] = str(saida)

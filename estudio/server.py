@@ -5347,7 +5347,8 @@ async def api_canais(req):
             "plataformas": canais.PLATAFORMAS,
             "formatos_padrao": canais.FORMATOS_PADRAO,
             "estilos": canais.ESTILOS,
-            "playbooks": [{"id": p["id"], "nome": p["nome"]} for p in canais.PLAYBOOKS],
+            "playbooks": [{"id": p["id"], "nome": p["nome"], "preset": p.get("preset") or {}}
+                          for p in canais.PLAYBOOKS],
         })
     b = await req.json()
     nome = (b.get("nome") or "").strip()
@@ -5794,7 +5795,9 @@ async def api_canal_playbook(req):
     canais.gravar_contexto(cid, pb.get("contexto") or {})
     if pb.get("producao"):
         canais.atualizar(cid, {"producao": pb["producao"]})
-    canais.atualizar(cid, {"playbook": pb["id"]})
+    preset = pb.get("preset") or {}
+    canais.atualizar(cid, {"playbook": pb["id"], "preset": pb["id"],
+                           "preset_versao": int(preset.get("versao") or 1)})
     return web.json_response(_resumo_canal(canais.obter(cid)))
 
 
@@ -6049,7 +6052,8 @@ async def api_canal_plano(req):
             int(b.get("quantas") or 0),
             int(b.get("duracao") or prod.get("duracao_alvo") or 45),
             personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao,
-            estilo=b.get("estilo"), parte=int(b.get("parte") or 0), elenco=elenco)
+            estilo=b.get("estilo"), parte=int(b.get("parte") or 0), elenco=elenco,
+            preset=canais.preset_de(canal.get("preset") or canal.get("playbook")))
     except ValueError as e:
         raise web.HTTPBadRequest(text=str(e))
     except Exception as e:
@@ -6142,6 +6146,54 @@ async def _gerar_imagem_esteira(prompt, formato, destino, preset, qualidade,
     return str(destino)
 
 
+async def _gerar_video_esteira(imagem, destino, prompt, duracao="2 s", formato="9:16"):
+    """Imagem da cena + prompt de movimento -> clipe do Wan 2.2, pela rota do próprio estúdio."""
+    base = "http://127.0.0.1:%d" % PORTA
+    nome_ref = "mov_%s%s" % (uuid.uuid4().hex[:10], Path(imagem).suffix or ".png")
+    (COMFY_DIR / "input").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(imagem, COMFY_DIR / "input" / nome_ref)
+    corpo = {"preset": "wan22_5b", "modo": "referencia", "imagem": nome_ref,
+             "prompt": prompt or "", "duracao": duracao or "2 s",
+             "resolucao": "512p (rápido)", "qualidade": "Rápido",
+             "formato": formato or "9:16", "oculto": True}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
+        jid = None
+        for tentativa in range(4):
+            async with s.post(base + "/api/gerar", json=corpo) as r:
+                txt = await r.text()
+                if r.status >= 400:
+                    if tentativa < 3 and ("não está respondendo" in txt or r.status >= 500):
+                        await asyncio.sleep(10)
+                        continue
+                    raise RuntimeError("o estúdio recusou o vídeo (%s): %s" % (r.status, txt[:300]))
+                jid = (json.loads(txt) if txt else {}).get("id")
+                break
+        if not jid:
+            raise RuntimeError("o estúdio não devolveu o id do trabalho de vídeo.")
+        limite = time.time() + 7200
+        while time.time() < limite:
+            await asyncio.sleep(5)
+            async with s.get(base + "/api/trabalhos", params={"ocultos": "1", "limite": 500}) as r:
+                lista = await r.json() if r.status == 200 else []
+            job = next((j for j in lista if j.get("id") == jid), None)
+            if job is None:
+                raise RuntimeError("o trabalho de vídeo sumiu da lista.")
+            if job.get("estado") == "concluido":
+                break
+            if job.get("estado") in ("erro", "cancelado"):
+                raise RuntimeError(job.get("erro") or ("vídeo %s" % job.get("estado")))
+        else:
+            raise RuntimeError("o vídeo passou de duas horas sem terminar.")
+        async with s.get(base + "/api/midia/%s/0" % jid, timeout=aiohttp.ClientTimeout(total=600)) as r:
+            if r.status != 200:
+                raise RuntimeError("não consegui baixar o vídeo pronto (%s)." % r.status)
+            dados = await r.read()
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(dados)
+    return str(destino)
+
+
 async def _rodar_esteira(cid, pid):
     try:
         producao = canais.ler_producao(cid, pid)
@@ -6201,6 +6253,10 @@ async def _rodar_esteira(cid, pid):
                                             progredir, cancelado)
             return str(destino)
 
+        async def gerar_video(imagem, destino, prompt, duracao="2 s", formato="9:16"):
+            log("movimento: " + Path(imagem).name)
+            return await _gerar_video_esteira(imagem, destino, prompt, duracao, formato)
+
         plano_atual = producao.get("plano") or {}
         if plano_atual.get("modo") == "noticia":
             rid = str(plano_atual.get("referencia_id") or "")
@@ -6220,11 +6276,13 @@ async def _rodar_esteira(cid, pid):
             await esteira.produzir_noticia(producao, canal, {
                 "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
                 "cortar": cortar_ref, "video_fonte": ref.get("video"),
-                "falar_video": falar_video, "cancelado": cancelado, "log": log})
+                "falar_video": falar_video, "gerar_video": gerar_video,
+                "cancelado": cancelado, "log": log})
         else:
             await esteira.produzir(producao, canal, {
                 "falar": falar, "gerar_imagem": _gerar_imagem_esteira,
-                "falar_video": falar_video, "cancelado": cancelado, "log": log})
+                "falar_video": falar_video, "gerar_video": gerar_video,
+                "cancelado": cancelado, "log": log})
         if producao.get("estado") == "concluido":
             _agendar_automatico(canal, producao)
     except Exception as exc:
@@ -6258,7 +6316,8 @@ async def api_canal_produzir(req):
                 int(b.get("quantas") or 0),
                 int(b.get("duracao") or (canal.get("producao") or {}).get("duracao_alvo") or 45),
                 personagens_fixos=fixos, personagens_disponiveis=disponiveis, inspiracao=inspiracao,
-                estilo=b.get("estilo"), parte=int(b.get("parte") or 0), elenco=elenco)
+                estilo=b.get("estilo"), parte=int(b.get("parte") or 0), elenco=elenco,
+                preset=canais.preset_de(canal.get("preset") or canal.get("playbook")))
         except Exception as e:
             raise web.HTTPBadGateway(text="O roteirista falhou: " + str(e)[:300])
     elif inspiracao and not plano.get("inspiracao"):
@@ -6325,7 +6384,8 @@ async def api_canal_proxima_parte(req):
             parte=parte, serie_anterior={"titulo": plano_ant.get("titulo"),
                                          "gancho": plano_ant.get("gancho"),
                                          "legenda": plano_ant.get("legenda")},
-            serie_id=serie_id)
+            serie_id=serie_id,
+            preset=canais.preset_de(canal.get("preset") or canal.get("playbook")))
     except Exception as e:
         raise web.HTTPBadGateway(text="O roteirista não conseguiu continuar a série: " + str(e)[:300])
     producao = esteira.criar(canal, plano, briefing, anterior.get("formatos"))

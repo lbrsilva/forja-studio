@@ -673,6 +673,8 @@
 
   function linhaCena(c, i) {
     const falarOk = !!(S.falarDisp && S.falarDisp.disponivel);
+    const planos = [...new Set((c.planos || []).map((p) => p && p.tipo).filter(Boolean))];
+    const selosPlanos = planos.map((t) => `<span class="cx-selo">${esc(t)}</span>`).join('');
     return `<div class="cx-cena" data-cena="${i}">
       <span class="n">${i + 1}</span>
       <textarea class="cx-fala" rows="2" placeholder="Fala curta, 1 a 2 frases">${esc(c.fala || '')}</textarea>
@@ -682,7 +684,8 @@
           ? `<label class="cx-check cx-cena-falar" title="Gera a boca sincronizada com a voz desta cena. Precisa de um personagem com retrato.">
                <input type="checkbox" data-cena-falar ${c.falar ? 'checked' : ''}> Falar</label>`
           : `<button type="button" class="bt-sec mini cx-cena-falar" data-acao="ligar-falar">${ic('play')}Ligar, vou usar</button>`}
-        <button type="button" class="ic-bt cx-tirar" data-acao="del-cena" aria-label="Tirar cena">${ic('lixo')}</button></div>
+        <button type="button" class="ic-bt cx-tirar" data-acao="del-cena" aria-label="Tirar cena">${ic('lixo')}</button>
+        ${selosPlanos ? `<div class="cx-cena-selos">${selosPlanos}</div>` : ''}</div>
     </div>`;
   }
 
@@ -1201,14 +1204,26 @@
     return `
       <form class="cx-form" id="cxAjustes" onsubmit="return false">
         <div class="cx-card">
-          <div class="cx-card-cab"><div><h2>Playbook do canal</h2>
-            <p class="fraco">Aplica um pacote pronto de tema, tom, visual, estilo e regras. Depois você pode editar tudo.</p></div>
+          <div class="cx-card-cab"><div><h2>Preset de produção</h2>
+            <p class="fraco">Aplica uma receita completa: tema, tom, visual, roteiro, planos, movimento, áudio e legendas. Depois você pode editar tudo.</p></div>
             <button type="button" class="bt-sec" data-acao="aplicar-playbook">${ic('ok')}Aplicar</button></div>
-          <div class="cx-campo"><label for="ajPlaybook">Playbook</label>
+          <div class="cx-campo"><label for="ajPlaybook">Preset</label>
             <select id="ajPlaybook">${(S.playbooks || []).map((p) => {
               const sel = (S.playbookSel || (S.dados && S.dados.playbook)) === p.id;
               return `<option value="${esc(p.id)}" ${sel ? 'selected' : ''}>${esc(p.nome)}</option>`;
             }).join('')}</select></div>
+          ${(() => {
+            const id = S.playbookSel || (S.dados && S.dados.playbook);
+            const pb = (S.playbooks || []).find((x) => x.id === id);
+            const pr = pb && pb.preset;
+            if (!pr) return '<p class="nota">Playbook simples, sem preset de planos e movimento.</p>';
+            const mov = pr.movimento || {};
+            const planos = pr.planos || {};
+            const audio = pr.audio || {};
+            return `<p class="nota">Preset v${esc(pr.versao || 1)}: ${esc(planos.por_cena || 1)} plano(s) por cena · ` +
+              `movimento ${mov.ativo ? 'ligado, até ' + esc(mov.max_cenas || 0) + ' cena(s)' : 'desligado'} · ` +
+              `trilha ${esc(audio.trilha || 'sem')} · legendas ${esc((pr.legendas || {}).estilo || 'simples')}</p>`;
+          })()}
         </div>
         <div class="cx-card">
           <div class="cx-card-cab">
@@ -1436,6 +1451,7 @@
       visual: ($('.cx-pers-visual', el) || {}).value || '',
     }));
     p.cenas = $$('#cxCenas .cx-cena').map((el, i) => ({
+      ...((p.cenas || [])[i] || {}),
       n: i + 1,
       fala: ($('.cx-fala', el) || {}).value || '',
       imagem: ($('.cx-prompt', el) || {}).value || '',
@@ -2005,7 +2021,7 @@
   async function aplicarPlaybook() {
     const pb = S.playbookSel || ($('#ajPlaybook') || {}).value;
     if (!pb) return;
-    if (!confirm('Aplicar este playbook? O tema, o tom, o visual, as regras e o estilo atuais serão substituídos. Personagens, voz e contas ficam.')) return;
+    if (!confirm('Aplicar este preset? Tema, tom, visual, regras, roteiro, planos, movimento, áudio e estilo atuais serão substituídos. Personagens, voz e contas ficam.')) return;
     S.playbookSel = pb;
     carregando('Aplicando o playbook…');
     try {
@@ -2014,7 +2030,7 @@
       S.playbookSel = pb;
       S.aba = 'ajustes';
       render();
-      mostrar('Playbook aplicado. Revise e salve se quiser ajustar.', 'ok');
+      mostrar('Preset aplicado. Revise e salve se quiser ajustar.', 'ok');
     } catch (e) {
       mostrar('Não consegui aplicar o playbook: ' + e.message, 'erro');
     } finally { pararCarregando(); }

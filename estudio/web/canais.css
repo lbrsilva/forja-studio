@@ -230,6 +230,8 @@
 .cx-elenco-item { display: grid; justify-items: center; gap: 4px; width: 74px; font-size: 11px; color: var(--fraco); text-align: center; }
 .cx-elenco-item img, .cx-elenco-vazio { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; border: 1px solid var(--borda); background: var(--fundo-2); display: grid; place-items: center; font-size: 20px; }
 .cx-cena-falar { margin-top: 6px; font-size: 12px; }
+.cx-cena-selos { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+.cx-cena-selos .cx-selo { font-size: 9px; padding: 2px 6px; }
 .cx-pers { display: grid; gap: 8px; }
 .cx-persona { display: grid; grid-template-columns: 140px 140px minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 8px; align-items: start; }
 .cx-persona textarea { min-height: 62px; font-size: 13px; }

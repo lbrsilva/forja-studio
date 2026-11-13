@@ -44,6 +44,13 @@ def _limpar_visual(v):
     return limpo or _limpar(v, 800)
 
 
+def _score_movimento(c):
+    texto = str(c.get("fala") or "").lower()
+    acoes = ("abraça", "abraço", "caminha", "anda", "corre", "pega", "levanta", "chora",
+             "grita", "beija", "encostam")
+    return 3 * sum(1 for a in acoes if a in texto) + len(texto.split()) / 10.0
+
+
 def _nomes_do_elenco(elenco):
     nomes = []
     for parte in re.split(r"[\n;]+", str(elenco or "")):
@@ -116,9 +123,15 @@ def _json_do_texto(txt):
 
 def _pedido(canal, contexto, briefing, max_cenas, duracao, personagens_fixos=None,
             personagens_disponiveis=None, inspiracao=None, estilo=None,
-            parte=None, total_partes=None, serie_anterior=None, elenco=None):
+            parte=None, total_partes=None, serie_anterior=None, elenco=None, preset=None):
     fixos = [p for p in (personagens_fixos or []) if str(p).strip()]
     elenco = str(elenco or "").strip()
+    preset = preset if isinstance(preset, dict) else {}
+    preset_txt = ""
+    if preset:
+        compacto = {"roteiro": preset.get("roteiro"), "planos": preset.get("planos")}
+        preset_txt = ("PRESET DE PRODUÇÃO (siga a estrutura, o número de cenas e o ritmo):\n"
+                      + json.dumps(compacto, ensure_ascii=False) + "\n")
     disponiveis = personagens_disponiveis or contexto.get("personagens") or []
     est = canais.estilo_de(canal, estilo)
     ctx = {
@@ -152,6 +165,10 @@ def _pedido(canal, contexto, briefing, max_cenas, duracao, personagens_fixos=Non
     regra_elenco = ("ELENCO OBRIGATÓRIO DESTE VÍDEO (use exatamente estes nomes):\n%s\n" % elenco) if elenco else ""
     coerencia = """
 COERÊNCIA OBRIGATÓRIA:
+- O BRIEFING manda na história. Se ele pede uma cena simples (caminhar, dizer oi, abraçar),
+  escreva exatamente essa cena. Não troque por outra história e não acrescente conflitos,
+  personagens, animais ou objetos que não estejam no briefing.
+- Se o briefing citar nomes, use exatamente esses nomes. Não crie outros.
 - A história tem começo, desenvolvimento, conflito, virada e consequência. Cada cena deve ser
   consequência da anterior; não pule etapas nem crie cenas soltas.
 - Use somente os personagens do elenco/contexto. Não invente animais, objetos, móveis, veículos,
@@ -196,10 +213,11 @@ COERÊNCIA OBRIGATÓRIA:
             serie_anterior.get("titulo") or "", serie_anterior.get("gancho") or serie_anterior.get("legenda") or ""))
     return """Você é o roteirista de um canal. Escreva UM vídeo curto a partir do briefing.
 
-CONTEXTO FIXO DO CANAL (tudo aqui manda mais que o briefing):
+CONTEXTO FIXO DO CANAL (manda no tom, no estilo e nas regras; a história é a do briefing):
 %s
 
 BRIEFING DESTE VÍDEO:
+%s
 %s
 %s
 %s
@@ -220,6 +238,9 @@ REGRAS DE SAÍDA:
 - A cena é sobre a IDEIA e o que está sendo contado, não sobre o rosto do personagem.
   Varie enquadramentos: plano aberto, objeto, detalhe, silhueta, ação e lugar. Só use
   close no personagem quando ele for o foco emocional da cena.
+- Cada cena também tem um "movimento" EM INGLÊS: primeiro o que o PERSONAGEM faz (andar,
+  falar, abraçar), depois o que a câmera faz. Ex.: "he walks toward her, she opens her arms,
+  slow push-in". Não repita a descrição visual.
 %s
 - Escolha o papel de cada personagem: principal, coadjuvante ou figurante.
 - A legenda do post deve ter 1 a 2 frases e um convite claro no fim.
@@ -228,16 +249,16 @@ REGRAS DE SAÍDA:
 Responda SÓ com este JSON, sem explicação e sem markdown:
 {"titulo":"...","gancho":"...","publico_alvo":"...","tom":"...","duracao_estimada":%d,
  "personagens":[{"nome":"...","papel":"principal","descricao":"...","visual":"..."}],
- "cenas":[{"n":1,"fala":"...","imagem":"english visual description","personagem":"Nome ou vazio"}],
+ "cenas":[{"n":1,"fala":"...","imagem":"english visual description","movimento":"english motion/camera description","personagem":"Nome ou vazio"}],
  "legenda":"...","hashtags":["#..."],"cta":"...","observacoes":"..."}
-""" % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, regra_elenco, coerencia,
+""" % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, regra_elenco, coerencia, preset_txt,
        ref, estilo_txt, parte_txt, serie_txt,
        max_cenas, duracao, regra_personagens, duracao)
 
 
 def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
                 personagens_fixos=None, personagens_disponiveis=None,
-                estilo_prompt="", estilo_id="auto", parte=0, serie_id="", elenco=None):
+                estilo_prompt="", estilo_id="auto", parte=0, serie_id="", elenco=None, preset=None):
     d = bruto if isinstance(bruto, dict) else {}
     max_cenas = max(3, min(24, int(max_cenas or 12)))
     cenas_brutas = d.get("cenas") or d.get("scenes") or d.get("roteiro") or []
@@ -254,6 +275,8 @@ def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
         if not imagem:
             imagem = _imagem_de_apoio(contexto, fala)
         cenas.append({"n": len(cenas) + 1, "fala": fala, "imagem": imagem,
+                      "movimento_prompt": _limpar(c.get("movimento") or c.get("motion") or c.get("camera"), 300),
+                      "falar": bool(c.get("falar")),
                       "personagem": _limpar(c.get("personagem") or c.get("character"), 60)})
         if len(cenas) >= max_cenas:
             break
@@ -332,6 +355,45 @@ def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
             if nome.lower() not in atuais:
                 personagens.append({"nome": nome, "papel": "principal", "descricao": "", "visual": ""})
 
+    if preset:
+        planos_cfg = preset.get("planos") or {}
+        mov_cfg = preset.get("movimento") or {}
+        por_cena = max(1, min(3, int(planos_cfg.get("por_cena") or 1)))
+        max_mov = max(0, min(len(cenas), int(mov_cfg.get("max_cenas") or 0)))
+        candidatos = []
+        if mov_cfg.get("ativo") and max_mov and cenas and not cenas[0].get("falar"):
+            candidatos.append(0)
+            ordem = sorted(range(len(cenas)), key=lambda i: _score_movimento(cenas[i]), reverse=True)
+            for i in ordem:
+                if len(candidatos) >= max_mov:
+                    break
+                if i not in candidatos and not cenas[i].get("falar"):
+                    candidatos.append(i)
+        for i, c in enumerate(cenas):
+            prompt_mov = str(c.pop("movimento_prompt", "") or "").strip()
+            c["movimento"] = {"ativo": False, "prompt": prompt_mov}
+            planos = []
+            if c.get("falar") and c.get("personagem"):
+                planos.append({"tipo": "fala", "imagem": c.get("imagem") or "",
+                               "personagem": c.get("personagem") or ""})
+            if i in candidatos:
+                c["movimento"] = {
+                    "ativo": True,
+                    "prompt": prompt_mov or (
+                        "natural movement, subtle camera push-in, " + (c.get("imagem") or "")[:160]),
+                    "duracao": mov_cfg.get("duracao") or "2 s",
+                    "modelo": mov_cfg.get("modelo") or "wan22_5b",
+                    "modo": mov_cfg.get("modo") or "qualidade",
+                }
+                planos.append({"tipo": "movimento", "imagem": c.get("imagem") or "",
+                               "personagem": c.get("personagem") or ""})
+            planos.append({"tipo": "aberto", "imagem": c.get("imagem") or "",
+                           "personagem": c.get("personagem") or ""})
+            if por_cena >= 3:
+                planos.append({"tipo": "detalhe", "imagem": c.get("imagem") or "",
+                               "personagem": c.get("personagem") or ""})
+            c["planos"] = planos[:por_cena]
+
     hashtags = []
     for h in (d.get("hashtags") or []):
         h = _limpar(h, 40).replace(" ", "")
@@ -402,9 +464,11 @@ def _cenas_do_briefing(contexto, briefing, duracao, max_cenas=24):
 async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, duracao=45,
                       personagens_fixos=None, personagens_disponiveis=None, inspiracao=None,
                       estilo=None, parte=0, total_partes=None, serie_anterior=None, serie_id="",
-                      elenco=None):
+                      elenco=None, preset=None):
     briefing = _limpar(briefing, 12000)
     elenco = re.sub(r"[ \t]+", " ", str(elenco or "")).strip()[:2000]
+    preset = preset if isinstance(preset, dict) and preset else canais.preset_de(
+        (canal or {}).get("preset") or (canal or {}).get("playbook"))
     if not briefing:
         raise ValueError("Escreva o que você quer postar.")
     duracao = max(15, min(180, int(duracao or 45)))
@@ -412,13 +476,17 @@ async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, dura
         max_cenas = max(3, min(24, int(quantas)))
     else:
         max_cenas = max(3, min(24, int(duracao / 5) + 1))
+    preset_cenas = int((preset.get("roteiro") or {}).get("cenas") or 0)
+    if not quantas and preset_cenas:
+        max_cenas = max(3, min(max_cenas, preset_cenas))
     est = canais.estilo_de(canal, estilo)
     aviso = ""
     bruto = None
     try:
         res = await pedir_texto("canal_roteiro", _pedido(canal, contexto, briefing, max_cenas, duracao,
                                                    personagens_fixos, personagens_disponiveis, inspiracao,
-                                                   est.get("id"), parte, total_partes, serie_anterior, elenco))
+                                                   est.get("id"), parte, total_partes, serie_anterior, elenco,
+                                                   preset))
         txt = (res or {}).get("texto") if isinstance(res, dict) else str(res or "")
         bruto = _json_do_texto(txt)
         if bruto is None:
@@ -428,7 +496,7 @@ async def gerar_plano(pedir_texto, canal, contexto, briefing, quantas=None, dura
     plano = _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
                         personagens_fixos, personagens_disponiveis,
                         estilo_prompt=est.get("prompt") or "", estilo_id=est.get("id") or "auto",
-                        parte=parte, serie_id=serie_id, elenco=elenco)
+                        parte=parte, serie_id=serie_id, elenco=elenco, preset=preset)
     if parte and ("parte %d" % int(parte)).lower() not in str(plano.get("titulo") or "").lower():
         plano["titulo"] = "%s · Parte %d" % (plano.get("titulo") or "Vídeo", int(parte))
     if isinstance(inspiracao, dict) and (inspiracao.get("titulo") or inspiracao.get("url")):
