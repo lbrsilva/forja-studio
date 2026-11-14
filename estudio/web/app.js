@@ -1360,6 +1360,76 @@ async function mudarSempreLigada(ev) {
     renderTextoMaq.sig = null;
   }
 }
+// ---------------------------------------------------------------- REPARAR (14/11/2026)
+// Para quando "as IAs não respondem": o servidor encerra os motores ligados, reinicia o próprio
+// painel e religa os mesmos motores. A tela espera o painel voltar, recarrega, e só então diz
+// o que aconteceu com cada motor (o recado atravessa o recarregamento no sessionStorage).
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+async function repararEstudio(bt, mesmoAssim) {
+  if (!mesmoAssim) {
+    const sim = await confirmar({
+      titulo: TX('Reparar o estúdio?'),
+      texto: TX('Reinicia o painel e os motores que estão ligados, e confere se cada um voltou a responder. Leva de 1 a 2 minutos.'),
+      lista: [{ txt: TX('As IAs baixadas, a sua conta e as suas criações não são tocadas'), cls: 'fica' },
+        { txt: TX('Motor que está desligado continua desligado'), cls: 'fica' }],
+      sim: TX('Reparar'), icone: 'reusar', perigo: false });
+    if (!sim) return;
+  }
+  if (bt) bt.disabled = true;
+  let r = null, d = null;
+  try {
+    r = await fetch('/api/reparar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mesmo_assim: !!mesmoAssim }) });
+    d = await r.json().catch(() => ({}));
+  } catch (e) {
+    if (bt) bt.disabled = false;
+    aviso('Não consegui falar com o estúdio para reparar. Feche o Forja e abra de novo pelo ícone.', 'erro', 9000);
+    return;
+  }
+  if (r.status === 409 && d && Array.isArray(d.em_uso)) {
+    if (bt) bt.disabled = false;
+    const vai = await confirmar({
+      titulo: TX('Tem trabalho em andamento'),
+      texto: TX('O reparo interrompe o que está rodando agora:'),
+      lista: d.em_uso.map((x) => ({ txt: TX(x), cls: 'alerta' })),
+      sim: TX('Reparar mesmo assim'), nao: TX('Esperar terminar'), icone: 'alerta', perigo: true });
+    if (vai) repararEstudio(bt, true);
+    return;
+  }
+  if (!r.ok) {
+    if (bt) bt.disabled = false;
+    aviso((d && d.erro) || 'O estúdio não conseguiu começar o reparo.', 'erro', 9000);
+    return;
+  }
+  aviso('Reparando… o painel reinicia e esta página volta sozinha.', 'ok', 60000);
+  try { sessionStorage.setItem('forjaReparo', JSON.stringify({ religar: d.religar || [], quando: Date.now() })); } catch (e) { /* sem recado depois */ }
+  await dormir(4000);
+  for (let i = 0; i < 60; i++) {
+    try { const x = await fetch('/api/conta/estado', { cache: 'no-store' }); if (x.ok) break; } catch (e) { /* ainda voltando */ }
+    await dormir(1500);
+  }
+  location.reload();
+}
+// depois do recarregamento: acompanha os motores que o reparo religou e diz o resultado
+async function resultadoDoReparo() {
+  let p = null;
+  try { p = JSON.parse(sessionStorage.getItem('forjaReparo') || 'null'); sessionStorage.removeItem('forjaReparo'); } catch (e) { return; }
+  if (!p || Date.now() - p.quando > 180000) return;
+  const quais = Array.isArray(p.religar) ? p.religar : [];
+  if (!quais.length) { aviso('Reparo concluído: o painel foi reiniciado. Nenhum motor estava ligado, então nenhum foi religado.', 'ok', 12000); return; }
+  const nome = (k) => NOME_CURTO_MOTOR[k] || k;
+  aviso('Painel reiniciado. Religando: ' + quais.map(nome).join(', ') + '…', 'ok', 8000);
+  const fim = Date.now() + 240000;
+  while (Date.now() < fim) {
+    await dormir(3000);
+    const S = (G.inicio && G.inicio.servicos) || {};
+    const est = quais.map((k) => ({ k, e: (S[k] || {}).estado, m: (S[k] || {}).mensagem }));
+    const ruim = est.find((x) => x.e === 'erro');
+    if (ruim) { aviso('Reparo: ' + nome(ruim.k) + ' não voltou. ' + (ruim.m || ''), 'erro', 20000); return; }
+    if (est.every((x) => x.e === 'ligado')) { aviso('Reparo concluído: o painel foi reiniciado e ' + quais.map(nome).join(', ') + ' voltou a responder.', 'ok', 15000); return; }
+  }
+  aviso('Reparo: o painel voltou, mas algum motor ainda não respondeu depois de 4 minutos. Veja o estado em Motores.', 'aviso', 20000);
+}
 // "ligando… 12 s": o tempo corre na tela a cada segundo, sem esperar a próxima leitura do servidor
 function tiquetaque() {
   if (document.hidden || G.rota !== 'inicio') return;
@@ -1374,7 +1444,7 @@ function montarMaquina() {
       <span class="ic-caixa">${ic('servidor')}</span>
       <div>
         <div class="maq-rot maq-rot-bt"><span>Motores</span>
-          <button type="button" class="bt-ligar bt-ligar-tudo" id="btLigarTudo" data-ligar="tudo" hidden aria-label="${esc(TX('Ligar tudo o que está desligado'))}">${ic('ligar')}<span>${esc(TX('Ligar tudo'))}</span></button><button type="button" class="bt-desligar bt-desligar-tudo" id="btDesligarTudo" data-desligar="tudo" hidden aria-label="${esc(TX('Desligar todas as IAs para liberar memória'))}">${ic('ligar')}<span>${esc(TX('Desligar tudo'))}</span></button></div>
+          <button type="button" class="bt-ligar bt-reparar" id="btReparar" title="${esc(TX('As IAs não respondem? Reinicia o painel e os motores ligados.'))}">${ic('reusar')}<span>${esc(TX('Reparar'))}</span></button><button type="button" class="bt-ligar bt-ligar-tudo" id="btLigarTudo" data-ligar="tudo" hidden aria-label="${esc(TX('Ligar tudo o que está desligado'))}">${ic('ligar')}<span>${esc(TX('Ligar tudo'))}</span></button><button type="button" class="bt-desligar bt-desligar-tudo" id="btDesligarTudo" data-desligar="tudo" hidden aria-label="${esc(TX('Desligar todas as IAs para liberar memória'))}">${ic('ligar')}<span>${esc(TX('Desligar tudo'))}</span></button></div>
         <div class="servicos-grupos" id="maqGrupos" hidden><button type="button" class="bt-ligar bt-ligar-grupo" id="btLigarVideo" data-ligar="video" hidden aria-label="${esc(TX('Ligar a IA de imagem e vídeo (ComfyUI)'))}">${ic('ligar')}<span>${esc(TX('Ligar imagem e vídeo'))}</span></button><button type="button" class="bt-ligar bt-ligar-grupo" id="btLigarMusicaGrupo" data-ligar="musica" hidden aria-label="${esc(TX('Ligar a música (o painel de música e a ComfyUI)'))}">${ic('ligar')}<span>${esc(TX('Ligar música'))}</span></button></div>
         <div class="servicos" id="maqServ"></div>
         <p class="nota" id="maqServNota" hidden></p>
@@ -3372,6 +3442,8 @@ function prepararEventos() {
   if ($('#novVerTodas')) $('#novVerTodas').onclick = () => { G.novTodas = !G.novTodas; renderNovidades(); };
   // Início: "Ligar" dos serviços (linhas da máquina, "Ligar tudo" e o aviso de cada cartão)
   $('#vInicio').addEventListener('click', (e) => {
+    const rep = e.target.closest('#btReparar');
+    if (rep && !rep.disabled) { e.preventDefault(); repararEstudio(rep); return; }
     const d = e.target.closest('[data-desligar]');
     if (d && !d.disabled) { e.preventDefault(); desligarServico(d.dataset.desligar, d); return; }
     const b = e.target.closest('[data-ligar]');
@@ -3380,6 +3452,7 @@ function prepararEventos() {
     ligarServico(b.dataset.ligar, b);
   });
   setInterval(tiquetaque, 1000);
+  resultadoDoReparo();
   setInterval(() => { if (G.rota === 'inicio' && !document.hidden) proximaDica(); }, 15000);
   $('#maqMini').addEventListener('click', (e) => {
     // gerando: leva para a aba onde o trabalho esta (antes ia sempre para o Inicio)

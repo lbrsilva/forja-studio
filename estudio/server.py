@@ -3943,6 +3943,135 @@ async def api_servicos_desligar(req):
                               "texto": TEXTO.estado_simples()})
 
 
+# ============================================================== REPARAR (14/11/2026)
+# Um botao para quando "as IAs nao respondem". Faz o que se fazia a mao: encerra os motores que
+# estavam ligados, reinicia o PROPRIO painel e religa os mesmos motores. O painel renasce por
+# um ajudante solto (que espera a porta vagar), e a lista do que religar atravessa o reinicio
+# num arquivo pequeno. Motor desligado continua desligado; nada no disco e apagado.
+REPARO_PENDENTE = AQUI / "reparo_pendente.json"
+
+
+async def _em_uso_agora():
+    """O que um reparo interromperia, em frases. Lista vazia = nada se perde."""
+    em_uso = []
+    visiveis = [j for j in JOBS if not j.get("lixeira")]
+    if any(j.get("estado") in ("rodando", "fila") for j in visiveis) or not await _fila_vazia(COMFY):
+        em_uso.append("Imagem ou vídeo gerando ou na fila")
+    try:
+        ocupada, _motivo = await musica_ocupada()
+        if ocupada or PAINEL_INFO.get("na_fila"):
+            em_uso.append("Música gerando ou na fila")
+    except Exception:
+        pass
+    try:
+        if (ias.progresso() or {}).get("baixando"):
+            em_uso.append("Download de IA em andamento (ele continua de onde parou)")
+    except Exception:
+        pass
+    return em_uso
+
+
+async def _renascer():
+    """Sobe um painel novo por um ajudante solto e encerra este."""
+    await asyncio.sleep(0.8)        # da tempo de a resposta do pedido sair
+    criar = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    codigo = ("import subprocess,sys,time\n"
+              "time.sleep(2.5)\n"
+              "try:\n"
+              "    o=open(sys.argv[3],'a',encoding='utf-8',errors='replace')\n"
+              "except OSError:\n"
+              "    o=subprocess.DEVNULL\n"
+              "subprocess.Popen([sys.executable,'-s',sys.argv[1]],cwd=sys.argv[2],creationflags=int(sys.argv[4]),"
+              "stdin=subprocess.DEVNULL,stdout=o,stderr=subprocess.STDOUT)\n")
+    subprocess.Popen([sys.executable, "-c", codigo, str(AQUI / "server.py"), os.getcwd(),
+                      str(AQUI / "servidor_saida.txt"), str(criar)],
+                     creationflags=criar, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, close_fds=True)
+    try:
+        TEXTO.parar_tudo()
+    except Exception:
+        pass
+    os._exit(0)
+
+
+async def api_reparar(req):
+    """POST {"mesmo_assim": bool}: reinicia o painel e os motores que estavam ligados."""
+    try:
+        b = await req.json()
+    except ValueError:
+        b = {}
+    b = b if isinstance(b, dict) else {}
+    em_uso = await _em_uso_agora()
+    if em_uso and not b.get("mesmo_assim"):
+        # avisa, nao impede: a tela mostra a lista e a pessoa decide
+        return web.json_response({"erro": "Tem trabalho em andamento que o reparo interrompe.",
+                                  "em_uso": em_uso}, status=409)
+    estados = await estados_servicos()
+    de_verdade = PORTA == 8194 and not FALTA_PSUTIL     # instancia de teste nao mexe nos motores reais
+    religar, passos = [], []
+    for k in ("video", "painel_musica", "voz"):
+        e = estados.get(k)
+        if not isinstance(e, dict):
+            continue
+        antes = e.get("estado")
+        if antes == "desligado" or not de_verdade:
+            passos.append({"motor": k, "nome": e.get("nome"), "antes": antes, "acao": "nao mexi"})
+            continue
+        if k == "voz":
+            VOZ_LIGANDO.clear()
+            await asyncio.to_thread(_encerrar_voz)
+        else:
+            LIGANDO.pop(k, None)
+            ERRO_SERVICO.pop(k, None)
+            await asyncio.to_thread(_encerrar_na_porta, servico_def(k)["porta_real"])
+        religar.append(k)
+        passos.append({"motor": k, "nome": e.get("nome"), "antes": antes, "acao": "reiniciar"})
+    try:
+        if de_verdade and TEXTO.estado_simples().get("estado") != "em espera":
+            await TEXTO.desligar()      # ela liga sozinha no proximo pedido de texto
+            passos.append({"motor": "texto", "nome": "IA de texto", "antes": "ligada", "acao": "desligar"})
+    except Exception as exc:
+        print(f"[reparo] IA de texto: {exc!r}", flush=True)
+    try:
+        REPARO_PENDENTE.write_text(json.dumps({"religar": religar, "quando": time.time()}), encoding="utf-8")
+    except OSError as exc:
+        print(f"[reparo] não gravei a lista do que religar: {exc}", flush=True)
+    print(f"[reparo] reiniciando o painel; religar depois: {religar}", flush=True)
+    em_segundo_plano(_renascer())
+    return web.json_response({"ok": True, "religar": religar, "passos": passos,
+                              "mensagem": "Reparando: o painel reinicia e volta sozinho."})
+
+
+async def religar_depois_do_reparo():
+    """Na subida: se o painel renasceu de um reparo, religa os motores que estavam ligados."""
+    try:
+        await asyncio.sleep(1.5)
+        if not REPARO_PENDENTE.is_file():
+            return
+        try:
+            d = json.loads(REPARO_PENDENTE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = {}
+        try:
+            REPARO_PENDENTE.unlink()
+        except OSError:
+            pass
+        if not isinstance(d, dict) or time.time() - float(d.get("quando") or 0) > 180:
+            return      # pedido velho (o painel nao voltou na hora): nao liga nada de surpresa
+        for k in d.get("religar") or []:
+            if k == "voz":
+                ok, recado = await asyncio.to_thread(voz_studio.ligar, VOZ_SAIDA)
+                VOZ_LIGANDO.clear()
+                VOZ_LIGANDO.update({"desde": time.time()} if ok else {"erro": recado})
+            elif k in CHAVES_SERVICO:
+                pedir_ligar(k)
+        print(f"[reparo] painel de volta; religando: {d.get('religar')}", flush=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"[reparo] religar depois do reparo: {exc!r}", flush=True)
+
+
 async def api_texto_desligar(req):
     frase = await TEXTO.desligar()
     return web.json_response({"ok": True, "mensagem": frase, "texto": TEXTO.estado_simples()})
@@ -5564,6 +5693,7 @@ async def ciclo(app):
     tarefas = [asyncio.create_task(ouvir_comfy()), asyncio.create_task(vigia()),
                asyncio.create_task(nos_ao_iniciar()),  # o nó da música na custom_nodes da ComfyUI
                asyncio.create_task(reparar_ao_iniciar()), asyncio.create_task(TEXTO.vigiar()),
+               asyncio.create_task(religar_depois_do_reparo()),
                asyncio.create_task(ligar_texto_ao_iniciar()),
                asyncio.create_task(renovar_licenca_de_vez_em_quando())]  # "sempre ligada": ~20 s depois, em segundo plano
     yield
@@ -5638,6 +5768,7 @@ app.add_routes([
     web.get("/api/texto/estado", api_texto_estado),
     web.post("/api/texto/ligar", api_texto_ligar), web.post("/api/texto/desligar", api_texto_desligar),
     web.post("/api/servicos/ligar", api_servicos_ligar), web.post("/api/servicos/desligar", api_servicos_desligar),
+    web.post("/api/reparar", api_reparar),
     web.get("/api/preferencias", api_preferencias), web.post("/api/preferencias", api_preferencias),
     web.get("/api/voz/estado", api_voz_estado), web.post("/api/voz/falar", api_voz_falar),
     web.get("/api/voz/previsao", api_voz_previsao),

@@ -1570,3 +1570,9 @@ details.nov.destaque, details.nov.destaque[open] { background: none; border-colo
 .idioma-bt[aria-pressed="true"] { background: var(--acento); color: var(--acento-texto); }
 .idioma-bt:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 @media (min-width: 981px) { .idioma-canto { align-self: center; } }
+
+/* REPARAR (14/11/2026): discreto, ao lado do "Ligar tudo". Nao e um botao do dia a dia. */
+.bt-reparar { padding: 4px 12px; margin-right: 6px; background: transparent; color: var(--fraco);
+  border-color: var(--borda); }
+.bt-reparar:hover { color: var(--texto); border-color: var(--borda-forte); background: var(--painel-2); }
+.bt-reparar[disabled] { opacity: .55; cursor: progress; }

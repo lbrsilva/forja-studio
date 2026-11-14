@@ -2,10 +2,18 @@
   "_sobre": "As notícias que aparecem na página inicial do Forja Studio. Uma por bloco, a mais nova em cima. Campos: id (nunca repetir), data (AAAA-MM-DD), etiqueta (novidade | ias | dica | aviso), titulo, texto. O 'destaque' deixa a primeira em evidência. Quando o servidor de contas entrar no ar, este arquivo passa a vir de lá — e todo mundo recebe a mesma notícia sem baixar nada de novo.",
   "novidades": [
     {
-      "id": "2026-11-14-motores-com-chave",
+      "id": "2026-11-14-botao-reparar",
       "data": "2026-11-14",
       "etiqueta": "novidade",
       "destaque": true,
+      "titulo": "Botão Reparar: para quando as IAs não respondem",
+      "texto": "Em Motores, na tela de Início, apareceu o botão Reparar. Ele reinicia o painel e os motores que estavam ligados, e depois diz se cada um voltou a responder. Motor desligado continua desligado, e nada do que você baixou ou criou é tocado. Se houver algo gerando, ele avisa antes e você decide. Junto vieram três consertos da instalação: o instalador fecha o painel sozinho antes de copiar os arquivos, mostra a licença para aceitar, e a tela se atualiza sozinha depois do login."
+    },
+    {
+      "id": "2026-11-14-motores-com-chave",
+      "data": "2026-11-14",
+      "etiqueta": "novidade",
+      "destaque": false,
       "titulo": "Motores com chave de ligar e desligar, e a fila numa faixa só dela",
       "texto": "A parte do meio da tela de Início mudou. Cada motor agora é um cartão com uma chave de verdade: imagem e vídeo, música, a IA de texto e a memória da placa. Ligado fica aceso em ciano; ligando, em laranja. Os cartões de criar (Imagem, Vídeo, Pessoa falando, Música) ganharam a mesma chave, então dá para ligar e desligar o motor direto dali. E a fila saiu do meio: ficou numa faixa própria, logo abaixo, com o que está gerando agora e o atalho para a aba Fila."
     },
