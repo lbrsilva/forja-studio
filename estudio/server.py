@@ -1029,7 +1029,17 @@ async def liberar_memoria():
     try:
         q = await comfy("GET", "/queue", timeout=5)
     except Exception:
-        return False, "A ComfyUI de vídeo não está respondendo."
+        # Motor DESLIGADO nao e defeito: nao ha modelo nenhum na placa. Antes a resposta era
+        # "nao esta respondendo", e o dono leu como "o botao nao funcionou" (14/11/2026).
+        try:
+            desligado = not porta_aberta(servico_def("video")["porta_real"])
+        except Exception:
+            desligado = False
+        if desligado:
+            return True, ("O motor de imagem e vídeo está desligado, então a memória da placa já está livre. "
+                          "Não havia nada para liberar.")
+        return False, ("O motor de imagem e vídeo está ligado, mas não respondeu. "
+                       "Use o botão Reparar, em Motores.")
     if q.get("queue_running") or q.get("queue_pending"):
         return False, "A ComfyUI de vídeo está gerando algo agora; a memória não foi liberada."
     try:

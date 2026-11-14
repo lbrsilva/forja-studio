@@ -1058,7 +1058,10 @@ function renderMaquina() {
   $('#maqParcial').hidden = !I.parcial;
   $('#liberarTextoNota').hidden = !!I.legado;
   const auto = +I.liberar_memoria_min || 0;
-  $('#maqAuto').textContent = I.memoria_liberada ? 'já está liberada'
+  // motor desligado = nada carregado na placa: dizer "libera em 10 min" ali seria prometer o que já aconteceu
+  const motorOff = ((I.servicos || {}).video || {}).estado === 'desligado';
+  $('#maqAuto').textContent = motorOff ? TX('já está livre: o motor está desligado')
+    : I.memoria_liberada ? 'já está liberada'
     : auto > 0 ? `libera sozinha em ${num(auto, 0)} min` : '';
 }
 // aviso discreto quando o estúdio não responde: a tela continua com o que já tinha e tenta de novo sozinha
