@@ -241,6 +241,8 @@ REGRAS DE SAÍDA:
 - Cada cena também tem um "movimento" EM INGLÊS: primeiro o que o PERSONAGEM faz (andar,
   falar, abraçar), depois o que a câmera faz. Ex.: "he walks toward her, she opens her arms,
   slow push-in". Não repita a descrição visual.
+- Cada cena também tem um "broll" EM INGLÊS: 3 a 6 palavras concretas para buscar vídeo de
+  apoio (objeto, lugar, ação). Sem nome de personagem, sem marca e sem frase longa.
 %s
 - Escolha o papel de cada personagem: principal, coadjuvante ou figurante.
 - A legenda do post deve ter 1 a 2 frases e um convite claro no fim.
@@ -249,7 +251,7 @@ REGRAS DE SAÍDA:
 Responda SÓ com este JSON, sem explicação e sem markdown:
 {"titulo":"...","gancho":"...","publico_alvo":"...","tom":"...","duracao_estimada":%d,
  "personagens":[{"nome":"...","papel":"principal","descricao":"...","visual":"..."}],
- "cenas":[{"n":1,"fala":"...","imagem":"english visual description","movimento":"english motion/camera description","personagem":"Nome ou vazio"}],
+ "cenas":[{"n":1,"fala":"...","imagem":"english visual description","movimento":"english motion/camera description","broll":"3-6 english stock video words","personagem":"Nome ou vazio"}],
  "legenda":"...","hashtags":["#..."],"cta":"...","observacoes":"..."}
 """ % (json.dumps(ctx, ensure_ascii=False, indent=1), briefing, regra_elenco, coerencia, preset_txt,
        ref, estilo_txt, parte_txt, serie_txt,
@@ -276,6 +278,7 @@ def _normalizar(canal, contexto, bruto, briefing, max_cenas, duracao,
             imagem = _imagem_de_apoio(contexto, fala)
         cenas.append({"n": len(cenas) + 1, "fala": fala, "imagem": imagem,
                       "movimento_prompt": _limpar(c.get("movimento") or c.get("motion") or c.get("camera"), 300),
+                      "broll": _limpar(c.get("broll") or c.get("broll_termo") or c.get("stock"), 80),
                       "falar": bool(c.get("falar")),
                       "personagem": _limpar(c.get("personagem") or c.get("character"), 60)})
         if len(cenas) >= max_cenas:

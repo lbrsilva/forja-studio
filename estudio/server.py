@@ -80,6 +80,9 @@ import canal  # noqa: E402  (a esteira do Canal automático)
 import canais  # noqa: E402  (cada canal com contexto, formatos e produções próprios)
 import roteirista  # noqa: E402  (briefing -> plano de cenas com IA local)
 import esteira  # noqa: E402  (plano -> voz, imagens e montagem por formato)
+import projeto  # noqa: E402  (manifesto e reaproveitamento por cena)
+import metadados  # noqa: E402  (título, descrição e hashtags por plataforma)
+import seguranca  # noqa: E402  (redação de segredos em logs e erros)
 import publicacao  # noqa: E402  (YouTube, TikTok e Instagram)
 import analytics  # noqa: E402  (retorno por canal, plataforma e horário)
 import analytics_plataformas  # noqa: E402  (coleta automática nas plataformas)
@@ -211,6 +214,59 @@ def em_segundo_plano(coro):
     SEGUNDO_PLANO.add(t)
     t.add_done_callback(SEGUNDO_PLANO.discard)
     return t
+
+
+# Produções do Canais são mais pesadas que um trabalho comum: voz, imagens e montagem
+# usam a mesma GPU. O limite evita que três cliques coloquem três esteiras para rodar
+# ao mesmo tempo e derrubem a ComfyUI por memória.
+MAX_PRODUCOES = max(1, int(os.environ.get("ESTUDIO_MAX_PRODUCOES", "2") or 2))
+MAX_FILA_PRODUCOES = max(1, int(os.environ.get("ESTUDIO_MAX_FILA_PRODUCOES", "20") or 20))
+_PRODUCOES_RODANDO = 0
+_PRODUCOES_FILA = []
+
+
+def _agendar_esteira(cid, pid):
+    global _PRODUCOES_RODANDO
+    if _PRODUCOES_RODANDO < MAX_PRODUCOES:
+        _PRODUCOES_RODANDO += 1
+        em_segundo_plano(_rodar_esteira_com_vaga(cid, pid))
+        return
+    if len(_PRODUCOES_FILA) >= MAX_FILA_PRODUCOES:
+        recado = ("A fila de produções está cheia (%d). Tente de novo em alguns minutos."
+                  % MAX_FILA_PRODUCOES)
+        try:
+            p = canais.ler_producao(cid, pid)
+            p["estado"] = "erro"
+            p["erro"] = recado
+            canais.gravar_producao(cid, pid, p)
+        except Exception:
+            pass
+        raise web.HTTPTooManyRequests(text=recado)
+    _PRODUCOES_FILA.append((cid, pid))
+    try:
+        p = canais.ler_producao(cid, pid)
+        p["estado"] = "fila"
+        p["fila_desde"] = int(time.time())
+        canais.gravar_producao(cid, pid, p)
+    except Exception:
+        pass
+
+
+async def _rodar_esteira_com_vaga(cid, pid):
+    global _PRODUCOES_RODANDO
+    try:
+        await _rodar_esteira(cid, pid)
+    finally:
+        _PRODUCOES_RODANDO = max(0, _PRODUCOES_RODANDO - 1)
+        _iniciar_proxima_producao()
+
+
+def _iniciar_proxima_producao():
+    global _PRODUCOES_RODANDO
+    while _PRODUCOES_FILA and _PRODUCOES_RODANDO < MAX_PRODUCOES:
+        cid, pid = _PRODUCOES_FILA.pop(0)
+        _PRODUCOES_RODANDO += 1
+        em_segundo_plano(_rodar_esteira_com_vaga(cid, pid))
 
 
 def _gravar(arq, dados):
@@ -2774,6 +2830,59 @@ def _dentro(caminho, base):
         return False
 
 
+LIMITE_AUDIO = 50 * 1024 * 1024
+LIMITE_IMAGEM = 20 * 1024 * 1024
+
+
+def _ler_upload(arq, limite):
+    """Lê o upload com teto; não deixa um arquivo enorme ocupar a memória."""
+    dados = arq.file.read(limite + 1)
+    if len(dados) > limite:
+        raise web.HTTPRequestEntityTooLarge(
+            max_size=limite, actual_size=len(dados),
+            text="Arquivo grande demais (máximo %d MB)." % (limite // 1048576))
+    return dados
+
+
+async def _servir_arquivo(req, caminho):
+    """Serve um arquivo com HEAD e Range, para o player poder buscar no meio."""
+    caminho = Path(caminho)
+    if not caminho.is_file():
+        raise web.HTTPNotFound()
+    tamanho = caminho.stat().st_size
+    tipo = mimetypes.guess_type(caminho.name)[0] or "application/octet-stream"
+    headers = {"Content-Type": tipo, "Accept-Ranges": "bytes", "Cache-Control": "no-cache"}
+    if req.method == "HEAD":
+        headers["Content-Length"] = str(tamanho)
+        return web.Response(headers=headers)
+    faixa = req.headers.get("Range")
+    if not faixa:
+        return web.FileResponse(caminho, headers=headers)
+    m = re.match(r"bytes=(\d*)-(\d*)$", faixa.strip())
+    if not m:
+        raise web.HTTPRequestRangeNotSatisfiable(headers={"Content-Range": "bytes */%d" % tamanho})
+    inicio = int(m.group(1)) if m.group(1) else 0
+    fim = int(m.group(2)) if m.group(2) else tamanho - 1
+    if inicio >= tamanho or inicio > fim:
+        raise web.HTTPRequestRangeNotSatisfiable(headers={"Content-Range": "bytes */%d" % tamanho})
+    fim = min(fim, tamanho - 1)
+    resp = web.StreamResponse(status=206, headers={
+        **headers, "Content-Range": "bytes %d-%d/%d" % (inicio, fim, tamanho),
+        "Content-Length": str(fim - inicio + 1)})
+    await resp.prepare(req)
+    with caminho.open("rb") as f:
+        f.seek(inicio)
+        restante = fim - inicio + 1
+        while restante > 0:
+            bloco = f.read(min(1024 * 256, restante))
+            if not bloco:
+                break
+            await resp.write(bloco)
+            restante -= len(bloco)
+    await resp.write_eof()
+    return resp
+
+
 def criado_pelo_estudio(nome, j=None):
     """Arquivo de ComfyUI\\input que o PRÓPRIO estúdio criou (upload estudio_<hex>, recorte enq_<hex>, voz
     apres_<id do trabalho>.wav). As vozes salvas (voz_*) são da biblioteca e o resto é do dono."""
@@ -4089,7 +4198,7 @@ async def estatico(req):
     arq = WEB / rel
     if not _dentro(arq, WEB) or not arq.is_file():
         raise web.HTTPNotFound()
-    return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
+    return await _servir_arquivo(req, arq)
 
 
 ORIGENS_PAINEL = {"http://127.0.0.1:8190", "http://localhost:8190"}
@@ -4474,7 +4583,7 @@ async def api_voz_desenhar(req):
         pid = await voz_studio.desenhar(desc, (b.get("nome") or "").strip() or None,
                                         b.get("idioma") or "pt", (b.get("entrega") or "").strip() or None)
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     return web.json_response({"id": pid, "vozes": await voz_studio.vozes(True)})
 
 
@@ -4547,7 +4656,7 @@ async def api_voz_apagar(req):
     try:
         sumiu = await voz_studio.apagar_voz(pid)
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     if not sumiu:
         raise web.HTTPBadGateway(text="O VoiceStudio respondeu ok, mas a voz continua na "
                                       "lista. Nao apaguei nada.")
@@ -4571,10 +4680,10 @@ async def api_voz_conferir_ref(req):
     VOZES_DIR.mkdir(parents=True, exist_ok=True)
     tmp = VOZES_DIR / ("conferindo_" + uuid.uuid4().hex[:8] + Path(arq.filename).suffix.lower())
     try:
-        tmp.write_bytes(arq.file.read())
+        tmp.write_bytes(_ler_upload(arq, LIMITE_AUDIO))
         laudo = await asyncio.to_thread(voz_studio.conferir_referencia, tmp)
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -4597,11 +4706,11 @@ async def api_voz_transcrever_ref(req):
     VOZES_DIR.mkdir(parents=True, exist_ok=True)
     tmp = VOZES_DIR / ("transcrevendo_" + uuid.uuid4().hex[:8] + Path(arq.filename).suffix.lower())
     try:
-        tmp.write_bytes(arq.file.read())
+        tmp.write_bytes(_ler_upload(arq, LIMITE_AUDIO))
         r = await voz_studio.transcrever_referencia(
             tmp, str(dados.get("idioma") or "pt"), base_mcp=VOZ_SAIDA)
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -4624,13 +4733,13 @@ async def api_voz_clonar(req):
     # pior do que texto nenhum. Exigir o campo só empurrava a pessoa a inventar alguma coisa.
     VOZES_DIR.mkdir(parents=True, exist_ok=True)
     destino = VOZES_DIR / ("ref_" + re.sub(r"[^A-Za-z0-9_-]+", "_", nome) + Path(arq.filename).suffix.lower())
-    destino.write_bytes(arq.file.read())
+    destino.write_bytes(_ler_upload(arq, LIMITE_AUDIO))
     try:
         pid = await voz_studio.clonar(destino, nome, transcricao, str(dados.get("idioma") or "pt"),
                                       str(dados.get("entrega") or "").strip() or None,
                                       base_mcp=VOZ_SAIDA)
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     return web.json_response({"id": pid, "vozes": await voz_studio.vozes(True)})
 
 
@@ -5163,7 +5272,7 @@ async def api_voz_falar(req):
         r = await voz_studio.falar(texto_falar, VOZ_SAIDA / nome, b.get("voz") or None,
                                    b.get("idioma") or "pt", "wav", ajustes)
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     finally:
         NARRANDO.pop(nome, None)
     r["url"] = "/api/voz/audio/" + nome
@@ -5207,14 +5316,14 @@ async def api_montagem(req):
     arq = MONTAGENS / Path(req.match_info["nome"]).name
     if not _dentro(arq, MONTAGENS) or not arq.is_file():
         raise web.HTTPNotFound()
-    return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
+    return await _servir_arquivo(req, arq)
 
 
 async def api_voz_audio(req):
     arq = VOZ_SAIDA / Path(req.match_info["nome"]).name
     if not _dentro(arq, VOZ_SAIDA) or not arq.is_file():
         raise web.HTTPNotFound()
-    return web.FileResponse(arq, headers={"Cache-Control": "no-cache"})
+    return await _servir_arquivo(req, arq)
 
 
 # ===================================================================== CANAL AUTOMÁTICO
@@ -5280,7 +5389,7 @@ async def api_canal_cenas_sugerir(req):
     try:
         itens = await canal.sugerir_cenas(_pedir_texto, texto_narr, int(b.get("quantas") or 6))
     except Exception as e:
-        raise web.HTTPBadGateway(text=str(e)[:300])
+        raise web.HTTPBadGateway(text=seguranca.redigir(str(e)[:300]))
     return web.json_response({"itens": itens})
 
 
@@ -5391,12 +5500,18 @@ def _proximo_horario(horarios):
     return int(amanha.timestamp())
 
 
-def _meta_do_plano(canal, plano, quando=None):
-    return {"titulo": plano.get("titulo") or "Vídeo",
+def _meta_do_plano(canal, plano, quando=None, plataforma=None, producao=None):
+    meta = {"titulo": plano.get("titulo") or "Vídeo",
             "descricao": roteirista.texto_legenda(plano),
             "hashtags": plano.get("hashtags") or ((canal.get("publicacao") or {}).get("hashtags") or []),
             "visibilidade": (canal.get("publicacao") or {}).get("visibilidade") or "public",
             "quando": quando}
+    if producao and plataforma:
+        gerado = ((producao.get("metadados") or {}).get(plataforma) or {})
+        for campo in ("titulo", "descricao", "hashtags"):
+            if gerado.get(campo):
+                meta[campo] = gerado[campo]
+    return meta
 
 
 def _agendar_automatico(canal, producao):
@@ -5405,7 +5520,6 @@ def _agendar_automatico(canal, producao):
         return []
     plano = producao.get("plano") or {}
     quando = _proximo_horario(pub.get("horarios") or ["06:00"])
-    meta = _meta_do_plano(canal, plano, quando)
     criados = []
     existentes = {(a.get("producao_id"), a.get("formato_id")) for a in canais.agenda_listar(canal["id"])
                   if a.get("estado") != "cancelado"}
@@ -5420,6 +5534,7 @@ def _agendar_automatico(canal, producao):
         if plataforma != "youtube" and plataforma in vistos_fora_do_youtube:
             continue
         vistos_fora_do_youtube.add(plataforma)
+        meta = _meta_do_plano(canal, plano, quando, plataforma, producao)
         criados.append(canais.agendar(canal["id"], producao["id"], fid, caminho,
                                       [plataforma], quando, meta))
     return criados
@@ -5540,9 +5655,11 @@ async def api_canal_retrato_upload(req):
     destino = canais.pasta_retratos(cid) / (slug + ext)
     destino.parent.mkdir(parents=True, exist_ok=True)
     try:
-        destino.write_bytes(arq.file.read())
+        destino.write_bytes(_ler_upload(arq, LIMITE_IMAGEM))
+    except web.HTTPRequestEntityTooLarge:
+        raise
     except Exception as exc:
-        raise web.HTTPBadGateway(text="Não consegui salvar a imagem: " + str(exc)[:200])
+        raise web.HTTPBadGateway(text="Não consegui salvar a imagem: " + seguranca.redigir(str(exc)[:200]))
     d = canais.salvar_retrato(cid, nome, destino)
     return web.json_response({"nome": nome, "arquivo": destino.name, "retratos": d,
                               "url": "/api/canais/%s/personagens/retrato/%s" % (cid, destino.name)})
@@ -5644,7 +5761,7 @@ async def api_canal_video_refazer(req):
     except Exception as exc:
         raise web.HTTPBadGateway(text="Não consegui montar o roteiro: " + str(exc)[:300])
     producao = esteira.criar(canal, plano, "Refazer: " + str(d.get("url") or ""), b.get("formatos"))
-    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    _agendar_esteira(cid, producao["id"])
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
 
@@ -5824,7 +5941,7 @@ async def api_canal_video_noticia(req):
     producao["etapas"].setdefault("voz", {})["total"] = n_fala
     producao["etapas"].setdefault("imagens", {})["total"] = n_fala
     canais.gravar_producao(cid, producao["id"], producao)
-    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    _agendar_esteira(cid, producao["id"])
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
 
@@ -6321,7 +6438,7 @@ async def _rodar_esteira(cid, pid):
                 return False
 
         def log(msg):
-            print("[canal %s] %s" % (canal.get("nome") or cid, msg), flush=True)
+            print("[canal %s] %s" % (canal.get("nome") or cid, seguranca.redigir(msg)), flush=True)
 
         async def falar_video(foto, audio, destino, formato):
             if not latentsync_motor.instalada("1.5"):
@@ -6371,7 +6488,7 @@ async def _rodar_esteira(cid, pid):
         if producao.get("estado") == "concluido":
             _agendar_automatico(canal, producao)
     except Exception as exc:
-        print("[estudio] esteira do canal %s falhou: %r" % (cid, exc), flush=True)
+        print("[estudio] esteira do canal %s falhou: %s" % (cid, seguranca.redigir(repr(exc))), flush=True)
         try:
             p = canais.ler_producao(cid, pid)
             p["estado"] = "erro"
@@ -6440,7 +6557,7 @@ async def api_canal_produzir(req):
     if isinstance(formatos, list) and not formatos:
         raise web.HTTPBadRequest(text="Marque pelo menos um formato para montar.")
     producao = esteira.criar(canal, plano, briefing, formatos)
-    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    _agendar_esteira(cid, producao["id"])
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
 
@@ -6474,7 +6591,7 @@ async def api_canal_proxima_parte(req):
     except Exception as e:
         raise web.HTTPBadGateway(text="O roteirista não conseguiu continuar a série: " + str(e)[:300])
     producao = esteira.criar(canal, plano, briefing, anterior.get("formatos"))
-    em_segundo_plano(_rodar_esteira(cid, producao["id"]))
+    _agendar_esteira(cid, producao["id"])
     return web.json_response({"producao": esteira.resumo(producao), "plano": plano})
 
 
@@ -6515,6 +6632,48 @@ async def api_canal_producao_apagar(req):
     except Exception as exc:
         print("[estudio] não consegui tirar a produção %s da agenda: %r" % (pid, exc), flush=True)
     return web.json_response({"ok": True, "mb": round(total / 1048576, 2)})
+
+
+async def api_canal_projeto(req):
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    _canal_ou_erro(cid)
+    p = canais.ler_producao(cid, pid)
+    pasta = canais.pasta_producao(cid, pid)
+    arq = pasta / "projeto.json"
+    if not arq.is_file():
+        projeto.gravar_projeto(p, pasta)
+    try:
+        return web.json_response(json.loads(arq.read_text(encoding="utf-8")))
+    except Exception:
+        raise web.HTTPNotFound()
+
+
+async def api_canal_plano_reuso(req):
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    _canal_ou_erro(cid)
+    p = canais.ler_producao(cid, pid)
+    return web.json_response(projeto.planejar(p, canais.pasta_producao(cid, pid)))
+
+
+async def api_canal_metadados(req):
+    cid, pid = req.match_info["cid"], req.match_info["pid"]
+    canal = _canal_ou_erro(cid)
+    p = canais.ler_producao(cid, pid)
+    try:
+        b = await req.json()
+    except ValueError:
+        b = {}
+    plataformas = [x for x in (b.get("plataformas") or metadados.PLATAFORMAS)
+                   if x in metadados.LIMITES]
+    try:
+        d = await metadados.gerar(lambda prompt: _pedir_texto("livre", prompt),
+                                  p.get("plano") or {}, canal, plataformas)
+    except Exception as exc:
+        raise web.HTTPBadGateway(text=seguranca.redigir(
+            "Não consegui gerar os metadados: " + str(exc)[:300]))
+    p["metadados"] = d
+    canais.gravar_producao(cid, pid, p)
+    return web.json_response({"metadados": d})
 
 
 async def api_canal_producao(req):
@@ -6567,7 +6726,7 @@ async def api_canal_video(req):
     caminho = Path(arq)
     if not caminho.is_file() or not _dentro(caminho, canais.pasta_producao(cid, pid)):
         raise web.HTTPNotFound(text="O arquivo não está mais no disco.")
-    return web.FileResponse(caminho, headers={"Cache-Control": "no-cache"})
+    return await _servir_arquivo(req, caminho)
 
 
 async def api_canal_agenda(req):
@@ -6596,9 +6755,10 @@ async def api_canal_agenda(req):
     quando = _quando_de(b.get("quando"))
     if not quando:
         raise web.HTTPBadRequest(text="Data inválida para agendar.")
-    meta = {"titulo": b.get("titulo") or p.get("titulo"),
-            "descricao": b.get("descricao") or roteirista.texto_legenda(p.get("plano") or {}),
-            "hashtags": b.get("hashtags") or ((p.get("plano") or {}).get("hashtags") or []),
+    base = _meta_do_plano(canal, p.get("plano") or {}, quando, fmt.get("plataforma"), p)
+    meta = {"titulo": b.get("titulo") or base["titulo"],
+            "descricao": b.get("descricao") or base["descricao"],
+            "hashtags": b.get("hashtags") or base["hashtags"],
             "visibilidade": b.get("visibilidade") or (canal.get("publicacao") or {}).get("visibilidade") or "public"}
     item = canais.agendar(cid, pid, fid, video, plataformas, quando, meta)
     return web.json_response(item)
@@ -6919,6 +7079,9 @@ app.add_routes([
     web.get("/api/canais/{cid}/producoes", api_canal_producoes),
     web.get("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
     web.post("/api/canais/{cid}/producoes/{pid}", api_canal_producao),
+    web.get("/api/canais/{cid}/producoes/{pid}/projeto", api_canal_projeto),
+    web.post("/api/canais/{cid}/producoes/{pid}/metadados", api_canal_metadados),
+    web.get("/api/canais/{cid}/producoes/{pid}/plano-reuso", api_canal_plano_reuso),
     web.post("/api/canais/{cid}/producoes/{pid}/aprovar", api_canal_producao_aprovar),
     web.get("/api/canais/{cid}/producoes/{pid}/video/{fid}", api_canal_video),
     web.get("/api/canais/{cid}/agenda", api_canal_agenda), web.post("/api/canais/{cid}/agenda", api_canal_agenda),
@@ -6931,6 +7094,23 @@ app.add_routes([
     web.post("/api/canais/{cid}/analytics/coletar", api_canal_analytics_coletar),
     web.get("/", estatico), web.get("/{caminho:.+}", estatico),
 ])
+
+
+async def _retomar_fila_producoes(_app):
+    """Depois de um reinício, produções que ficaram na fila voltam a andar."""
+    try:
+        for canal in canais.listar():
+            cid = canal.get("id")
+            if not cid:
+                continue
+            for p in canais.lista_producoes(cid):
+                if p.get("estado") == "fila":
+                    _agendar_esteira(cid, p["id"])
+    except Exception as exc:
+        print("[estudio] não consegui retomar a fila de produções: %r" % (exc,), flush=True)
+
+
+app.on_startup.append(_retomar_fila_producoes)
 
 # ------------------------------------------------------- o icone, na primeira subida
 MARCA_DO_ICONE = AQUI / "icone_feito.json"

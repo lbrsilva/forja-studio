@@ -33,7 +33,7 @@
   };
   const tags = (s) => String(s || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean)
     .map((x) => (x.startsWith('#') ? x : '#' + x));
-  const METAS = { preparando: 'Preparando', voz: 'Gerando voz', imagens: 'Gerando imagens', montagem: 'Montando',
+  const METAS = { preparando: 'Preparando', fila: 'Na fila', voz: 'Gerando voz', imagens: 'Gerando imagens', montagem: 'Montando',
     aguardando_aprovacao: 'Aguardando aprovação', aprovado: 'Aprovado', rejeitado: 'Rejeitado',
     concluido: 'Pronto', erro: 'Erro', cancelado: 'Cancelado' };
   const Cores = { youtube: '#3987e5', tiktok: '#d95926', instagram: '#199e70', facebook: '#6250d6' };
@@ -765,10 +765,12 @@
         ${!final ? `<button type="button" class="bt-sec mini cx-right" data-acao="cancelar-producao" data-id="${esc(p.id)}">${ic('parar')}Cancelar</button>`
           : `<button type="button" class="bt-perigo mini cx-right" data-acao="apagar-producao" data-id="${esc(p.id)}">${ic('lixo')}Apagar produção</button>`}</div>
       <div class="cx-progresso"><i style="width:${Number(p.progresso) || 0}%"></i></div>
-      <div class="cx-etapas">${['voz', 'imagens', 'montagem'].map((k) => {
+      ${(() => { const r = p.reuso || {}; const n = (r.voz || 0) + (r.imagens || 0) + (r.videos || 0) + (r.montagens || 0) + (r.broll || 0);
+        return n ? `<p class="fraco" style="margin:6px 0 0">Reaproveitado: ${r.voz || 0} voz, ${r.imagens || 0} imagens, ${r.broll || 0} b-roll, ${r.videos || 0} vídeos, ${r.montagens || 0} montagens</p>` : ''; })()}
+      <div class="cx-etapas">${['preflight', 'voz', 'legendas', 'broll', 'imagens', 'montagem'].map((k) => {
         const e = et[k] || {};
         const cls = e.estado === 'ok' ? 'ok' : e.estado === 'rodando' ? 'fazendo' : e.estado === 'erro' ? 'erro' : '';
-        const nome = k === 'voz' ? 'voz' : k === 'imagens' ? 'imagens' : 'montagem';
+        const nome = { preflight: 'conferindo', voz: 'voz', legendas: 'legendas', broll: 'b-roll', imagens: 'imagens', montagem: 'montagem' }[k];
         return `<span class="${cls}"><i></i>${nome}${e.total ? ' · ' + (e.feito || 0) + '/' + e.total : ''}</span>`;
       }).join('')}</div>
       ${est === 'erro' && p.erro ? `<div class="cx-aviso erro" style="margin-top:10px">${esc(p.erro)}</div>` : ''}
@@ -1297,7 +1299,10 @@
             <div class="cx-campo"><label for="ajPreset">Modelo de imagem</label>
               <select id="ajPreset">${opPreset}</select></div>
             <div class="cx-campo"><label for="ajVoz">Voz</label>
-              <select id="ajVoz">${opVoz}</select></div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <select id="ajVoz" style="flex:1">${opVoz}</select>
+                <button type="button" class="bt-sec mini" data-acao="ouvir-voz-canal" title="Ouvir uma amostra">${ic('voz') || ''}Ouvir</button>
+              </div></div>
             <div class="cx-campo"><label>Estilo visual</label>
               ${seletorEstilo('ajEstilo', pr.estilo || 'auto')}</div>
           </div>
@@ -1310,6 +1315,34 @@
           <div class="cx-formato-cab"><span>Ativo</span><span>Formato</span><span>Tamanho (px)</span><span>Plataforma</span><span>Legendas</span><span></span></div>
           <div class="cx-formatos" id="cxFormatos">${formatos.map(linhaFormato).join('')}</div>
           <div class="cx-acoes"><button type="button" class="bt-sec mini" data-acao="add-formato">${ic('mais')}Formato</button></div>
+        </div>
+
+        <div class="cx-card">
+          <div class="cx-card-cab"><div><h2>Montagem</h2>
+            <p class="fraco">Como as cenas entram no vídeo e como a legenda aparece.</p></div></div>
+          <div class="cx-grid3">
+            <div class="cx-campo"><label for="ajEncaixe">Encaixe</label>
+              <select id="ajEncaixe">${[['cover', 'Preencher a tela'], ['contain', 'Caber com fundo']].map(([v, r]) => `<option value="${v}" ${(pr.encaixe || 'cover') === v ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label for="ajTransicao">Transição</label>
+              <select id="ajTransicao">${[['nenhuma', 'Corte seco'], ['fade', 'Fade suave']].map(([v, r]) => `<option value="${v}" ${(pr.transicao || 'nenhuma') === v ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label for="ajZoom">Zoom em imagem parada</label>
+              <select id="ajZoom">${[['1', 'Suave'], ['0', 'Normal']].map(([v, r]) => `<option value="${v}" ${String(pr.zoom_suave !== false ? 1 : 0) === v ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+          </div>
+          <div class="cx-grid3">
+            <div class="cx-campo"><label for="ajLegendaEstilo">Estilo da legenda</label>
+              <select id="ajLegendaEstilo">${[['bloco', 'Bloco'], ['limpa', 'Limpa'], ['destaque', 'Destaque']].map(([v, r]) => `<option value="${v}" ${(pr.legenda_estilo || 'bloco') === v ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label for="ajLegendaPos">Posição da legenda</label>
+              <select id="ajLegendaPos">${[['baixo', 'Embaixo'], ['centro', 'Centro'], ['cima', 'Em cima']].map(([v, r]) => `<option value="${v}" ${(pr.legenda_posicao || 'baixo') === v ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+            <div class="cx-campo"><label for="ajBroll">B-roll grátis</label>
+              <select id="ajBroll">${[['0', 'Desligado'], ['1', 'Pexels/Pixabay']].map(([v, r]) => `<option value="${v}" ${String(pr.broll ? 1 : 0) === v ? 'selected' : ''}>${r}</option>`).join('')}</select>
+              <span class="cx-dica">Precisa de chave em API/pexels.txt ou API/pixabay.txt.</span></div>
+          </div>
+          <div class="cx-grid2">
+            <div class="cx-campo"><label for="ajBgm">Música de fundo (arquivo)</label>
+              <input id="ajBgm" type="text" value="${esc(pr.bgm || '')}" placeholder="/caminho/para/musica.mp3"></div>
+            <div class="cx-campo"><label for="ajBgmVolume">Volume da música</label>
+              <input id="ajBgmVolume" type="number" min="0" max="1" step="0.05" value="${Number(pr.bgm_volume ?? 0.12)}"></div>
+          </div>
         </div>
 
         <div class="cx-card">
@@ -1699,6 +1732,30 @@
     const sem = marcadas.filter((k) => !(cred[k] && cred[k].configurado)).map((k) => Rotulo[k]);
     $('#agendarAviso').textContent = (video ? 'Arquivo: ' + video.split('/').pop() : 'Escolha um formato com vídeo pronto.') +
       (sem.length ? ' · sem conta conectada: ' + sem.join(', ') + ' (o agendamento fica esperando a conta).' : '');
+  }
+
+  async function gerarMetadadosAgendar() {
+    const pid = ($('#agendarProducao') || {}).value;
+    if (!pid) { mostrar('Escolha uma produção.', 'erro'); return; }
+    const marcadas = $$('[data-agplat]:checked').map((x) => x.dataset.agplat);
+    const plataformas = marcadas.length ? marcadas : ['youtube', 'tiktok', 'instagram', 'facebook'];
+    const bt = $('[data-acao="gerar-metadados"]');
+    if (bt) bt.disabled = true;
+    try {
+      const d = await pedir('/api/canais/' + encodeURIComponent(S.atual) +
+        '/producoes/' + encodeURIComponent(pid) + '/metadados', { plataformas });
+      const mapa = d.metadados || {};
+      const m = mapa[plataformas[0]] || Object.values(mapa)[0];
+      if (!m) { mostrar('A IA não devolveu metadados.', 'erro'); return; }
+      $('#agendarTituloIn').value = m.titulo || '';
+      $('#agendarDescricao').value = m.descricao || '';
+      $('#agendarHashtags').value = (m.hashtags || []).join(' ');
+      mostrar('Metadados gerados para ' + (Rotulo[plataformas[0]] || plataformas[0]) + '.', 'ok');
+    } catch (e) {
+      mostrar('Não consegui gerar os metadados: ' + e.message, 'erro');
+    } finally {
+      if (bt) bt.disabled = false;
+    }
   }
 
   async function agendar() {
@@ -2213,7 +2270,16 @@
         estilo: ($('#ajEstilo') || {}).value || 'auto',
         imagens_por_formato: ($('#ajImagensPorFormato') || {}).value || 'auto',
         legendas: !!($('#ajLegendas') || {}).checked,
-        falar_cenas: !!($('#ajFalar') || {}).checked },
+        falar_cenas: !!($('#ajFalar') || {}).checked,
+        encaixe: ($('#ajEncaixe') || {}).value || 'cover',
+        transicao: ($('#ajTransicao') || {}).value || 'nenhuma',
+        zoom_suave: (($('#ajZoom') || {}).value || '1') === '1',
+        legenda_estilo: ($('#ajLegendaEstilo') || {}).value || 'bloco',
+        legenda_posicao: ($('#ajLegendaPos') || {}).value || 'baixo',
+        broll: (($('#ajBroll') || {}).value || '0') === '1',
+        broll_fonte: 'auto',
+        bgm: ($('#ajBgm') || {}).value || '',
+        bgm_volume: Number(($('#ajBgmVolume') || {}).value) || 0 },
       formatos,
       publicacao: { ...(d.publicacao || {}),
         automatico: !!($('#ajAuto') || {}).checked,
@@ -2248,6 +2314,21 @@
         visual: ($('.cx-pers-visual', el) || {}).value || '',
       })).filter((x) => x.nome),
     };
+  }
+
+  async function ouvirVozCanal() {
+    const voz = ($('#ajVoz') || {}).value || '';
+    const idioma = ($('#ajIdioma') || {}).value || 'pt';
+    try {
+      const d = await pedir('/api/voz/falar', {
+        texto: 'Oi! Esta é uma amostra da voz deste canal.',
+        voz, idioma,
+      });
+      if (d && d.url) new Audio(d.url).play();
+      else mostrar('O VoiceStudio não devolveu áudio.', 'erro');
+    } catch (e) {
+      mostrar('Não consegui ouvir a voz: ' + e.message, 'erro');
+    }
   }
 
   async function salvarAjustes() {
@@ -2536,6 +2617,8 @@
       } catch (e) { mostrar(e.message, 'erro'); }
       return;
     }
+    if (acao === 'ouvir-voz-canal') { await ouvirVozCanal(); return; }
+    if (acao === 'gerar-metadados') { await gerarMetadadosAgendar(); return; }
     if (acao === 'salvar-ajustes') { await salvarAjustes(); return; }
     if (acao === 'salvar-cred') { await salvarCred(b.dataset.plat); return; }
     if (acao === 'importar') { await importarMetricas(); return; }

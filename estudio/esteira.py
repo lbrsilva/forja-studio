@@ -20,11 +20,18 @@ import unicodedata
 import uuid
 from pathlib import Path
 
+import asyncio
+import broll
 import canais
+import legendas
+import projeto
 
 PAUSA = 0.35
 FPS = 30
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
+CACHE = Path(os.environ.get("ESTUDIO_CACHE") or (Path(__file__).resolve().parent.parent / "_cache"))
+CACHE_IMAGENS = CACHE / "imagens"
+CACHE_IMAGENS_ATIVO = os.environ.get("ESTUDIO_CACHE_IMAGENS", "1") != "0"
 FONTES = [
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -69,6 +76,54 @@ def _etapa(producao, nome, estado, feito=None, total=None, erro=""):
     if erro:
         e["erro"] = erro
     return e
+
+
+def preflight(producao, canal, callbacks, pasta):
+    """Confere o essencial antes de ocupar a GPU e o VoiceStudio.
+
+    Erro aqui vira mensagem na produção, não uma falha no meio da esteira depois de
+    minutos de trabalho. A checagem é de propósito barata: não abre modelo, não fala
+    com a ComfyUI, só olha arquivos, disco e callbacks.
+    """
+    faltas = []
+    cenas = [c for c in (producao.get("plano") or {}).get("cenas") or [] if c.get("fala")]
+    if not cenas:
+        faltas.append("o roteiro não tem nenhuma cena com fala")
+    formatos = [f for f in canais.formatos_ativos(canal)
+                if f["id"] in (producao.get("formatos") or [])] or canais.formatos_ativos(canal)
+    if not formatos:
+        faltas.append("o canal não tem formato ativo")
+    if not shutil.which(FFMPEG) and not Path(FFMPEG).is_file():
+        faltas.append("ffmpeg não encontrado")
+    if not callbacks.get("gerar_imagem"):
+        faltas.append("gerador de imagem indisponível")
+    if bool((canal.get("producao") or {}).get("falar_cenas", True)) and not callbacks.get("falar"):
+        faltas.append("gerador de voz indisponível")
+    pasta = Path(pasta)
+    try:
+        pasta.mkdir(parents=True, exist_ok=True)
+        teste = pasta / ".preflight"
+        teste.write_text("ok", encoding="utf-8")
+        teste.unlink()
+    except OSError as exc:
+        faltas.append("não consigo escrever na pasta da produção (%s)" % exc)
+    try:
+        livre = shutil.disk_usage(pasta).free
+        if livre < 300 * 1024 * 1024:
+            faltas.append("disco livre abaixo de 300 MB (%.0f MB)" % (livre / 1024 / 1024))
+    except OSError:
+        pass
+    _etapa(producao, "preflight", "erro" if faltas else "ok", erro="; ".join(faltas)[:600])
+    if faltas:
+        producao["estado"] = "erro"
+        producao["erro"] = "Antes de produzir: " + "; ".join(faltas)[:600]
+        _log(producao, producao["erro"], callbacks)
+        try:
+            _gravar({"canal_id": producao["canal_id"], "id": producao["id"]}, producao)
+        except Exception:
+            pass
+        return False
+    return True
 
 
 def criar(canal, plano, briefing, formato_ids=None):
@@ -117,7 +172,10 @@ def criar(canal, plano, briefing, formato_ids=None):
         "imagens_por_formato": (canal.get("producao") or {}).get("imagens_por_formato") or "auto",
         "inspiracao": plano.get("inspiracao") or {},
         "etapas": {
+            "preflight": {"estado": "pendente"},
             "voz": {"estado": "pendente", "feito": 0, "total": len(plano.get("cenas") or [])},
+            "legendas": {"estado": "pendente", "feito": 0, "total": len(plano.get("cenas") or [])},
+            "broll": {"estado": "pendente", "feito": 0, "total": len(plano.get("cenas") or [])},
             "imagens": {"estado": "pendente", "feito": 0, "total": len(plano.get("cenas") or [])},
             "montagem": {"estado": "pendente", "feito": 0, "total": len(reps)},
         },
@@ -142,6 +200,58 @@ def _rodar(cmd, cwd=None, timeout=3600):
         cauda = ((r.stderr or "") + (r.stdout or "")).strip()[-700:]
         raise RuntimeError("ffmpeg falhou: " + (cauda or "erro %d" % r.returncode))
     return r
+
+
+def _codificar_video(entradas, grafo, destino, dur):
+    """Codifica uma cena tentando libx264, depois o encoder do Mac e por fim mpeg4."""
+    destino = Path(destino)
+    erro = None
+    for codec, extra in (("libx264", ["-crf", "20", "-preset", "fast"]),
+                         ("h264_videotoolbox", ["-b:v", "6M"]),
+                         ("mpeg4", ["-q:v", "3"])):
+        tmp = destino.with_name(destino.stem + ".tmp" + destino.suffix)
+        try:
+            _rodar([FFMPEG, "-v", "error", "-y", *entradas, "-filter_complex", grafo,
+                    "-map", "[saida]", "-t", "%.3f" % dur, "-r", str(FPS),
+                    "-c:v", codec, *extra, str(tmp)], timeout=1800)
+            os.replace(tmp, destino)
+            return
+        except Exception as exc:
+            erro = exc
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+    raise RuntimeError("não consegui codificar o vídeo: %s" % erro)
+
+
+def _cache_imagem(chave, destino):
+    """Copia uma imagem já gerada para a produção, se a chave existir no cache."""
+    if not CACHE_IMAGENS_ATIVO:
+        return False
+    cache = CACHE_IMAGENS / (chave + ".png")
+    if not cache.is_file() or cache.stat().st_size < 1000:
+        return False
+    try:
+        tmp = Path(destino).with_name(Path(destino).name + ".tmp")
+        shutil.copyfile(cache, tmp)
+        os.replace(tmp, destino)
+        return True
+    except OSError:
+        return False
+
+
+def _guardar_cache_imagem(chave, origem):
+    if not CACHE_IMAGENS_ATIVO:
+        return
+    try:
+        CACHE_IMAGENS.mkdir(parents=True, exist_ok=True)
+        cache = CACHE_IMAGENS / (chave + ".png")
+        tmp = cache.with_name(cache.name + ".tmp")
+        shutil.copyfile(origem, tmp)
+        os.replace(tmp, cache)
+    except OSError:
+        pass
 
 
 def _fonte(tamanho):
@@ -187,7 +297,45 @@ def _blocos(frase, maximo=6):
     return blocos or [str(frase or "")]
 
 
-def _legenda_png(texto, destino, largura_max, tamanho):
+def _blocos_indices(frase, maximo=6):
+    palavras = str(frase or "").split()
+    blocos, atual, inicio = [], [], 0
+    for i, p in enumerate(palavras):
+        atual.append(p)
+        fim = re.search(r"[.!?,:;]$", p)
+        if len(atual) >= maximo or (fim and len(atual) >= 3):
+            blocos.append((" ".join(atual), inicio, i))
+            atual, inicio = [], i + 1
+    if atual:
+        if blocos and len(atual) <= 2:
+            texto, ini, _ = blocos[-1]
+            blocos[-1] = (texto + " " + " ".join(atual), ini, len(palavras) - 1)
+        else:
+            blocos.append((" ".join(atual), inicio, len(palavras) - 1))
+    return blocos or [(str(frase or ""), 0, -1)]
+
+
+def _luminancia(cor):
+    def canal(v):
+        v = max(0.0, min(1.0, float(v) / 255.0))
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = (canal(x) for x in cor[:3])
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contraste(a, b):
+    la, lb = _luminancia(a), _luminancia(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _cor_legivel(fundo, preferida):
+    if _contraste(fundo, preferida) >= 4.5:
+        return preferida
+    branco, preto = (255, 255, 255), (0, 0, 0)
+    return branco if _contraste(fundo, branco) >= _contraste(fundo, preto) else preto
+
+
+def _legenda_png(texto, destino, largura_max, tamanho, estilo="bloco"):
     from PIL import Image, ImageDraw
     fonte = _fonte(tamanho)
     medidor = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
@@ -198,38 +346,53 @@ def _legenda_png(texto, destino, largura_max, tamanho):
     alt = altura_linha * len(linhas) + 2 * margem
     img = Image.new("RGBA", (larg, alt), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((0, 0, larg - 1, alt - 1), radius=max(20, int(tamanho * 0.5)),
-                        fill=(0, 0, 0, 165))
+    estilo = str(estilo or "bloco")
+    if estilo == "limpa":
+        fundo, texto_cor, contorno = None, (255, 255, 255, 255), 4
+    elif estilo == "destaque":
+        fundo, texto_cor, contorno = (0, 0, 0, 180), (255, 210, 63, 255), 2
+    else:
+        fundo, texto_cor, contorno = (0, 0, 0, 165), (255, 255, 255, 255), 3
+    if fundo:
+        texto_cor = (*_cor_legivel(fundo[:3], texto_cor[:3]), 255)
+        d.rounded_rectangle((0, 0, larg - 1, alt - 1), radius=max(20, int(tamanho * 0.5)), fill=fundo)
     for i, linha in enumerate(linhas):
         w = d.textlength(linha, font=fonte)
         d.text(((larg - w) / 2, margem + i * altura_linha), linha, font=fonte,
-               fill=(255, 255, 255, 255), stroke_width=3, stroke_fill=(0, 0, 0, 255))
+               fill=texto_cor, stroke_width=contorno, stroke_fill=(0, 0, 0, 255))
     img.save(destino)
     return img.size
 
 
-def _base_filtro(larg, alt, quadros, dentro):
-    l2, a2 = larg * 2, alt * 2
+def _base_filtro(larg, alt, quadros, dentro, encaixe="cover", zoom_suave=True):
+    l2, a2 = ((int(larg * 1.5), int(alt * 1.5)) if zoom_suave else (larg * 2, alt * 2))
     z = "min(zoom+0.0008,1.20)" if dentro else "if(eq(on,0),1.20,max(zoom-0.0008,1.0))"
-    proporcao = larg / float(alt)
-    if proporcao < 1.05:
-        return (f"scale={l2}:{a2}:force_original_aspect_ratio=increase,crop={l2}:{a2},"
-                f"zoompan=z='{z}':d={quadros}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"s={larg}x{alt}:fps={FPS}[v0]")
-    return (f"split=2[bg][fg];[bg]scale={l2}:{a2}:force_original_aspect_ratio=increase,"
-            f"crop={l2}:{a2},boxblur=36:8[bg2];[fg]scale={l2}:{a2}:"
-            f"force_original_aspect_ratio=decrease[fg2];[bg2][fg2]overlay=(W-w)/2:(H-h)/2,"
-            f"zoompan=z='{z}':d={quadros}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-            f"s={larg}x{alt}:fps={FPS}[v0]")
+    s_zoom = "%dx%d" % ((l2, a2) if zoom_suave else (larg, alt))
+    fim = ("zoompan=z='%s':d=%d:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=%s:fps=%d"
+           % (z, quadros, s_zoom, FPS))
+    if zoom_suave:
+        fim += ",scale=%d:%d:flags=lanczos" % (larg, alt)
+    fim += "[v0]"
+    if encaixe == "contain":
+        return ("split=2[bg][fg];[bg]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                "boxblur=36:8[bg2];[fg]scale=%d:%d:force_original_aspect_ratio=decrease[fg2];"
+                "[bg2][fg2]overlay=(W-w)/2:(H-h)/2,%s" % (l2, a2, l2, a2, l2, a2, fim))
+    return ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s"
+            % (l2, a2, l2, a2, fim))
 
 
-def _base_video_filtro(larg, alt, dur):
-    """Encaixa um clipe de boca sincronizada no formato, com fundo desfocado e o último quadro congelado na pausa."""
-    return ("split=2[bg][fg];[bg]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
-            "boxblur=36:8[bg2];[fg]scale=%d:%d:force_original_aspect_ratio=decrease[fg2];"
-            "[bg2][fg2]overlay=(W-w)/2:(H-h)/2,fps=%d,tpad=stop_mode=clone:stop_duration=%.3f,"
-            "trim=duration=%.3f,setpts=PTS-STARTPTS,setsar=1[v0]"
-            % (larg, alt, larg, alt, larg, alt, FPS, PAUSA + 0.5, dur))
+def _base_video_filtro(larg, alt, dur, encaixe="cover"):
+    """Encaixa um clipe de vídeo no formato, com o último quadro congelado na pausa."""
+    if encaixe == "contain":
+        return ("split=2[bg][fg];[bg]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                "boxblur=36:8[bg2];[fg]scale=%d:%d:force_original_aspect_ratio=decrease[fg2];"
+                "[bg2][fg2]overlay=(W-w)/2:(H-h)/2,fps=%d,tpad=stop_mode=clone:stop_duration=%.3f,"
+                "trim=duration=%.3f,setpts=PTS-STARTPTS,setsar=1[v0]"
+                % (larg, alt, larg, alt, larg, alt, FPS, PAUSA + 0.5, dur))
+    return ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,"
+            "tpad=stop_mode=clone:stop_duration=%.3f,trim=duration=%.3f,"
+            "setpts=PTS-STARTPTS,setsar=1[v0]"
+            % (larg, alt, larg, alt, FPS, PAUSA + 0.5, dur))
 
 
 def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=None, videos_por_cena=None):
@@ -238,58 +401,99 @@ def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=No
     alt = int(formato.get("altura") or 1920)
     fid = formato.get("id") or "video"
     legendas = bool(formato.get("legendas", False))
+    encaixe = str(formato.get("encaixe") or "cover")
+    transicao = str(formato.get("transicao") or "nenhuma")
+    zoom_suave = bool(formato.get("zoom_suave", True))
+    legenda_estilo = str(formato.get("legenda_estilo") or "bloco")
+    legenda_posicao = str(formato.get("legenda_posicao") or "baixo")
+    bgm = str(formato.get("bgm") or "")
+    bgm_volume = float(formato.get("bgm_volume") or 0.12)
     tmp = pasta / "tmp" / fid
     if tmp.exists():
         shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True, exist_ok=True)
     cenas = [c for c in (plano.get("cenas") or []) if c.get("fala")]
     origem = Path(imagens_dir) if imagens_dir else (pasta / "cenas")
-    imagens = sorted(origem.glob("cena_*.png"))
-    if len(imagens) < len(cenas):
-        raise RuntimeError("Faltam imagens: %d de %d cenas." % (len(imagens), len(cenas)))
+    imagens = [origem / ("cena_%02d.png" % i) for i in range(1, len(cenas) + 1)]
+    for i, img in enumerate(imagens, 1):
+        if not img.is_file() and not (videos_por_cena or {}).get(i):
+            raise RuntimeError("Faltam imagens: cena %d." % i)
     if len(duracoes) < len(cenas):
         raise RuntimeError("Faltam durações de fala.")
     vertical = alt >= larg
     tamanho = 70 if vertical else max(46, int(larg / 26))
     largura_max = int(larg * (0.84 if vertical else 0.72))
-    y_legenda = int(alt * (0.72 if vertical else 0.78))
+    if legenda_posicao == "cima":
+        y_legenda = int(alt * 0.12)
+    elif legenda_posicao == "centro":
+        y_legenda = int(alt * 0.45)
+    else:
+        y_legenda = int(alt * (0.72 if vertical else 0.78))
     y_gancho = 80 if vertical else 60
     gancho = plano.get("gancho") or (cenas[0].get("fala") if cenas else "")
     clipes = []
+    clipes_dir = pasta / "clipes" / fid
+    clipes_dir.mkdir(parents=True, exist_ok=True)
     for i, cena in enumerate(cenas, 1):
         dur = float(duracoes[i - 1])
         fala_s = max(0.8, dur - PAUSA)
-        blocos = _blocos(cena.get("fala"))
-        pesos = [max(1, len(b)) for b in blocos]
+        clipe_fala = (videos_por_cena or {}).get(i)
+        imagem_fonte = imagens[i - 1]
+        arq_palavras = pasta / "voz" / ("palavras_%02d.json" % i)
+        chave_clip = projeto.chave_clip(imagem_fonte, clipe_fala, cena.get("fala"), dur,
+                                        larg, alt, legendas, gancho if i == 1 else "",
+                                        projeto.hash_arquivo(arq_palavras),
+                                        pasta / "voz" / ("voz_%02d.wav" % i),
+                                        transicao, legenda_estilo, legenda_posicao)
+        clipe = clipes_dir / ("clipe_%02d.mp4" % i)
+        meta_clip = clipes_dir / ("clipe_%02d.json" % i)
+        if (clipe.is_file() and clipe.stat().st_size > 1000
+                and (not meta_clip.is_file() or projeto.meta_confere(meta_clip, chave_clip))):
+            clipes.append(clipe)
+            _log({}, "cena %d/%d reaproveitada" % (i, len(cenas)), callbacks)
+            continue
+        blocos_idx = _blocos_indices(cena.get("fala"))
+        palavras = None
+        if arq_palavras.is_file():
+            try:
+                palavras = json.loads(arq_palavras.read_text(encoding="utf-8"))
+            except Exception:
+                palavras = None
+        if palavras and len(palavras) != len(str(cena.get("fala") or "").split()):
+            palavras = None
+        pesos = [max(1, len(b[0])) for b in blocos_idx]
         total = float(sum(pesos)) or 1.0
         t, janelas = 0.0, []
         if legendas:
-            for j, b in enumerate(blocos):
-                ini = t
-                fim = min(dur, t + fala_s * pesos[j] / total)
+            for j, (b, ini_i, fim_i) in enumerate(blocos_idx):
+                if palavras and 0 <= ini_i <= fim_i < len(palavras):
+                    ini = max(0.0, float(palavras[ini_i].get("inicio") or 0))
+                    fim = min(dur, float(palavras[fim_i].get("fim") or ini) + 0.02)
+                else:
+                    ini = t
+                    fim = min(dur, t + fala_s * pesos[j] / total)
                 arq = tmp / ("leg_%02d_%02d.png" % (i, j))
                 try:
-                    _legenda_png(b, arq, largura_max, tamanho)
-                    janelas.append((arq, ini, min(fim + 0.02, dur)))
+                    _legenda_png(b, arq, largura_max, tamanho, legenda_estilo)
+                    janelas.append((arq, ini, max(ini + 0.05, fim)))
                 except Exception as exc:
                     _log({}, "legenda %d.%d falhou: %s" % (i, j, exc), callbacks)
                 t = fim
         if i == 1 and gancho:
             arq = tmp / "gancho.png"
             try:
-                _legenda_png(gancho, arq, largura_max, int(tamanho * 1.22))
+                _legenda_png(gancho, arq, largura_max, int(tamanho * 1.22), legenda_estilo)
                 janelas.append((arq, 0.0, min(2.8, dur), True))
             except Exception:
                 pass
         quadros = int(round(dur * FPS)) + 2
-        clipe_fala = (videos_por_cena or {}).get(i)
         if clipe_fala and Path(clipe_fala).is_file():
             entradas = ["-i", str(clipe_fala)]
-            grafo = _base_video_filtro(larg, alt, dur)
+            grafo = _base_video_filtro(larg, alt, dur, encaixe)
             _log({}, "cena %d com vídeo" % i, callbacks)
         else:
-            entradas = ["-loop", "1", "-framerate", str(FPS), "-i", str(imagens[i - 1])]
-            grafo = _base_filtro(larg, alt, quadros, i % 2 == 1)
+            entradas = ["-loop", "1", "-framerate", str(FPS), "-i", str(imagem_fonte)]
+            grafo = _base_filtro(larg, alt, quadros, i % 2 == 1, encaixe, zoom_suave)
         for k, j in enumerate(janelas, 1):
             arq, ini, fim = j[0], j[1], j[2]
             topo = len(j) > 3
@@ -302,15 +506,17 @@ def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=No
             entradas += ["-i", str(arq)]
             grafo += (";[v%d][%d:v]overlay=x=(W-w)/2:y=%d:enable='between(t,%.3f,%.3f)'[v%d]"
                       % (k - 1, k, y, ini, fim, k))
-        grafo += ";[v%d]format=yuv420p[saida]" % len(janelas)
-        clipe = tmp / ("clipe_%02d.mp4" % i)
-        _rodar([FFMPEG, "-v", "error", "-y", *entradas, "-filter_complex", grafo,
-                "-map", "[saida]", "-t", "%.3f" % dur, "-r", str(FPS),
-                "-c:v", "libx264", "-crf", "20", "-preset", "fast", str(clipe)], timeout=1800)
+        fade = ""
+        if transicao == "fade":
+            fade = (",fade=t=in:st=0:d=0.25,fade=t=out:st=%.3f:d=0.25"
+                    % max(0.0, dur - 0.25))
+        grafo += ";[v%d]format=yuv420p%s[saida]" % (len(janelas), fade)
+        _codificar_video(entradas, grafo, clipe, dur)
+        projeto.gravar_meta(meta_clip, chave_clip)
         clipes.append(clipe)
         _log({}, "cena %d/%d montada (%s, %.1fs)" % (i, len(cenas), fid, dur), callbacks)
     lista = tmp / "lista.txt"
-    lista.write_text("".join("file '%s'\n" % c.name for c in clipes), encoding="utf-8")
+    lista.write_text("".join("file '%s'\n" % c.resolve().as_posix() for c in clipes), encoding="utf-8")
     junta = tmp / "video.mp4"
     _rodar([FFMPEG, "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lista),
             "-c", "copy", str(junta)], timeout=1800)
@@ -318,9 +524,43 @@ def montar_video(pasta, plano, duracoes, formato, callbacks=None, imagens_dir=No
     voz = pasta / "voz.wav"
     if not voz.is_file():
         raise RuntimeError("A narração não ficou pronta: falta voz.wav.")
-    _rodar([FFMPEG, "-v", "error", "-y", "-i", str(junta), "-i", str(voz),
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
-            "-shortest", "-movflags", "+faststart", str(saida)], timeout=1800)
+    saida_tmp = saida.with_name(saida.stem + ".tmp" + saida.suffix)
+    try:
+        saida_tmp.unlink()
+    except FileNotFoundError:
+        pass
+    simples = [FFMPEG, "-v", "error", "-y", "-i", str(junta), "-i", str(voz),
+               "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+               "-shortest", "-movflags", "+faststart", str(saida_tmp)]
+    bgm_path = Path(bgm).expanduser() if bgm else None
+    if bgm_path and not bgm_path.is_absolute() and (pasta / bgm_path).is_file():
+        bgm_path = pasta / bgm_path
+    dur_total = sum(float(x) for x in duracoes)
+    try:
+        if bgm_path and bgm_path.is_file() and bgm_volume > 0:
+            volume = max(0.0, min(1.0, bgm_volume))
+            com_bgm = [FFMPEG, "-v", "error", "-y", "-i", str(junta), "-i", str(voz),
+                       "-stream_loop", "-1", "-i", str(bgm_path),
+                       "-filter_complex",
+                       "[1:a]volume=1.0[voz];[2:a]volume=%.3f,afade=t=out:st=%.3f:d=2[bg];"
+                       "[voz][bg]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[a]"
+                       % (volume, max(0.0, dur_total - 2)),
+                       "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+                       "-ar", "48000", "-ac", "2", "-shortest", "-movflags", "+faststart", str(saida_tmp)]
+            try:
+                _rodar(com_bgm, timeout=1800)
+            except Exception as exc:
+                _log({}, "música de fundo falhou (%s); seguindo sem música" % exc, callbacks)
+                _rodar(simples, timeout=1800)
+        else:
+            _rodar(simples, timeout=1800)
+        os.replace(saida_tmp, saida)
+    except Exception:
+        try:
+            saida_tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
     return saida
 
 
@@ -457,6 +697,8 @@ async def produzir_noticia(producao, canal, callbacks):
     _etapa(producao, "voz", "rodando", 0, len(falas))
     _gravar({"canal_id": cid, "id": pid}, producao)
     callbacks = callbacks or {}
+    if not preflight(producao, canal, callbacks, pasta):
+        return producao
     try:
         voz_dir = pasta / "voz"
         voz_dir.mkdir(parents=True, exist_ok=True)
@@ -508,6 +750,7 @@ async def produzir_noticia(producao, canal, callbacks):
             if nome:
                 visuais[nome] = str((p or {}).get("visual") or "").strip()
         estilo_prompt = _estilo_com_inspiracao(canal, plano)
+        producao["arquivos"]["imagens"] = []
         feito_img = 0
         for proporcao in grupos:
             cenas_dir = pasta / "cenas" / proporcao.replace(":", "x")
@@ -575,6 +818,8 @@ async def produzir(producao, canal, callbacks):
     _etapa(producao, "voz", "rodando", 0, len(cenas))
     _gravar({"canal_id": cid, "id": pid}, producao)
     callbacks = callbacks or {}
+    if not preflight(producao, canal, callbacks, pasta):
+        return producao
     try:
         voz_dir = pasta / "voz"
         voz_dir.mkdir(parents=True, exist_ok=True)
@@ -585,6 +830,7 @@ async def produzir(producao, canal, callbacks):
         voz_id = (canal.get("voz") or {}).get("voz_id") or None
         idioma = (canal.get("voz") or {}).get("idioma") or "pt"
         falar_cenas = bool((canal.get("producao") or {}).get("falar_cenas", True))
+        producao["reuso"] = {"voz": 0, "imagens": 0, "videos": 0, "montagens": 0, "broll": 0}
         duracoes, arquivos = [], []
         for i, cena in enumerate(cenas, 1):
             if _cancelado(producao, callbacks):
@@ -593,13 +839,21 @@ async def produzir(producao, canal, callbacks):
                 _gravar({"canal_id": cid, "id": pid}, producao)
                 return producao
             destino = voz_dir / ("voz_%02d.wav" % i)
+            chave_v = projeto.chave_voz(cena, canal)
+            meta_v = voz_dir / ("voz_%02d.json" % i)
             if falar_cenas:
-                if destino.is_file() and destino.stat().st_size > 1000:
+                if (destino.is_file() and destino.stat().st_size > 1000
+                        and (not meta_v.is_file() or projeto.meta_confere(meta_v, chave_v))):
                     seg = _duracao_wav(destino)
+                    producao["reuso"]["voz"] += 1
+                    if not meta_v.is_file() and seg:
+                        projeto.gravar_meta(meta_v, chave_v, texto=cena.get("fala") or "", segundos=seg)
                 else:
                     _log(producao, "voz %d/%d" % (i, len(cenas)), callbacks)
                     r = await callbacks["falar"](cena["fala"], destino, voz_id, idioma, ajustes)
                     seg = float(r.get("segundos") or 0)
+                    if seg and destino.is_file():
+                        projeto.gravar_meta(meta_v, chave_v, texto=cena.get("fala") or "", segundos=seg)
             else:
                 seg = max(0.8, len(str(cena["fala"]).split()) / 2.4)
             if not seg:
@@ -617,6 +871,26 @@ async def produzir(producao, canal, callbacks):
         _etapa(producao, "voz", "ok", len(cenas), len(cenas))
         if falar_cenas:
             duracoes = _garantir_minimo_voz(pasta, duracoes, producao.get("duracao_minima"), callbacks)
+        quer_legendas = producao.get("legendas")
+        if quer_legendas is None:
+            quer_legendas = bool((canal.get("producao") or {}).get("legendas", False))
+        if falar_cenas and quer_legendas:
+            _etapa(producao, "legendas", "rodando", 0, len(cenas))
+            for i, cena in enumerate(cenas, 1):
+                arq_voz = voz_dir / ("voz_%02d.wav" % i)
+                if arq_voz.is_file():
+                    try:
+                        palavras = legendas.alinhar(arq_voz, cena.get("fala") or "", idioma)
+                        if palavras:
+                            (voz_dir / ("palavras_%02d.json" % i)).write_text(
+                                json.dumps(palavras, ensure_ascii=False, indent=1), encoding="utf-8")
+                    except Exception as exc:
+                        _log(producao, "alinhamento da cena %d falhou: %s" % (i, exc), callbacks)
+                _etapa(producao, "legendas", "rodando", i, len(cenas))
+                _gravar({"canal_id": cid, "id": pid}, producao)
+            _etapa(producao, "legendas", "ok", len(cenas), len(cenas))
+        else:
+            _etapa(producao, "legendas", "ok", 0, 0)
         falas_video = {}
         if any(c.get("falar") for c in cenas):
             (pasta / "falas").mkdir(parents=True, exist_ok=True)
@@ -633,20 +907,27 @@ async def produzir(producao, canal, callbacks):
                              callbacks)
                         continue
                     destino_fala = pasta / "falas" / ("cena_%02d.mp4" % i)
-                    if destino_fala.is_file() and destino_fala.stat().st_size > 1000:
+                    meta_fala = pasta / "falas" / ("cena_%02d.json" % i)
+                    voz_cena = pasta / "voz" / ("voz_%02d.wav" % i)
+                    chave_fala = projeto.chave_fala(retrato, voz_cena)
+                    if (destino_fala.is_file() and destino_fala.stat().st_size > 1000
+                            and (not meta_fala.is_file() or projeto.meta_confere(meta_fala, chave_fala))):
                         falas_video[i] = destino_fala
+                        producao["reuso"]["videos"] += 1
+                        if not meta_fala.is_file():
+                            projeto.gravar_meta(meta_fala, chave_fala)
                         continue
                     if not callbacks.get("falar_video"):
                         _log(producao, "motor de boca sincronizada indisponível; segue com a imagem", callbacks)
                         continue
                     try:
-                        voz_cena = pasta / "voz" / ("voz_%02d.wav" % i)
                         if not voz_cena.is_file():
                             raise RuntimeError("áudio da cena não encontrado")
                         _log(producao, "boca sincronizada %d/%d (%s)" % (i, len(cenas), nome), callbacks)
                         await callbacks["falar_video"](retrato, voz_cena, destino_fala, "1:1")
                         if destino_fala.is_file():
                             falas_video[i] = destino_fala
+                            projeto.gravar_meta(meta_fala, chave_fala)
                     except Exception as exc:
                         _log(producao, "boca sincronizada da cena %d falhou: %s" % (i, exc), callbacks)
         producao["estado"] = "imagens"
@@ -654,9 +935,18 @@ async def produzir(producao, canal, callbacks):
         escolhidos = [f for f in canais.formatos_ativos(canal) if f["id"] in (producao.get("formatos") or [])]
         if not escolhidos:
             escolhidos = canais.formatos_ativos(canal)
-        quer_legendas = producao.get("legendas")
-        if quer_legendas is None:
-            quer_legendas = bool((canal.get("producao") or {}).get("legendas", False))
+        pr = canal.get("producao") or {}
+        escolhidos = [dict(f,
+            encaixe=pr.get("encaixe") or f.get("encaixe") or "cover",
+            transicao=pr.get("transicao") or f.get("transicao") or "nenhuma",
+            zoom_suave=pr.get("zoom_suave", f.get("zoom_suave", True)),
+            legenda_estilo=pr.get("legenda_estilo") or f.get("legenda_estilo") or "bloco",
+            legenda_posicao=pr.get("legenda_posicao") or f.get("legenda_posicao") or "baixo",
+            bgm=pr.get("bgm") or f.get("bgm") or "",
+            bgm_volume=pr.get("bgm_volume") if pr.get("bgm_volume") is not None else f.get("bgm_volume", 0.12),
+            broll=pr.get("broll", f.get("broll", False)),
+            broll_fonte=pr.get("broll_fonte") or f.get("broll_fonte") or "auto",
+        ) for f in escolhidos]
         if not quer_legendas:
             escolhidos = [dict(f, legendas=False) for f in escolhidos]
         grupos = canais.grupos_de_imagem(canal, escolhidos, producao.get("imagens_por_formato"))
@@ -671,6 +961,42 @@ async def produzir(producao, canal, callbacks):
             if nome:
                 visuais[nome] = str((p or {}).get("visual") or "").strip()
         estilo_prompt = _estilo_com_inspiracao(canal, plano)
+        broll_videos = {}
+        fonte_broll = next((f.get("broll_fonte") for f in escolhidos if f.get("broll")), "auto")
+        quer_broll = any(f.get("broll") for f in escolhidos)
+        if quer_broll and broll.disponivel(fonte_broll):
+            _etapa(producao, "broll", "rodando", 0, len(cenas))
+            proporcao_broll = next(iter(grupos))
+            broll_usados = set()
+            for i, cena in enumerate(cenas, 1):
+                if _cancelado(producao, callbacks):
+                    producao["estado"] = "cancelado"
+                    _etapa(producao, "broll", "cancelado")
+                    _gravar({"canal_id": cid, "id": pid}, producao)
+                    return producao
+                termo = broll.termo_de_cena(cena)
+                try:
+                    arq = await asyncio.to_thread(broll.buscar, termo, proporcao_broll,
+                                                  float(duracoes[i - 1]), fonte_broll)
+                except Exception as exc:
+                    arq = None
+                    _log(producao, "b-roll da cena %d falhou: %s" % (i, exc), callbacks)
+                if arq and arq in broll_usados:
+                    arq = None
+                if arq:
+                    broll_usados.add(arq)
+                    broll_videos[i] = arq
+                    producao["reuso"]["broll"] += 1
+                    _log(producao, "b-roll %d/%d: %s" % (i, len(cenas), Path(arq).name), callbacks)
+                _etapa(producao, "broll", "rodando", i, len(cenas))
+                _gravar({"canal_id": cid, "id": pid}, producao)
+            _etapa(producao, "broll", "ok", len(cenas), len(cenas))
+        else:
+            if quer_broll:
+                _log(producao, "B-roll ligado, mas sem chave Pexels/Pixabay; seguindo com imagens", callbacks)
+            _etapa(producao, "broll", "ok", 0, 0)
+        videos_por_cena = dict(falas_video)
+        videos_por_cena.update(broll_videos)
         feito_img = 0
         for proporcao in grupos:
             cenas_dir = pasta / "cenas" / proporcao.replace(":", "x")
@@ -681,31 +1007,49 @@ async def produzir(producao, canal, callbacks):
                     _etapa(producao, "imagens", "cancelado")
                     _gravar({"canal_id": cid, "id": pid}, producao)
                     return producao
+                if i in broll_videos:
+                    feito_img += 1
+                    _etapa(producao, "imagens", "rodando", feito_img, total_imagens)
+                    _gravar({"canal_id": cid, "id": pid}, producao)
+                    continue
                 destino = cenas_dir / ("cena_%02d.png" % i)
-                if not destino.is_file() or destino.stat().st_size < 1000:
+                nome_p = str(cena.get("personagem") or "").strip()
+                ref = None
+                if nome_p:
+                    try:
+                        retratos = canais.retratos(cid)
+                        arq_ret = (retratos.get(nome_p)
+                                   or {str(k).lower(): v for k, v in retratos.items()}.get(nome_p.lower()))
+                        pasta_retratos = canais.pasta_retratos(cid)
+                        if arq_ret and (pasta_retratos / arq_ret).is_file():
+                            ref = pasta_retratos / arq_ret
+                    except Exception:
+                        ref = None
+                prompt_cena = _prompt_com_personagem(cena, visuais, estilo_prompt)
+                chave_i = projeto.chave_imagem(prompt_cena, proporcao, preset, qualidade, ref)
+                meta_i = cenas_dir / ("cena_%02d.json" % i)
+                if (destino.is_file() and destino.stat().st_size >= 1000
+                        and (not meta_i.is_file() or projeto.meta_confere(meta_i, chave_i))):
+                    producao["reuso"]["imagens"] += 1
+                    if not meta_i.is_file():
+                        projeto.gravar_meta(meta_i, chave_i, prompt=prompt_cena, proporcao=proporcao)
+                elif _cache_imagem(chave_i, destino):
+                    _log(producao, "imagem %s %d/%d do cache" % (proporcao, i, len(cenas)), callbacks)
+                    producao["reuso"]["imagens"] += 1
+                    projeto.gravar_meta(meta_i, chave_i, prompt=prompt_cena, proporcao=proporcao)
+                else:
                     _log(producao, "imagem %s %d/%d" % (proporcao, i, len(cenas)), callbacks)
-                    nome_p = str(cena.get("personagem") or "").strip()
-                    ref = None
-                    if nome_p:
-                        try:
-                            retratos = canais.retratos(cid)
-                            arq_ret = (retratos.get(nome_p)
-                                       or {str(k).lower(): v for k, v in retratos.items()}.get(nome_p.lower()))
-                            pasta_retratos = canais.pasta_retratos(cid)
-                            if arq_ret and (pasta_retratos / arq_ret).is_file():
-                                ref = pasta_retratos / arq_ret
-                        except Exception:
-                            ref = None
-                    await callbacks["gerar_imagem"](_prompt_com_personagem(cena, visuais, estilo_prompt),
-                                                    proporcao, destino, preset, qualidade,
+                    await callbacks["gerar_imagem"](prompt_cena, proporcao, destino, preset, qualidade,
                                                     referencia=ref, sujeito=nome_p,
                                                     visual=visuais.get(nome_p.lower(), ""))
+                    if destino.is_file():
+                        _guardar_cache_imagem(chave_i, destino)
+                        projeto.gravar_meta(meta_i, chave_i, prompt=prompt_cena, proporcao=proporcao)
                 producao["arquivos"]["imagens"].append(str(destino))
                 feito_img += 1
                 _etapa(producao, "imagens", "rodando", feito_img, total_imagens)
                 _gravar({"canal_id": cid, "id": pid}, producao)
         _etapa(producao, "imagens", "ok", total_imagens, total_imagens)
-        videos_por_cena = dict(falas_video)
         videos_movimento = {}
         cenas_mov = [i for i, c in enumerate(cenas, 1)
                      if (c.get("movimento") or {}).get("ativo")
@@ -723,14 +1067,20 @@ async def produzir(producao, canal, callbacks):
                     _gravar({"canal_id": cid, "id": pid}, producao)
                     return producao
                 destino_mov = pasta / "videos" / ("cena_%02d.mp4" % i)
-                if destino_mov.is_file() and destino_mov.stat().st_size > 1000:
-                    videos_movimento[i] = destino_mov
-                    continue
                 imagem_mov = cenas_mov_dir / ("cena_%02d.png" % i)
                 if not imagem_mov.is_file():
                     _log(producao, "movimento da cena %d sem imagem; segue parado" % i, callbacks)
                     continue
                 mov = cenas[i - 1].get("movimento") or {}
+                chave_vid = projeto.chave_video(imagem_mov, mov, grupo_mov)
+                meta_vid = pasta / "videos" / ("cena_%02d.json" % i)
+                if (destino_mov.is_file() and destino_mov.stat().st_size > 1000
+                        and (not meta_vid.is_file() or projeto.meta_confere(meta_vid, chave_vid))):
+                    videos_movimento[i] = destino_mov
+                    producao["reuso"]["videos"] += 1
+                    if not meta_vid.is_file():
+                        projeto.gravar_meta(meta_vid, chave_vid, prompt=mov.get("prompt") or "")
+                    continue
                 try:
                     _log(producao, "movimento %d/%d" % (i, len(cenas_mov)), callbacks)
                     await callbacks["gerar_video"](imagem_mov, destino_mov,
@@ -738,6 +1088,7 @@ async def produzir(producao, canal, callbacks):
                                                    mov.get("duracao") or "2 s", grupo_mov)
                     if destino_mov.is_file():
                         videos_movimento[i] = destino_mov
+                        projeto.gravar_meta(meta_vid, chave_vid, prompt=mov.get("prompt") or "")
                 except Exception as exc:
                     _log(producao, "movimento da cena %d falhou: %s" % (i, exc), callbacks)
         for i, caminho in videos_movimento.items():
@@ -757,8 +1108,19 @@ async def produzir(producao, canal, callbacks):
             _log(producao, "montagem %s" % fmt.get("nome"), callbacks)
             proporcao = _proporcao_do_grupo(producao, fmt, grupos)
             imagens_dir = pasta / "cenas" / proporcao.replace(":", "x")
-            saida = montar_video(pasta, plano, duracoes, fmt, callbacks, imagens_dir=imagens_dir,
-                                 videos_por_cena=videos_por_cena)
+            saida = pasta / "saida" / ("final-%s.mp4" % fmt["id"])
+            chave_m = projeto.chave_montagem(producao, fmt, cenas, imagens_dir, videos_por_cena, voz_dir)
+            meta_m = saida.with_suffix(".json")
+            if (saida.is_file() and saida.stat().st_size > 1000
+                    and (not meta_m.is_file() or projeto.meta_confere(meta_m, chave_m))):
+                _log(producao, "montagem %s reaproveitada" % fmt.get("nome"), callbacks)
+                producao["reuso"]["montagens"] += 1
+                if not meta_m.is_file():
+                    projeto.gravar_meta(meta_m, chave_m)
+            else:
+                saida = montar_video(pasta, plano, duracoes, fmt, callbacks, imagens_dir=imagens_dir,
+                                     videos_por_cena=videos_por_cena)
+                projeto.gravar_meta(meta_m, chave_m)
             chave = canais.chave_formato(fmt)
             arquivo_por_chave[chave] = str(saida)
             producao["arquivos"]["videos"][fmt["id"]] = str(saida)
@@ -776,6 +1138,10 @@ async def produzir(producao, canal, callbacks):
         producao["estado"] = "erro"
         producao["erro"] = str(exc)[:600]
         _log(producao, "erro: " + str(exc)[:400], callbacks)
+    try:
+        projeto.gravar_projeto(producao, pasta)
+    except Exception:
+        pass
     _gravar({"canal_id": cid, "id": pid}, producao)
     return producao
 
@@ -915,7 +1281,7 @@ def limpar_brutos(pasta):
     `producao.json` e `personagens.json` ficam: são pequenos e mantêm o histórico do canal.
     """
     pasta = Path(pasta)
-    alvos = [pasta / "cenas", pasta / "voz", pasta / "tmp",
+    alvos = [pasta / "cenas", pasta / "voz", pasta / "tmp", pasta / "clipes",
              pasta / "voz.wav", pasta / "pausa.wav", pasta / "silencio_final.wav",
              pasta / "voz_com_minimo.wav", pasta / "lista_voz.txt", pasta / "lista_final.txt",
              pasta / "duracoes.txt", pasta / "roteiro.json", pasta / "narracao.txt",
@@ -955,6 +1321,7 @@ def resumo(producao):
         "serie_id": producao.get("serie_id") or "",
         "estilo": producao.get("estilo") or "auto",
         "limpeza": producao.get("limpeza") or {},
+        "reuso": producao.get("reuso") or {},
         "etapas": etapas,
         "progresso": int(round(100.0 * feito / total)) if total else (100 if producao.get("estado") == "concluido" else 0),
         "arquivos": producao.get("arquivos"),
