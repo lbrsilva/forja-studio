@@ -1896,7 +1896,8 @@ function renderPreparar() {
   const and = d.andamento || {};
   const ROTULO = { ok: 'pronto', falta: 'falta', aviso: 'atenção', opcional: 'opcional' };
   const FASE = { baixando: 'Baixando…', conferindo: 'Conferindo a assinatura do arquivo…',
-    descompactando: 'Descompactando…', abrindo: 'Abrindo o instalador…', configurando: 'Configurando…' };
+    descompactando: 'Descompactando…', abrindo: 'Abrindo o instalador…', configurando: 'Configurando…',
+    preparando: 'Preparando as ferramentas (Homebrew)…', ambiente: 'Criando o ambiente Python…' };
   const nFalta = (d.falta || []).length;
   $('#prepSub').textContent = nFalta
     ? T('prep.falta', 'Falta {n} passo(s) para o estúdio funcionar inteiro.', { n: nFalta })
@@ -1959,7 +1960,8 @@ function htmlMotor(d) {
   if (d.motor_instalado) return '';
   const m = d.motor || {};
   const FASES = { baixando: 'Baixando o motor…', conferindo: 'Conferindo a assinatura do arquivo…',
-    descompactando: 'Descompactando (leva alguns minutos)…', complementos: 'Instalando os complementos…' };
+    descompactando: 'Descompactando (leva alguns minutos)…', complementos: 'Instalando os complementos…',
+    preparando: 'Preparando as ferramentas (Homebrew)…', ambiente: 'Criando o ambiente Python (PyTorch)…' };
   if (m.fase && m.fase !== 'pronto') {
     const pc = m.fase === 'baixando' && m.total ? Math.floor((m.baixados / m.total) * 100) : null;
     return `<div class="aprov-aviso motor-andando" role="status">${ic('baixar')}<div style="flex:1">
@@ -1976,7 +1978,7 @@ function htmlMotor(d) {
 async function instalarMotor() {
   const d = G.destino || {}, m = d.motor || {};
   if (!confirm(T('aprov.motorConfirma', 'Instalar o motor (ComfyUI {v}) no disco {u}:?\n\nBaixa {gb} GB e ocupa cerca de {p} GB depois de descompactado. Leva de 10 a 30 minutos, conforme a internet.',
-      { v: m.versao || '', u: d.unidade || '', gb: num(m.gb || 1.8, 1), p: m.precisa_gb || 12 }))) return;
+      { v: m.versao || '', u: d.rotulo || d.unidade || '', gb: num(m.gb || 1.8, 1), p: m.precisa_gb || 12 }))) return;
   try {
     const r = await fetch('/api/motor/instalar', { method: 'POST' });
     const resp = await r.json().catch(() => ({}));
@@ -1992,14 +1994,14 @@ function renderAprovadas() {
   if (bloco.hidden) return;
   if (!G.aprovSel) G.aprovSel = new Set();
   const pg = G.iasProgresso || {}, ocupado = !!(pg.baixando || (pg.fila || []).length);
-  const noPainel = (d.pasta_do_painel || '').slice(0, 1).toUpperCase();
+  const noPainel = d.unidade_do_painel || (d.pasta_do_painel || '').slice(0, 1).toUpperCase();
   const motorAndando = !!((d.motor || {}).fase && d.motor.fase !== 'pronto');
 
   const discos = (d.discos || []).map((k) => {
     const sel = k.unidade === d.unidade;
     return `<button type="button" class="disco${sel ? ' sel' : ''}" data-disco="${esc(k.unidade)}" aria-pressed="${sel}"
       ${d.por_ambiente || ocupado || motorAndando ? 'disabled' : ''}>
-      <b>${esc(k.unidade)}:</b><span>${esc(T('aprov.livres', '{gb} GB livres', { gb: num(k.livre_gb, 0) }))}</span>
+      <b>${esc(k.rotulo || (k.unidade + ':'))}</b><span>${esc(T('aprov.livres', '{gb} GB livres', { gb: num(k.livre_gb, 0) }))}</span>
       <small>${esc(T('aprov.deTotal', 'de {gb} GB', { gb: num(k.total_gb, 0) }))}${k.unidade === noPainel ? ' · ' + esc(TX('onde o painel está')) : ''}</small></button>`;
   }).join('');
 
@@ -2085,7 +2087,7 @@ function renderAprovadas() {
     <div class="aprov-passo"><h3>${esc(TX('1. Em que disco ficam as IAs'))}</h3>
       <div class="discos">${discos}</div>
       <p class="fraco aprov-onde">${esc(TX('As IAs ficam em'))} <code>${esc(d.modelos)}</code></p>
-      ${d.por_ambiente ? `<p class="fraco">${esc(TX('Esta pasta está definida no arquivo caminhos.bat. Para escolher por aqui, apague a linha ESTUDIO_COMFY_DIR de lá.'))}</p>` : ''}
+      ${d.por_ambiente ? `<p class="fraco">${esc(TX('Esta pasta está definida no arquivo de caminhos. Para escolher por aqui, apague a linha ESTUDIO_COMFY_DIR de lá.'))}</p>` : ''}
       ${htmlMotor(d)}
     </div>
     <div class="aprov-passo"><h3>${esc(TX('2. Quais você quer'))}</h3>
@@ -2100,7 +2102,7 @@ function renderAprovadas() {
     <div class="aprov-passo aprov-fim">
       <p class="aprov-total${naoCabe ? ' nao-cabe' : ''}">${nMarcadas
         ? esc(T('aprov.total', '{n} marcada(s): {gb} GB para baixar', { n: nMarcadas, gb: num(soma, 1) }))
-          + (livre != null ? ' · ' + esc(T('aprov.livreNo', '{gb} GB livres no {u}:', { gb: num(livre, 0), u: d.unidade })) : '')
+          + (livre != null ? ' · ' + esc(T('aprov.livreNo', '{gb} GB livres no {u}:', { gb: num(livre, 0), u: d.rotulo || d.unidade })) : '')
           + (naoCabe ? ' — ' + esc(TX('não cabe neste disco')) : '')
         : esc(faltam || faltamO || extras.some((x) => x.pode && !x.instalada) ? TX('Marque o que você quer baixar.') : TX('Tudo que dá para instalar por aqui já está instalado.'))}</p>
       ${ocupado
@@ -2112,7 +2114,7 @@ function renderAprovadas() {
 async function trocarDisco(unidade) {
   const d = G.destino || {};
   if (unidade === d.unidade) return;
-  const noPainel = (d.pasta_do_painel || '').slice(0, 1).toUpperCase();
+  const noPainel = d.unidade_do_painel || (d.pasta_do_painel || '').slice(0, 1).toUpperCase();
   try {
     const r = await fetch('/api/ias/destino', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2123,7 +2125,7 @@ async function trocarDisco(unidade) {
     if (!r.ok) { aviso(resp.erro || 'Não deu para trocar o disco.', 'erro', 9000); return; }
     G.destino = resp;
     renderAprovadas();
-    aviso(resp.recado || T('aprov.trocou', 'Pronto: as IAs passam a ficar no disco {u}:', { u: resp.unidade }), resp.recado ? 'aviso' : 'ok', resp.recado ? 12000 : 5500);
+    aviso(resp.recado || T('aprov.trocou', 'Pronto: as IAs passam a ficar no disco {u}:', { u: resp.rotulo || resp.unidade }), resp.recado ? 'aviso' : 'ok', resp.recado ? 12000 : 5500);
     lerIAs();   // o que esta "instalado" depende do disco: perguntar de novo
   } catch (e) { aviso('Não consegui falar com o estúdio.', 'erro'); }
 }

@@ -44,7 +44,9 @@ except ImportError:  # a tela mostra o aviso; o resto do painel continua funcion
 
 SEM_PEDALBOARD = ('O equalizador precisa do pacote "pedalboard", que não está instalado no Python da ComfyUI. '
                   'Para ativar, rode na pasta ComfyUI_windows_portable: '
-                  'python_embeded\\python.exe -s -m pip install pedalboard')
+                  'python_embeded\\python.exe -s -m pip install pedalboard') if os.name == 'nt' else (
+                  'O equalizador precisa do pacote "pedalboard", que não está instalado no Python da ComfyUI. '
+                  'Para ativar, rode na pasta ComfyUI_mac: venv/bin/python -s -m pip install pedalboard')
 SEM_JANELA = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # A pasta de temporários é a do ambiente (o estúdio aponta TEMP para o _cache dele ao ligar o painel).
 PASTA_TEMP = Path(tempfile.gettempdir())

@@ -21,6 +21,10 @@ SHA-256 que o GitHub publica - sao programas, e programa baixado nao se roda sem
 
 Nenhum dos dois vai dentro do instalador do Forja: o ffmpeg tem 118 MB e o VoiceStudio 222 MB
 mais ~22 GB de modelos, e nem todo mundo quer voz.
+
+No macOS o caminho e outro: ffmpeg e llama.cpp vem pelo Homebrew, o VoiceStudio usa o
+instalador oficial do proprio sistema (instalar_voz.py) e a IA de texto baixa so os .gguf,
+porque o llama-server do Homebrew ja roda no chip da Apple.
 """
 import hashlib
 import os
@@ -32,6 +36,8 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+
+import plataforma
 
 AQUI = Path(__file__).resolve().parent
 RAIZ = AQUI.parent
@@ -116,7 +122,19 @@ def ativar_ffmpeg():
         if str(FFMPEG_DIR).lower() not in atual.lower():
             os.environ["PATH"] = str(FFMPEG_DIR) + os.pathsep + atual
         return True
+    if plataforma.MAC:
+        plataforma.completar_path()
+        return bool(shutil.which("ffmpeg"))
     return False
+
+
+def _brew():
+    if not plataforma.MAC:
+        return None
+    for p in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew"):
+        if Path(p).is_file():
+            return p
+    return shutil.which("brew")
 
 
 def progresso():
@@ -179,6 +197,21 @@ def _baixar(info, destino):
 
 
 def _instalar_ffmpeg():
+    if plataforma.MAC:
+        if shutil.which("ffmpeg"):
+            ativar_ffmpeg()
+            return "O ffmpeg ja esta instalado."
+        brew = _brew()
+        if not brew:
+            raise OSError("Nao achei o Homebrew. Instale em https://brew.sh e clique de novo.")
+        _fase(fase="baixando", total=0)
+        r = subprocess.run([brew, "install", "ffmpeg"], capture_output=True, text=True, errors="replace")
+        if r.returncode != 0:
+            raise OSError("O Homebrew nao conseguiu instalar o ffmpeg: "
+                          + (r.stderr or r.stdout or "").strip()[-300:])
+        _fase(fase="configurando")
+        ativar_ffmpeg()
+        return "O ffmpeg esta instalado (pelo Homebrew)."
     zip_local = BAIXADOS / FFMPEG["nome"]
     if not zip_local.is_file():
         _baixar(FFMPEG, zip_local)
@@ -199,7 +232,32 @@ def _instalar_ffmpeg():
     return "O ffmpeg esta instalado na pasta do estudio."
 
 
+def _voz_por_instalar_voz():
+    """No macOS e no Linux o instalador oficial ja e um .zip/.AppImage: quem sabe fazer isso e o
+    instalar_voz.py. Aqui so acompanhamos o estado dele para a tela do Inicio mostrar a barra."""
+    import instalar_voz
+    entrou, recado = instalar_voz.iniciar()
+    if not entrou:
+        raise OSError(recado)
+    fase = {"procurando": "baixando", "baixando": "baixando", "conferindo": "conferindo",
+            "instalando": "descompactando", "pronto": "abrindo"}
+    while True:
+        e = instalar_voz.estado()
+        _fase(fase=fase.get(e.get("fase"), "baixando"), baixados=e.get("baixados") or 0,
+              total=e.get("total") or 0, arquivo=e.get("arquivo"))
+        if e.get("fase") in ("pronto", "erro"):
+            break
+        if _parar:
+            raise _Parado()
+        time.sleep(0.5)
+    if e.get("fase") == "erro":
+        raise OSError(e.get("mensagem") or "Nao consegui instalar o VoiceStudio.")
+    return e.get("mensagem") or "VoiceStudio instalado."
+
+
 def _baixar_voicestudio():
+    if not plataforma.WIN:
+        return _voz_por_instalar_voz()
     exe = BAIXADOS / VOICESTUDIO["nome"]
     if not exe.is_file():
         _baixar(VOICESTUDIO, exe)
@@ -221,7 +279,11 @@ def _baixar_voicestudio():
 def texto_falta():
     """(bytes que ainda faltam baixar, lista do que falta) da IA de texto."""
     falta, nomes = 0, []
+    if plataforma.MAC and not shutil.which("llama-server"):
+        nomes.append("llama.cpp (Homebrew)")
     for p in TEXTO["programas"]:
+        if plataforma.MAC:
+            continue        # no macOS o llama.cpp vem pelo Homebrew, nao pelo zip do Windows
         marca = "llama-server.exe" if p["nome"].startswith("llama-") else "cudart64_13.dll"
         if not (LLAMA_DIR / p["para"] / marca).is_file():
             falta += p["bytes"]
@@ -251,6 +313,21 @@ def _instalar_texto():
                       "Libere espaco ou escolha outro disco em \"IAs aprovadas\"."
                       % ((falta - meio + 2 * 1024 ** 3 - livre) / 1024 ** 3, pasta.anchor,
                          (falta - meio) / 1024 ** 3))
+    if plataforma.MAC and not shutil.which("llama-server"):
+        brew = _brew()
+        if not brew:
+            raise OSError("Nao achei o Homebrew. Instale em https://brew.sh e clique de novo.")
+        _fase(fase="baixando", arquivo="llama.cpp (Homebrew)")
+        r = subprocess.run([brew, "install", "llama.cpp"], capture_output=True, text=True, errors="replace")
+        if r.returncode != 0:
+            raise OSError("O Homebrew nao conseguiu instalar o llama.cpp: "
+                          + (r.stderr or r.stdout or "").strip()[-300:])
+        plataforma.completar_path()
+        achado = shutil.which("llama-server")
+        if achado:
+            import texto
+            texto.EXE_GPU = Path(achado)
+            texto.EXE_CPU = Path(achado)
     _base = 0
     for p in TEXTO["programas"]:
         if p["nome"] not in nomes:
@@ -306,8 +383,8 @@ def instalar(qual):
     global _parar
     if qual not in _COMO:
         return False, "Nao sei instalar isso."
-    if os.name != "nt":
-        return False, "Esta instalacao automatica so existe no Windows."
+    if not (plataforma.WIN or plataforma.MAC):
+        return False, "Esta instalacao automatica so existe no Windows e no macOS."
     with _trava:
         if _estado["id"]:
             return False, "Ja ha um download em andamento. Espere terminar."

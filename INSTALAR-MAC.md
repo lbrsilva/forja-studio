@@ -15,12 +15,18 @@ A memória do Mac é unificada: a "placa de vídeo" é a própria RAM, e o Metal
 
 ## Instalar
 
+Duas formas, e as duas podem ser repetidas sem estragar nada.
+
+**Pelo programa:** abra `Forja Studio.command` (só precisa do Homebrew) e use os botões de **Preparar esta máquina**, no Início. O painel instala o motor (ComfyUI), o ffmpeg, o llama.cpp e o VoiceStudio por ali, com barra de progresso. Os modelos de IA vêm depois, em **IAs aprovadas pelo projeto**.
+
+**Pelo script:** roda a mesma coisa de uma vez só, no Terminal:
+
 ```bash
 cd forja-studio
 ./instalar-mac.sh
 ```
 
-O script pode ser rodado de novo sem estragar nada. Ele instala, nesta ordem:
+O script instala, nesta ordem:
 
 1. `python@3.12`, `git`, `ffmpeg` e `llama.cpp` pelo Homebrew;
 2. a ComfyUI em `ComfyUI_mac/ComfyUI`;
@@ -60,5 +66,8 @@ No Mac um único `llama-server` (o do Homebrew, com Metal) atende os dois modos,
 ## Limites conhecidos
 
 - Os presets e workflows foram ajustados no Windows com placa NVIDIA. Este port cobre o painel, a conta, os serviços e a instalação; a geração em si depende dos nós da ComfyUI terem suporte a Metal, e eu não testei geração de imagem ou vídeo (isso exige conta e modelos baixados). O tempo mostrado no painel vem de medidas do Windows, e modelos grandes (vídeo) podem não caber na sua memória. A conferência de memória do painel usa o teto de 3/4 da RAM.
-- O VoiceStudio é um aplicativo de Windows. No Mac a narração local usa o Chatterbox pela ComfyUI.
-- Hermes, os painéis de música (YuE2, ACE-Step) e os scripts do Canal automático (`fazer_tudo.py`) são extras da máquina de origem e só aparecem se as pastas existirem.
+- O VoiceStudio tem versão oficial para Mac (Apple Silicon): o botão de instalação baixa o `.zip` certo para a sua máquina, confere o SHA-256 e abre o app.
+- Hermes e a automação da tela invisível funcionam no Mac com as mesmas pastas do Windows: `Hermes Agent/bin/hermes` para o Hermes e `projetos/fz_contexto/plano_sequencia.py` para a automação. O encerramento dos processos usa `psutil` nos dois sistemas, sem `taskkill`, `wmic` ou PowerShell.
+- A automação usa qualquer navegador Chromium instalado: **Chrome (preferido)**, Edge, Brave, Chromium, Vivaldi ou Opera. A escolha fica em **Configurações → Navegador da automação**, no fim da página inicial. Safari não serve: ele não aceita `--user-data-dir`/`--headless` e precisaria de safaridriver, que é outra automação. O script recebe `ESTUDIO_NAVEGADOR` (id), `ESTUDIO_NAVEGADOR_BIN` (executável) e `ESTUDIO_NAVEGADOR_MARCADOR` (nome do perfil) no ambiente.
+- O painel de música, a IA de texto e os scripts do Canal automático também funcionam no Mac.
+- Formatos do Mac nos envios: foto `.heic`/`.heif` é convertida para PNG pelo `sips`; vídeo `.mov`/`.m4v` e áudio `.m4a`/`.aiff`/`.caf` passam pelo ffmpeg; a aba Música aceita AIFF, CAF e M4B além de WAV/MP3/FLAC/OGG/M4A/AAC/OPUS.

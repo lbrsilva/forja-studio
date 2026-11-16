@@ -1782,6 +1782,25 @@ async def converter(args, saida):
         tmp.unlink(missing_ok=True)
 
 
+async def _heic_para_png(origem, destino):
+    """O iPhone manda HEIC e a ComfyUI não abre. No macOS o `sips` do próprio sistema converte;
+    fora dele, tenta o ffmpeg (libheif). Devolve True se o PNG ficou pronto."""
+    if plataforma.MAC:
+        tmp = destino.with_name(f"estudio_tmp_{uuid.uuid4().hex}.png")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "/usr/bin/sips", "-s", "format", "png", str(origem), "--out", str(tmp),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await proc.wait()
+            if proc.returncode == 0 and tmp.is_file() and tmp.stat().st_size > 0:
+                os.replace(tmp, destino)
+                return True
+            return False
+        finally:
+            tmp.unlink(missing_ok=True)
+    return await converter(["-i", str(origem)], destino)
+
+
 async def api_upload(req):
     """Guarda o arquivo em ComfyUI\\input com o nome tirado do CONTEÚDO (estudio_<sha1 10>): o mesmo arquivo enviado
     de novo reaproveita o que já está no HD, sem cópia repetida. Áudio e vídeo ficam só na versão convertida
@@ -1822,6 +1841,14 @@ async def api_upload(req):
                 raise web.HTTPBadRequest(text="Não consegui converter o vídeo (ffmpeg).")
             return web.json_response({"nome": conv.name, "url": f"/api/entrada/{conv.name}",
                                       **await info_video(conv.name)})
+        if tipo == "imagem" and ext in (".heic", ".heif"):
+            png = inp / f"{base}.png"
+            if png.is_file():
+                tocar(png)
+            elif not await _heic_para_png(tmp, png):
+                raise web.HTTPBadRequest(text="Não consegui ler esse HEIC. Exporte como PNG ou JPEG "
+                                              "e envie de novo.")
+            return web.json_response({"nome": png.name, "url": f"/api/entrada/{png.name}"})
         destino = inp / f"{base}{ext}"
         if destino.is_file():
             tocar(destino)
@@ -2358,7 +2385,13 @@ PEDIDO_CONTEXTO = (
 
 
 def py_dos_scripts():
-    """O `py` do Windows (tem requests); o python_embeded não acha os módulos dos scripts do fz_clipe."""
+    """O `py` do Windows (tem requests); o python_embeded não acha os módulos dos scripts do fz_clipe.
+    No macOS, o venv da ComfyUI e o Python que tem as bibliotecas dos scripts."""
+    if plataforma.MAC:
+        py = plataforma.python_comfy(ROOT)
+        if py.is_file():
+            return str(py)
+        return shutil.which("python3") or sys.executable
     if not plataforma.WIN:
         return shutil.which("python3") or sys.executable
     c = shutil.which("py")
@@ -2407,6 +2440,44 @@ async def textos_do_contexto(job):
     return json_da_ia(res.get("texto") or "")
 
 
+MARCADOR_NAVEGADOR = "edge_comfy_headless"   # nome do perfil que o plano-sequencia usa
+MARCADORES_NAVEGADOR = (MARCADOR_NAVEGADOR, "forja_comfy_headless")
+SCRIPT_DA_AUTOMACAO = FZ_CONTEXTO / "plano_sequencia.py"
+
+
+def navegador_escolhido():
+    """O navegador da automacao: o escolhido em Configuracoes, se instalado; senao Chrome, Edge, Brave..."""
+    return plataforma.navegador_escolhido((ler_pref().get("navegador") or "").strip())
+
+
+def matar_telas_do_navegador():
+    """Encerra os processos do navegador que carregam o perfil da tela invisivel do plano-sequencia.
+
+    O marcador vale para qualquer Chromium: Chrome, Edge, Brave, Chromium, Vivaldi ou Opera.
+    O que identifica a tela do estudio e o perfil no comando, nao o nome do executavel.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    matou = 0
+    for p in psutil.process_iter(["cmdline"]):
+        try:
+            cmd = " ".join(p.info.get("cmdline") or [])
+            if not any(m in cmd for m in MARCADORES_NAVEGADOR):
+                continue
+            for filho in p.children(recursive=True):
+                try:
+                    filho.kill()
+                except psutil.Error:
+                    pass
+            p.kill()
+            matou += 1
+        except psutil.Error:
+            continue
+    return matou
+
+
 async def encerrar_contexto(proc):
     """Cancelar/erro: mata o script, a tela invisível dele e interrompe o que ele já pôs na ComfyUI."""
     if proc and proc.returncode is None:
@@ -2416,17 +2487,7 @@ async def encerrar_contexto(proc):
         except Exception:
             pass
         try:
-            if not plataforma.WIN:
-                import psutil
-                for p in psutil.process_iter(["cmdline"]):
-                    if "edge_comfy_headless" in " ".join(p.info.get("cmdline") or []):
-                        p.kill()
-                raise OSError("sem powershell")
-            await asyncio.create_subprocess_exec(
-                "powershell", "-NoProfile", "-Command",
-                "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object { $_.CommandLine -match "
-                "'edge_comfy_headless' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.to_thread(matar_telas_do_navegador)
         except Exception:
             pass
     try:
@@ -2487,9 +2548,19 @@ async def processar_contexto(job):
             job["fz_projeto"] = str(arq)
             job["prog"]["fase"] = "Começando: ficha do personagem e envio pela tela da ComfyUI"
             salvar()
+            if not SCRIPT_DA_AUTOMACAO.is_file():
+                raise RuntimeError("A automação do navegador não está instalada: falta o arquivo "
+                                   + str(SCRIPT_DA_AUTOMACAO) + ".")
+            nav = navegador_escolhido()
+            if not nav:
+                raise RuntimeError("A automação precisa de um navegador Chromium instalado: "
+                                   "Chrome, Edge, Brave ou Chromium. Instale um e tente de novo.")
             proc = await asyncio.create_subprocess_exec(
-                py_dos_scripts(), str(FZ_CONTEXTO / "plano_sequencia.py"), str(arq), cwd=str(ROOT),
-                env=ambiente_e(), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                py_dos_scripts(), str(SCRIPT_DA_AUTOMACAO), str(arq), cwd=str(ROOT),
+                env=ambiente_e({"ESTUDIO_NAVEGADOR": nav["id"],
+                                "ESTUDIO_NAVEGADOR_BIN": nav["caminho"],
+                                "ESTUDIO_NAVEGADOR_MARCADOR": MARCADOR_NAVEGADOR}),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             job["fz_pid"] = proc.pid
             t0, visto = time.time(), None
             while proc.returncode is None:
@@ -3213,7 +3284,8 @@ _NVSMI = {"t": 0.0, "d": None}
 CONFIG = DADOS / "config.json"
 # "canal_dir": a pasta do canal da aba Canal automático. Vazio = a padrão do canal.py.
 # É um ajuste de propósito: a esteira serve a qualquer canal, não só ao de quem a escreveu.
-PREF_PADRAO = {"texto_sempre_ligada": False, "canal_dir": "", "hermes_dir": "", "pasta_ias": ""}  # economia de memória (pedido do dono): liga sozinha ao usar
+PREF_PADRAO = {"texto_sempre_ligada": False, "canal_dir": "", "hermes_dir": "", "pasta_ias": "",
+               "navegador": ""}  # economia de memória (pedido do dono): liga sozinha ao usar
 try:
     AUTO_TEXTO_S = float(os.environ.get("ESTUDIO_TEXTO_AUTO_S") or 20)
 except ValueError:
@@ -3685,11 +3757,10 @@ def _encerrar_voz():
     import psutil
     porta = _porta_url(voz_studio.URL) or 3900
     n = 0
-    for c in psutil.net_connections(kind="tcp"):
-        if not (c.laddr and c.laddr.port == porta and c.status == psutil.CONN_LISTEN and c.pid):
-            continue
+    # plataforma.pids_escutando usa lsof no macOS: psutil.net_connections exige root la.
+    for pid in plataforma.pids_escutando(porta):
         try:
-            proc = psutil.Process(c.pid)
+            proc = psutil.Process(pid)
             linha = " ".join(proc.cmdline()).lower()
             if not ("voicestudio" in linha or "omnivoice" in linha or ("backend" in linha and "main.py" in linha)):
                 print(f"[estúdio] porta {porta}: não é o VoiceStudio ({linha[:120]}); não mexi.", flush=True)
@@ -3863,27 +3934,66 @@ def estado_telegram():
 
 
 def _processos_hermes():
-    """lista os processos do Hermes (para saber se o gateway está no ar)"""
-    if not plataforma.WIN:
-        try:
-            import psutil
-            return [{"cmd": " ".join(p.info.get("cmdline") or [])} for p in psutil.process_iter(["name", "cmdline"])
-                    if p.info.get("name") == "hermes"]
-        except Exception:
-            return []
+    """lista os processos do Hermes (para saber se o gateway está no ar). psutil nos dois sistemas:
+    o wmic saiu do Windows 11 e no macOS nao existe."""
     try:
-        r = subprocess.run(["wmic", "process", "where", "name='hermes.exe'", "get", "CommandLine"],
-                           capture_output=True, text=True, errors="replace", timeout=15,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return [{"cmd": l.strip()} for l in r.stdout.splitlines() if l.strip()]
-    except (OSError, subprocess.SubprocessError):
+        import psutil
+    except ImportError:
         return []
+    alvo = plataforma.exe("hermes").lower()
+    fora = []
+    for p in psutil.process_iter(["name", "cmdline"]):
+        if (p.info.get("name") or "").lower() == alvo:
+            fora.append({"cmd": " ".join(p.info.get("cmdline") or [])})
+    return fora
 
 
 def _processos_hermes_vivos(palavra):
     import psutil
+    alvo = plataforma.exe("hermes").lower()
     return [p for p in psutil.process_iter(["name", "cmdline"])
-            if p.info.get("name") == "hermes" and palavra in " ".join(p.info.get("cmdline") or [])]
+            if (p.info.get("name") or "").lower() == alvo
+            and palavra in " ".join(p.info.get("cmdline") or [])]
+
+
+def _matar_hermes(palavra):
+    """Encerra o Hermes daquela funcao (dashboard/gateway) e os filhos, sem taskkill nem .bat."""
+    import psutil
+    matou = 0
+    for p in _processos_hermes_vivos(palavra):
+        try:
+            for filho in p.children(recursive=True):
+                try:
+                    filho.kill()
+                except psutil.Error:
+                    pass
+            p.kill()
+            matou += 1
+        except psutil.Error:
+            continue
+    return matou
+
+
+def _matar_hermes_na_porta(porta):
+    """O dashboard pode subir com outro argumento: fecha o hermes que estiver escutando a porta dele."""
+    import psutil
+    alvo = plataforma.exe("hermes").lower()
+    matou = 0
+    for pid in plataforma.pids_escutando(porta):
+        try:
+            p = psutil.Process(pid)
+            if (p.name() or "").lower() != alvo:
+                continue
+            for filho in p.children(recursive=True):
+                try:
+                    filho.kill()
+                except psutil.Error:
+                    pass
+            p.kill()
+            matou += 1
+        except psutil.Error:
+            continue
+    return matou
 
 
 def telegram_ligar():
@@ -3905,12 +4015,7 @@ def telegram_desligar():
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         pass
-    if not plataforma.WIN:
-        for p in _processos_hermes_vivos("gateway"):
-            p.kill()
-        return
-    subprocess.run(["taskkill", "/F", "/FI", "IMAGENAME eq hermes.exe", "/FI", "WINDOWTITLE eq *gateway*"],
-                   capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    _matar_hermes("gateway")
 
 
 def hermes_ligar():
@@ -3923,11 +4028,10 @@ def hermes_ligar():
 
 def hermes_desligar():
     HERMES_LIGANDO["desde"] = 0.0
+    _matar_hermes("dashboard")
+    _matar_hermes_na_porta(HERMES_PORTA)
     bat = HERMES_DIR / "Desligar Hermes.bat"
-    if not plataforma.WIN:
-        for p in _processos_hermes_vivos("dashboard"):
-            p.kill()
-    elif bat.exists():
+    if plataforma.WIN and bat.exists():     # o .bat do projeto fecha o que o dashboard abriu
         try:
             subprocess.run(["cmd", "/c", str(bat)], cwd=str(HERMES_DIR),
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=30)
@@ -4305,6 +4409,30 @@ async def api_preferencias(req):
     return web.json_response(ler_pref())
 
 
+async def api_navegadores(req):
+    """GET: os navegadores Chromium instalados e o escolhido. POST {"id": "chrome"}: escolhe.
+
+    A automacao da tela invisivel aceita Chrome, Edge, Brave, Chromium, Vivaldi e Opera.
+    Vazio ("") volta para a ordem de preferencia (Chrome antes do Edge).
+    """
+    if req.method == "POST":
+        try:
+            b = await req.json()
+        except ValueError:
+            b = {}
+        nid = str((b or {}).get("id") or "").strip()
+        if nid and not plataforma.navegador_por_id(nid):
+            return web.json_response({"erro": "Esse navegador não está instalado nesta máquina."},
+                                     status=400)
+        try:
+            await asyncio.to_thread(gravar_pref, {"navegador": nid})
+        except OSError as exc:
+            return web.json_response({"erro": f"Não consegui gravar a preferência: {exc}"}, status=500)
+    escolhido = navegador_escolhido()
+    return web.json_response({"opcoes": plataforma.navegadores_instalados(),
+                              "escolhido": escolhido["id"] if escolhido else None})
+
+
 async def ligar_texto_ao_iniciar():
     """Preferência 'Deixar sempre ligada ao abrir o estúdio': liga a IA de texto no processador ~20 s depois de
     iniciar, em segundo plano (não atrasa o resto)."""
@@ -4572,6 +4700,24 @@ APROVADAS = ("krea2", "minimax_h3_r2v", "apresentador", "qwen_image_2512",
 def _discos():
     """Os discos FIXOS desta maquina, com o espaco de cada um. Pendrive e rede ficam fora."""
     fora = []
+    if plataforma.MAC:
+        vistos = set()
+        for raiz in [Path("/")] + sorted(p for p in Path("/Volumes").iterdir() if p.is_dir()):
+            nome = "Macintosh HD" if raiz == Path("/") else raiz.name
+            if nome.startswith(".") or nome == "Recovery":
+                continue
+            try:
+                real = raiz.resolve()
+                if real in vistos:
+                    continue
+                vistos.add(real)
+                uso = shutil.disk_usage(raiz)
+            except OSError:
+                continue
+            fora.append({"unidade": nome, "rotulo": nome, "caminho": str(raiz),
+                         "livre_gb": round(uso.free / 1024 ** 3, 1),
+                         "total_gb": round(uso.total / 1024 ** 3, 1)})
+        return fora
     if os.name != "nt":
         return fora
     import ctypes
@@ -4589,18 +4735,42 @@ def _discos():
     return fora
 
 
+def _disco_de(pasta):
+    """O item de _discos() que contem a pasta (o mais especifico), ou None."""
+    p = Path(pasta)
+    melhor = None
+    for d in _discos():
+        raiz = Path(d.get("caminho") or "") if d.get("caminho") else None
+        if raiz is None:
+            if p.anchor[:1].upper() == d["unidade"]:
+                return d
+            continue
+        try:
+            p.relative_to(raiz)
+        except ValueError:
+            continue
+        if melhor is None or len(str(raiz)) > len(str(Path(melhor["caminho"]))):
+            melhor = d
+    return melhor
+
+
 def _estado_do_destino(recado=None):
     pref = (ler_pref().get("pasta_ias") or "").strip()
     por_ambiente = bool(os.environ.get("ESTUDIO_COMFY_DIR"))
+    disco = _disco_de(COMFY_DIR)
+    disco_painel = _disco_de(ROOT)
     return {"ok": True, "recado": recado,
             "modelos": str(COMFY_DIR / "models"),
-            "unidade": (COMFY_DIR.anchor or "")[:1].upper(),
+            "unidade": disco["unidade"] if disco else (COMFY_DIR.anchor or "")[:1].upper(),
+            "rotulo": disco.get("rotulo") if disco else None,
+            "unidade_do_painel": disco_painel["unidade"] if disco_painel else None,
             "padrao": not pref and not por_ambiente,
             "por_ambiente": por_ambiente,
             "motor_instalado": (COMFY_DIR / "main.py").is_file(),
             # o que a tela precisa para oferecer "Instalar o motor" e mostrar o andamento
-            "motor": dict(motor.progresso(), versao=motor.VERSAO,
-                          gb=round(motor.BYTES / 1024 ** 3, 1), precisa_gb=motor.PRECISA_GB),
+            "motor": dict(motor.progresso(), versao=motor.versao(),
+                          gb=round(motor.bytes_estimados() / 1024 ** 3, 1),
+                          precisa_gb=motor.precisa_gb()),
             "pasta_do_painel": str(ROOT),
             "nome_da_pasta": NOME_PASTA_IAS,
             "discos": _discos()}
@@ -4615,9 +4785,10 @@ async def api_ias_destino(req):
     if req.method != "POST":
         return web.json_response(_estado_do_destino())
     if os.environ.get("ESTUDIO_COMFY_DIR"):
-        return web.json_response({"erro": "A pasta da ComfyUI está definida no arquivo caminhos.bat "
+        arq = "caminhos.bat" if plataforma.WIN else "caminhos.sh"
+        return web.json_response({"erro": f"A pasta da ComfyUI está definida no arquivo {arq} "
                                   "(ESTUDIO_COMFY_DIR). Para escolher pela tela, apague essa linha "
-                                  "do caminhos.bat e abra o estúdio de novo."}, status=409)
+                                  f"do {arq} e abra o estúdio de novo."}, status=409)
     pg = ias.progresso()
     if pg.get("baixando") or pg.get("fila"):
         return web.json_response({"erro": "Há um download em andamento. Espere terminar, ou pare o "
@@ -4631,6 +4802,12 @@ async def api_ias_destino(req):
         b = {}
     if b.get("padrao"):
         base = ""
+    elif plataforma.MAC:
+        unidade = str(b.get("unidade") or "").strip()
+        disco = next((d for d in _discos() if d["unidade"] == unidade), None)
+        if not disco:
+            return web.json_response({"erro": "Escolha um dos discos da lista."}, status=400)
+        base = str(Path(disco["caminho"]) / NOME_PASTA_IAS)
     else:
         unidade = str(b.get("unidade") or "").strip().upper().rstrip(":\\/")
         if not re.fullmatch(r"[A-Z]", unidade):
@@ -4638,6 +4815,7 @@ async def api_ias_destino(req):
         if unidade not in {d["unidade"] for d in _discos()}:
             return web.json_response({"erro": f"Não achei o disco {unidade}: nesta máquina."}, status=400)
         base = f"{unidade}:\\{NOME_PASTA_IAS}"
+    if base:
         # provar que da para escrever ANTES de gravar a escolha: disco protegido ou cheio
         # apareceria so no meio do primeiro download, horas depois.
         try:
@@ -4651,7 +4829,8 @@ async def api_ias_destino(req):
     antiga = COMFY_DIR / "models"
     gravar_pref({"pasta_ias": base})
     COMFY_DIR = _comfy_dir_inicial()
-    PY_VIDEO = COMFY_DIR.parent / "python_embeded" / "python.exe"
+    PY_VIDEO = (COMFY_DIR.parent / "python_embeded" / "python.exe" if plataforma.WIN
+                else COMFY_DIR.parent / "venv" / "bin" / "python")
     ias.MODELOS = COMFY_DIR / "models"
     voz_studio.OUTRAS[:] = [_pasta_da_voz()]
     _apontar_o_texto()
@@ -4697,11 +4876,23 @@ async def api_requisitos(req):
         nv = None
     if nv:
         gb = nv[1] / 1024 ** 3
-        itens.append({"id": "placa", "nome": "Placa de vídeo NVIDIA",
-                      "estado": "ok" if gb >= 11.5 else "aviso",
-                      "resumo": f"{nv[0]} — {gb:.0f} GB" + ("" if gb >= 11.5 else
-                                " (com menos de 12 GB só a parte de imagem costuma caber)"),
-                      "passos": []})
+        if plataforma.MAC:
+            itens.append({"id": "placa", "nome": "Chip (GPU)",
+                          "estado": "ok" if gb >= 16 else "aviso",
+                          "resumo": f"{nv[0]} — {gb:.0f} GB de memória unificada" + ("" if gb >= 16 else
+                                    " (com menos de 16 GB só as IAs de imagem mais leves cabem)"),
+                          "passos": []})
+        else:
+            itens.append({"id": "placa", "nome": "Placa de vídeo NVIDIA",
+                          "estado": "ok" if gb >= 11.5 else "aviso",
+                          "resumo": f"{nv[0]} — {gb:.0f} GB" + ("" if gb >= 11.5 else
+                                    " (com menos de 12 GB só a parte de imagem costuma caber)"),
+                          "passos": []})
+    elif plataforma.MAC:
+        itens.append({"id": "placa", "nome": "Chip (GPU)", "estado": "falta",
+                      "resumo": "Não encontrei o chip da Apple. Em Mac Intel as IAs rodam só no processador (muito lento).",
+                      "passos": ["Recomendado: um Mac com Apple Silicon (M1 ou mais novo).",
+                                 "Abra o estúdio de novo depois de atualizar o macOS."]})
     else:
         itens.append({"id": "placa", "nome": "Placa de vídeo NVIDIA", "estado": "falta",
                       "resumo": "Não encontrei uma placa NVIDIA com o driver instalado. Sem ela as IAs não geram.",
@@ -4713,23 +4904,32 @@ async def api_requisitos(req):
 
     # ---- 2. o ffmpeg
     onde = requisitos.ffmpeg_onde()
+    if plataforma.MAC:
+        passos_ffmpeg = ["Clique em Instalar: o painel instala o ffmpeg pelo Homebrew.",
+                         "Não precisa de conta nem de senha de administrador (se o Homebrew já estiver configurado)."]
+        rotulo_ffmpeg = "Instalar o ffmpeg"
+    else:
+        passos_ffmpeg = ["Clique em Instalar: o painel baixa (118 MB), confere "
+                         "o arquivo e põe na pasta do estúdio. Não mexe no Windows."]
+        rotulo_ffmpeg = "Instalar o ffmpeg — 118 MB"
     itens.append({"id": "ffmpeg", "nome": "ffmpeg (converte áudio e vídeo)",
                   "estado": "ok" if onde else "falta",
                   "resumo": ("Instalado." if onde else
                              "Falta. Sem ele o painel não consegue ler os áudios e vídeos que você envia."),
-                  "passos": [] if onde else ["Clique em Instalar: o painel baixa (118 MB), confere "
-                                             "o arquivo e põe na pasta do estúdio. Não mexe no Windows."],
+                  "passos": [] if onde else passos_ffmpeg,
                   **({} if onde else {"botao": {"acao": "instalar", "qual": "ffmpeg",
-                                                "rotulo": "Instalar o ffmpeg — 118 MB"}})})
+                                                "rotulo": rotulo_ffmpeg}})})
 
     # ---- 3. o motor de imagem e video
     tem_motor = (COMFY_DIR / "main.py").is_file()
+    passos_motor = ["Logo abaixo, em \"IAs aprovadas pelo projeto\", escolha o disco.",
+                    ("Clique em \"Instalar o motor\" (usa o Homebrew, o git e um ambiente Python)."
+                     if plataforma.MAC else "Clique em \"Instalar o motor\" (1,8 GB).")]
     itens.append({"id": "motor", "nome": "Motor de imagem e vídeo (ComfyUI)",
                   "estado": "ok" if tem_motor else "falta",
                   "resumo": (f"Instalado em {COMFY_DIR.parent}." if tem_motor else
                              "Falta. É ele que gera as imagens e os vídeos."),
-                  "passos": [] if tem_motor else ["Logo abaixo, em \"IAs aprovadas pelo projeto\", escolha o disco.",
-                                                  "Clique em \"Instalar o motor\" (1,8 GB)."],
+                  "passos": [] if tem_motor else passos_motor,
                   **({} if tem_motor else {"botao": {"acao": "ir", "para": "blocoAprovadas",
                                                      "rotulo": "Ir para a instalação do motor"}})})
 
@@ -4769,16 +4969,23 @@ async def api_requisitos(req):
         itens.append({"id": "voz", "nome": "Motor de voz (VoiceStudio)", "estado": "opcional",
                       "resumo": "Não instalado. É o que faz a narração local, de graça. Opcional: sem ele "
                                 "só a aba Narração fica parada.",
-                      "passos": [f"Clique em Baixar: o painel baixa o instalador oficial (222 MB, versão {v['versao']}), "
-                                 "confere o arquivo e abre.",
-                                 "No instalador do VoiceStudio, avance até o fim. A pasta já vem "
-                                 "preenchida no disco que você escolheu para as IAs.",
-                                 "Abra o VoiceStudio uma vez: na primeira abertura ele baixa os modelos de voz (cerca de 22 GB).",
-                                 "Dentro dele, troque o motor para o VoxCPM 2. O que vem ligado (OmniVoice) "
-                                 "tem licença que NÃO permite vídeo monetizado.",
-                                 "Volte aqui: esta linha fica verde."],
+                      "passos": ([f"Clique em Baixar: o painel baixa o VoiceStudio oficial (222 MB, versão {v['versao']}), "
+                                  "confere o arquivo e descompacta em _ferramentas/VoiceStudio.",
+                                  "Abra o VoiceStudio uma vez: na primeira abertura ele baixa os modelos de voz (cerca de 22 GB).",
+                                  "Dentro dele, troque o motor para o VoxCPM 2. O que vem ligado (OmniVoice) "
+                                  "tem licença que NÃO permite vídeo monetizado.",
+                                  "Volte aqui: esta linha fica verde."] if plataforma.MAC else
+                                 [f"Clique em Baixar: o painel baixa o instalador oficial (222 MB, versão {v['versao']}), "
+                                  "confere o arquivo e abre.",
+                                  "No instalador do VoiceStudio, avance até o fim. A pasta já vem "
+                                  "preenchida no disco que você escolheu para as IAs.",
+                                  "Abra o VoiceStudio uma vez: na primeira abertura ele baixa os modelos de voz (cerca de 22 GB).",
+                                  "Dentro dele, troque o motor para o VoxCPM 2. O que vem ligado (OmniVoice) "
+                                  "tem licença que NÃO permite vídeo monetizado.",
+                                  "Volte aqui: esta linha fica verde."]),
                       "botao": {"acao": "instalar", "qual": "voz",
-                                "rotulo": "Baixar o VoiceStudio — 222 MB"},
+                                "rotulo": ("Baixar o VoiceStudio — 222 MB" if plataforma.WIN
+                                           else "Baixar o VoiceStudio")},
                       "link": {"url": v["pagina"], "rotulo": "Página oficial do VoiceStudio"}})
 
     # ---- 6. a IA de texto
@@ -4792,8 +4999,11 @@ async def api_requisitos(req):
                       "resumo": "Não instalada. É ela que melhora o seu prompt, traduz, descreve uma imagem "
                                 "e escreve roteiro, tudo na sua máquina. Opcional: sem ela esses botões "
                                 "ficam parados e o resto funciona.",
-                      "passos": [f"Clique em Instalar: o painel baixa {gb} GB (o programa llama.cpp e dois "
+                      "passos": [f"Clique em Instalar: o painel baixa {gb} GB (dois "
                                  "modelos Qwen, licença Apache 2.0) e confere cada arquivo.",
+                                 ("O llama.cpp vem pelo Homebrew (o mesmo motor no chip da Apple)."
+                                  if plataforma.MAC else
+                                  "O programa llama.cpp também é baixado e conferido pelo painel."),
                                  f"Os modelos vão para {texto.MODELOS_DIR}, no disco que você escolheu "
                                  "em \"IAs aprovadas pelo projeto\". Para mudar, troque o disco lá antes.",
                                  "Se a internet cair, clique de novo: continua de onde parou.",
@@ -4834,8 +5044,8 @@ async def api_requisitos_instalar(req):
     except ValueError:
         b = {}
     qual = str(b.get("qual") or "")
-    if qual == "voz":
-        # o instalador ja abre com a pasta no disco que a pessoa escolheu para as IAs
+    if qual == "voz" and plataforma.WIN:
+        # o instalador NSIS ja abre com a pasta no disco que a pessoa escolheu para as IAs
         requisitos.VOICESTUDIO["destino"] = str(_pasta_da_voz())
     entrou, recado = requisitos.instalar(qual)
     return web.json_response({"ok": entrou, "mensagem": recado}, status=200 if entrou else 409)
@@ -4849,11 +5059,15 @@ async def api_requisitos_parar(req):
 async def api_motor_instalar(req):
     """Instala a ComfyUI (o motor) no disco escolhido. O andamento vem no /api/ias/destino."""
     if os.environ.get("ESTUDIO_COMFY_DIR"):
-        return web.json_response({"ok": False, "mensagem": "A pasta da ComfyUI está definida no "
-                                  "caminhos.bat: instale a ComfyUI nela à mão (Passo 0 do INSTALAR.md)."},
+        arq = "caminhos.bat" if plataforma.WIN else "caminhos.sh"
+        return web.json_response({"ok": False, "mensagem": f"A pasta da ComfyUI está definida no "
+                                  f"{arq}: instale a ComfyUI nela à mão (Passo 0 do "
+                                  f"{'INSTALAR.md' if plataforma.WIN else 'INSTALAR-MAC.md'})."},
                                  status=409)
-    # COMFY_DIR = <base>\ComfyUI_windows_portable\ComfyUI  ->  o motor.py recebe a <base>
-    entrou, recado = motor.instalar(COMFY_DIR.parent.parent)
+    # Windows: COMFY_DIR = <raiz>\ComfyUI_windows_portable\ComfyUI -> motor recebe a raiz.
+    # macOS:   COMFY_DIR = <raiz>\ComfyUI_mac\ComfyUI                 -> motor recebe a ComfyUI_mac.
+    base = COMFY_DIR.parent.parent if plataforma.WIN else COMFY_DIR.parent
+    entrou, recado = motor.instalar(base)
     return web.json_response({"ok": entrou, "mensagem": recado}, status=200 if entrou else 409)
 
 
@@ -6168,6 +6382,7 @@ app.add_routes([
     web.post("/api/servicos/ligar", api_servicos_ligar), web.post("/api/servicos/desligar", api_servicos_desligar),
     web.post("/api/reparar", api_reparar),
     web.get("/api/preferencias", api_preferencias), web.post("/api/preferencias", api_preferencias),
+    web.get("/api/navegadores", api_navegadores), web.post("/api/navegadores", api_navegadores),
     web.get("/api/voz/estado", api_voz_estado), web.post("/api/voz/falar", api_voz_falar),
     web.get("/api/voz/previsao", api_voz_previsao),
     web.get("/api/fila", api_fila),
@@ -6211,14 +6426,15 @@ def _icone_na_primeira_subida():
     resposta dela - recriar toda vez seria teimosia, nao ajuda.
     """
     try:
-        if os.name != "nt" or MARCA_DO_ICONE.exists():
+        if not (plataforma.WIN or plataforma.MAC) or MARCA_DO_ICONE.exists():
             return
         sys.path.insert(0, str(AQUI))
         import atalho
 
+        nome_do_icone = "Forja Studio.lnk" if plataforma.WIN else "Forja Studio.app"
         mesa = atalho._area_de_trabalho()
-        if mesa and (mesa / "Forja Studio.lnk").exists():
-            feito, motivo = str(mesa / "Forja Studio.lnk"), "ja existia"
+        if mesa and (mesa / nome_do_icone).exists():
+            feito, motivo = str(mesa / nome_do_icone), "ja existia"
         else:
             caminho = atalho.criar(mesa)
             feito = str(caminho) if caminho else None
@@ -6233,8 +6449,8 @@ def _icone_na_primeira_subida():
                   flush=True)
         else:
             print(f"[estudio] nao criei o icone na Area de Trabalho: {motivo}", flush=True)
-            print("[estudio]   para tentar de novo: apague estudio\\icone_feito.json e "
-                  "clique em 'Criar o icone na Area de Trabalho.bat'", flush=True)
+            print("[estudio]   para tentar de novo: apague estudio/icone_feito.json e "
+                  "rode o setup.py de novo", flush=True)
     except Exception as exc:
         # O icone e um conforto, nao o produto: ele nunca pode derrubar o estudio.
         print(f"[estudio] tropecei ao criar o icone ({exc.__class__.__name__}: {exc}); "

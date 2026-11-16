@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -186,3 +187,97 @@ def completar_path():
     faltam = [p for p in ("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin") if p not in atual
               and os.path.isdir(p)]
     os.environ["PATH"] = os.pathsep.join(faltam + atual)
+
+
+# ---------------------------------------------------------------- navegadores da automacao
+# A tela invisivel do plano-sequencia dirige um navegador Chromium por linha de comando
+# (--user-data-dir, --headless, --remote-debugging-port). Chrome, Edge, Brave, Chromium,
+# Vivaldi e Opera aceitam as mesmas opcoes. O Safari nao aceita e precisaria de safaridriver.
+NAVEGADORES = (
+    {"id": "chrome", "nome": "Google Chrome", "app": "Google Chrome", "exe": "Google Chrome",
+     "win": ("Google/Chrome/Application/chrome.exe",)},
+    {"id": "chrome-beta", "nome": "Google Chrome Beta", "app": "Google Chrome Beta",
+     "exe": "Google Chrome Beta", "win": ("Google/Chrome Beta/Application/chrome.exe",)},
+    {"id": "chrome-dev", "nome": "Google Chrome Dev", "app": "Google Chrome Dev",
+     "exe": "Google Chrome Dev", "win": ("Google/Chrome Dev/Application/chrome.exe",)},
+    {"id": "chrome-canary", "nome": "Google Chrome Canary", "app": "Google Chrome Canary",
+     "exe": "Google Chrome Canary", "win": ("Google/Chrome SxS/Application/chrome.exe",)},
+    {"id": "edge", "nome": "Microsoft Edge", "app": "Microsoft Edge", "exe": "Microsoft Edge",
+     "win": ("Microsoft/Edge/Application/msedge.exe",)},
+    {"id": "edge-beta", "nome": "Microsoft Edge Beta", "app": "Microsoft Edge Beta",
+     "exe": "Microsoft Edge Beta", "win": ("Microsoft/Edge Beta/Application/msedge.exe",)},
+    {"id": "edge-dev", "nome": "Microsoft Edge Dev", "app": "Microsoft Edge Dev",
+     "exe": "Microsoft Edge Dev", "win": ("Microsoft/Edge Dev/Application/msedge.exe",)},
+    {"id": "edge-canary", "nome": "Microsoft Edge Canary", "app": "Microsoft Edge Canary",
+     "exe": "Microsoft Edge Canary", "win": ("Microsoft/Edge SxS/Application/msedge.exe",)},
+    {"id": "brave", "nome": "Brave", "app": "Brave Browser", "exe": "Brave Browser",
+     "win": ("BraveSoftware/Brave-Browser/Application/brave.exe",)},
+    {"id": "brave-beta", "nome": "Brave Beta", "app": "Brave Browser Beta", "exe": "Brave Browser Beta",
+     "win": ("BraveSoftware/Brave-Browser-Beta/Application/brave.exe",)},
+    {"id": "brave-nightly", "nome": "Brave Nightly", "app": "Brave Browser Nightly",
+     "exe": "Brave Browser Nightly",
+     "win": ("BraveSoftware/Brave-Browser-Nightly/Application/brave.exe",)},
+    {"id": "chromium", "nome": "Chromium", "app": "Chromium", "exe": "Chromium",
+     "win": ("Chromium/Application/chrome.exe",)},
+    {"id": "vivaldi", "nome": "Vivaldi", "app": "Vivaldi", "exe": "Vivaldi",
+     "win": ("Vivaldi/Application/vivaldi.exe", "Programs/Vivaldi/Application/vivaldi.exe")},
+    {"id": "opera", "nome": "Opera", "app": "Opera", "exe": "Opera",
+     "win": ("Opera/launcher.exe", "Programs/Opera/launcher.exe")},
+)
+
+
+def _navegador_mac(nome_do_app, exe):
+    for base in (Path("/Applications"), Path.home() / "Applications"):
+        p = base / f"{nome_do_app}.app" / "Contents" / "MacOS" / exe
+        if p.is_file():
+            return p
+    return None
+
+
+def _navegador_win(relativos):
+    bases = [os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"),
+             os.environ.get("LOCALAPPDATA"), os.environ.get("PROGRAMW6432")]
+    for base in filter(None, bases):
+        for rel in relativos:
+            p = Path(base) / rel
+            if p.is_file():
+                return p
+    return None
+
+
+def navegador_caminho(opcao):
+    if MAC:
+        p = _navegador_mac(opcao["app"], opcao["exe"])
+        if p:
+            return p
+        if opcao["id"] == "chromium":      # Homebrew: /opt/homebrew/bin/chromium, fora de .app
+            achado = shutil.which("chromium")
+            return Path(achado) if achado else None
+        return None
+    if WIN:
+        return _navegador_win(opcao["win"])
+    return None
+
+
+def navegadores_instalados():
+    """[{id, nome, caminho}] dos navegadores presentes, na ordem de preferencia (Chrome antes do Edge)."""
+    fora = []
+    for opcao in NAVEGADORES:
+        p = navegador_caminho(opcao)
+        if p:
+            fora.append({"id": opcao["id"], "nome": opcao["nome"], "caminho": str(p)})
+    return fora
+
+
+def navegador_por_id(navegador_id):
+    return next((n for n in navegadores_instalados() if n["id"] == navegador_id), None)
+
+
+def navegador_escolhido(preferido=""):
+    """O escolhido nas configuracoes, se instalado; senao o primeiro instalado na ordem de preferencia."""
+    lista = navegadores_instalados()
+    if preferido:
+        achado = next((n for n in lista if n["id"] == preferido), None)
+        if achado:
+            return achado
+    return lista[0] if lista else None

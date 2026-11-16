@@ -114,13 +114,68 @@
     });
   }
 
+  // Navegador da automação: Chrome, Edge, Brave, Chromium, Vivaldi ou Opera. O Safari fica
+  // de fora porque não aceita as opções de linha de comando que a tela invisível usa.
+  async function lerNavegador() {
+    const sel = $('#cfgNavSel'), msg = $('#cfgNavMsg'), selo = $('#cfgNavSelo');
+    if (!sel) return;
+    try {
+      const d = await (await fetch('/api/navegadores')).json();
+      const opcoes = d.opcoes || [];
+      sel.innerHTML = '';
+      opcoes.forEach((n) => {
+        const o = document.createElement('option');
+        o.value = n.id;
+        o.textContent = n.nome;
+        sel.append(o);
+      });
+      if (d.escolhido) sel.value = d.escolhido;
+      const achou = opcoes.some((n) => n.id === d.escolhido);
+      if (selo) selo.classList.toggle('on', !!d.escolhido);
+      sel.disabled = !opcoes.length;
+      $('#cfgNavSalvar').disabled = !opcoes.length;
+      if (!opcoes.length) {
+        msg.textContent = 'Nenhum navegador Chromium encontrado. Instale o Chrome, o Edge, o Brave ou o Chromium.';
+        msg.className = 'nuvem-msg ruim';
+      } else if (!achou) {
+        msg.textContent = 'O navegador salvo não está instalado; o estúdio usa ' + opcoes[0].nome + '.';
+        msg.className = 'nuvem-msg';
+      } else {
+        msg.textContent = '';
+        msg.className = 'nuvem-msg';
+      }
+    } catch (e) {
+      msg.textContent = 'Não consegui ler os navegadores: ' + e.message;
+      msg.className = 'nuvem-msg ruim';
+    }
+  }
+
+  async function salvarNavegador() {
+    const sel = $('#cfgNavSel'), msg = $('#cfgNavMsg');
+    try {
+      const d = await chamar('/api/navegadores', { id: sel.value });
+      msg.textContent = 'Navegador da automação: ' + (d.escolhido || 'automático');
+      msg.className = 'nuvem-msg bom';
+      await lerNavegador();
+    } catch (e) {
+      msg.textContent = e.message;
+      msg.className = 'nuvem-msg ruim';
+    }
+  }
+
   let prontos = null;
+  let navegadorPronto = false;
 
   window.CONFIG = {
     abrir() {
       if (!prontos) prontos = CARTOES.map(preparar);
       prontos.forEach((p) => { p.limpar(); p.atualizar(); });
       listarIAs();
+      if (!navegadorPronto) {
+        const b = $('#cfgNavSalvar');
+        if (b) { b.onclick = salvarNavegador; navegadorPronto = true; }
+      }
+      lerNavegador();
     },
   };
 })();

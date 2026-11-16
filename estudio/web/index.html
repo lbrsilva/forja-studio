@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark">
 <title>JerS · Forja Studio</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2340cee8'/%3E%3Cpath d='M16 5l2.6 7.4L26 15l-7.4 2.6L16 25l-2.6-7.4L6 15l7.4-2.6z' fill='%230b0d12'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="estilo.css?v=20261111-chaves">
+<link rel="stylesheet" href="estilo.css?v=20261116-mac">
 <link rel="stylesheet" href="voz.css?v=20261103-nuvem">
 <link rel="stylesheet" href="canal.css?v=20261102-molde">
 <link rel="stylesheet" href="plano.css?v=20261102-molde2">
@@ -605,6 +605,20 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
       <ul class="cfg-ias" id="cfgIasLista"></ul>
       <p class="nota" id="cfgIasVazio" hidden>Nenhuma IA instalada ainda.</p>
     </div>
+
+    <div class="cfg-cartao" id="cfgNav">
+      <h3 class="cfg-tit">Navegador da automação <i class="nuvem-selo" id="cfgNavSelo"></i></h3>
+      <p class="nuvem-ex">A tela invisível do plano-sequência dirige um navegador Chromium.
+        O estúdio prefere o Chrome; sem ele, usa Edge, Brave, Chromium, Vivaldi ou Opera.</p>
+      <label class="nuvem-rot" for="cfgNavSel">Navegador</label>
+      <select id="cfgNavSel" class="idioma-sel"></select>
+      <div class="nuvem-bts">
+        <button type="button" class="gerar" id="cfgNavSalvar">Salvar</button>
+      </div>
+      <p class="nuvem-msg" id="cfgNavMsg" role="status"></p>
+      <p class="nuvem-pe" id="cfgNavPe">Safari não serve: a automação usa as opções de linha de comando
+        que só os navegadores Chromium têm. Fica numa preferência deste computador.</p>
+    </div>
   </section>
 
   <section id="vFila" hidden>
@@ -1139,10 +1153,10 @@ Me entregue o resultado como um .bat que eu clico na Área de Trabalho.</pre>
 <script src="icones.js?v=20260924-desligar2"></script>
 <script src="conta.js?v=20261114-conta4"></script>
 <script src="atualizacao.js?v=20261103-atu"></script>
-<script src="app.js?v=20261114-musica"></script>
+<script src="app.js?v=20261116-mac"></script>
 <script src="voz.js?v=20261109-selo"></script>
 <script src="fila.js?v=20261109-musica"></script>
-<script src="configuracoes.js?v=20261112-ias"></script>
+<script src="configuracoes.js?v=20261116-nav"></script>
 <script src="canal.js?v=20261030-canal"></script>
 <script src="plano.js?v=20261102-molde2"></script>
 <script src="tudo.js?v=20261102-tudo2"></script>

@@ -57,11 +57,13 @@ from urllib.parse import quote
 
 import psutil
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # o Python embutido da ComfyUI não inclui a pasta do script
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "estudio"))
 
 from aiohttp import ClientConnectorError, ClientError, ClientSession, ClientTimeout, WSMsgType, web
 import catalogo
 import novos_motores
 import equalizador
+import plataforma
 
 
 class _MotorAusente:
@@ -135,9 +137,11 @@ MIGRADOS = catalogo.migrar(JOBS)  # só na memória: o arquivo é regravado no p
 LOCK = asyncio.Lock()
 PROGRESS = {}
 REFRESH_LOCK = asyncio.Lock()
-AUDIO_EXT = {'.flac', '.wav', '.mp3', '.ogg', '.opus', '.m4a', '.aac'}
+AUDIO_EXT = {'.flac', '.wav', '.mp3', '.ogg', '.opus', '.m4a', '.aac',
+             '.aiff', '.aif', '.caf', '.m4b'}   # AIFF/CAF/M4B: os formatos comuns do macOS
 TIPOS_AUDIO = {'.flac': 'audio/flac', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
-               '.opus': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac'}
+               '.opus': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+               '.aiff': 'audio/aiff', '.aif': 'audio/aiff', '.caf': 'audio/x-caf', '.m4b': 'audio/mp4'}
 
 
 def _as_duas_formas(url):
@@ -299,23 +303,35 @@ async def system_metrics(request):
         memory = psutil.virtual_memory()
         result = {'cpu': psutil.cpu_percent(), 'ram_used': memory.used,
                   'ram_total': memory.total, 'ram_percent': memory.percent, 'gpu': None}
-        try:
-            process = await asyncio.create_subprocess_exec(
-                'nvidia-smi', '--query-gpu=name,utilization.gpu,memory.used,memory.total',
-                '--format=csv,noheader,nounits', stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, creationflags=SEM_JANELA)
+        if plataforma.MAC:
             try:
-                output, _ = await asyncio.wait_for(process.communicate(), timeout=3)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.communicate()
-                raise
-            if process.returncode == 0:
-                row = next(csv.reader(output.decode().splitlines()))
-                result['gpu'] = {'name': row[0].strip(), 'percent': float(row[1]),
-                                 'used_mib': float(row[2]), 'total_mib': float(row[3])}
-        except (OSError, ValueError, StopIteration, IndexError, asyncio.TimeoutError):
-            pass
+                info = plataforma.gpu_unificada()
+                if info:
+                    nome, total, livre = info
+                    usado = max(0, total - livre)
+                    result['gpu'] = {'name': nome,
+                                     'percent': round(usado / total * 100, 1) if total else 0,
+                                     'used_mib': usado / 1024 ** 2, 'total_mib': total / 1024 ** 2}
+            except Exception:
+                pass
+        else:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    'nvidia-smi', '--query-gpu=name,utilization.gpu,memory.used,memory.total',
+                    '--format=csv,noheader,nounits', stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE, creationflags=SEM_JANELA)
+                try:
+                    output, _ = await asyncio.wait_for(process.communicate(), timeout=3)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.communicate()
+                    raise
+                if process.returncode == 0:
+                    row = next(csv.reader(output.decode().splitlines()))
+                    result['gpu'] = {'name': row[0].strip(), 'percent': float(row[1]),
+                                     'used_mib': float(row[2]), 'total_mib': float(row[3])}
+            except (OSError, ValueError, StopIteration, IndexError, asyncio.TimeoutError):
+                pass
         METRICS_CACHE = result
         METRICS_TIME = time.monotonic()
         return web.json_response(result)
@@ -542,8 +558,8 @@ async def upload(request):
     if part is None or not part.filename:
         raise ValueError('Escolha um arquivo de áudio.')
     extension = Path(part.filename).suffix.lower()
-    if extension not in {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.opus'}:
-        raise ValueError('Use WAV, MP3, FLAC, OGG, M4A, AAC ou OPUS.')
+    if extension not in AUDIO_EXT:
+        raise ValueError('Use WAV, MP3, FLAC, OGG, M4A, AAC, OPUS, AIFF ou CAF.')
     temporario = INPUT / ('painel_envio_' + uuid.uuid4().hex + '.part')
     total, resumo = 0, hashlib.sha1()
     try:

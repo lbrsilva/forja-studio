@@ -22,6 +22,10 @@ e testar.
 
 O que NAO faz: nao baixa modelo nenhum (isso e o ias.py), e nao escolhe a pasta (isso vem
 do server.py, que sabe o disco que a pessoa escolheu).
+
+No macOS o mesmo botao faz o caminho do Homebrew: instala `python@3.12` e `git`, clona a
+ComfyUI em `ComfyUI_mac/ComfyUI`, cria o venv em `ComfyUI_mac/venv`, instala PyTorch
+(Metal/MPS) e as dependencias, e poe os mesmos complementos fixados. Sem .7z e sem tar.exe.
 """
 import hashlib
 import io
@@ -35,11 +39,15 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import plataforma
+
 # ------------------------------------------------------------------ o que e instalado
 VERSAO = "v0.36.0"
+VERSAO_MAC = "main"
 ARQUIVO = "ComfyUI_windows_portable_nvidia.7z"
 URL = f"https://github.com/Comfy-Org/ComfyUI/releases/download/{VERSAO}/{ARQUIVO}"
 BYTES = 1917442353
+BYTES_MAC = 6 * 1024 ** 3        # git clone + complementos + PyTorch e dependencias no pip
 SHA256 = "c3c60192840f8b68c9a47cf3e8161ecb108e5ffdf5ea236c1c72a402e442695d"
 
 # Os 2 complementos que os workflows do pacote usam (medido em 06/11/2026: de 78 tipos de
@@ -54,6 +62,7 @@ COMPLEMENTOS = (
 BIBLIOTECAS = ("gguf>=0.13.0",)
 
 PRECISA_GB = 12          # 1,8 do .7z + ~6 descompactado + folga para o pip e os temporarios
+PRECISA_GB_MAC = 20      # clone + venv + PyTorch e dependencias no pip
 PASTA = "ComfyUI_windows_portable"
 
 # Os nos que SAO NOSSOS e viajam dentro do pacote (estudio/nos/<nome>/). Nao ha o que baixar:
@@ -62,7 +71,8 @@ PASTA = "ComfyUI_windows_portable"
 NOS = Path(__file__).resolve().parent / "nos"
 
 _trava = threading.Lock()
-_estado = {"fase": None, "baixados": 0, "total": BYTES, "erro": None, "comecou": None}
+_estado = {"fase": None, "baixados": 0, "total": BYTES if plataforma.WIN else BYTES_MAC,
+           "erro": None, "comecou": None}
 _parar = False
 
 
@@ -71,8 +81,25 @@ class _Parado(Exception):
 
 
 # ---------------------------------------------------------------------------- consultas
+def _comfy_dir(base):
+    base = Path(base)
+    return base / PASTA / "ComfyUI" if plataforma.WIN else base / "ComfyUI"
+
+
 def instalado(base):
-    return (Path(base) / PASTA / "ComfyUI" / "main.py").is_file()
+    return (_comfy_dir(base) / "main.py").is_file()
+
+
+def versao():
+    return VERSAO if plataforma.WIN else VERSAO_MAC
+
+
+def bytes_estimados():
+    return BYTES if plataforma.WIN else BYTES_MAC
+
+
+def precisa_gb():
+    return PRECISA_GB if plataforma.WIN else PRECISA_GB_MAC
 
 
 def progresso():
@@ -89,6 +116,30 @@ def _tar():
     """O tar DO WINDOWS. O do Git (GNU tar) nao le .7z, e pode estar na frente no PATH."""
     p = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tar.exe"
     return p if p.is_file() else None
+
+
+def _brew():
+    if not plataforma.MAC:
+        return None
+    for p in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew"):
+        if Path(p).is_file():
+            return p
+    return shutil.which("brew")
+
+
+def _comando(cmd, fase, **kw):
+    """Roda um passo da instalacao e devolve a saida; qualquer codigo != 0 vira frase na tela."""
+    _fase(fase)
+    if _parar:
+        raise _Parado()
+    r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", **kw)
+    if _parar:
+        raise _Parado()
+    if r.returncode != 0:
+        saida = (r.stderr or r.stdout or "").strip()
+        raise OSError(" ".join(str(c) for c in cmd[:2]) + ": "
+                      + (saida[-400:] or f"codigo {r.returncode}"))
+    return r
 
 
 # ------------------------------------------------------------------------------ baixar
@@ -158,8 +209,9 @@ def _descompactar(arquivo, base):
                       + ((r.stderr or r.stdout or "").strip()[:300] or f"codigo {r.returncode}"))
 
 
-def _complemento(nome, repo, commit, base):
-    destino = Path(base) / PASTA / "ComfyUI" / "custom_nodes" / nome
+def _complemento(nome, repo, commit, base, comfy_dir=None):
+    comfy = Path(comfy_dir) if comfy_dir else _comfy_dir(base)
+    destino = comfy / "custom_nodes" / nome
     if destino.is_dir() and any(destino.iterdir()):
         return
     zip_local = Path(base) / f"_{nome}.zip"
@@ -186,8 +238,13 @@ def _complemento(nome, repo, commit, base):
         zip_local.unlink(missing_ok=True)
 
 
+def _python_do_motor(base):
+    base = Path(base)
+    return base / "python_embeded" / "python.exe" if plataforma.WIN else base / "venv" / "bin" / "python"
+
+
 def _bibliotecas(base):
-    py = Path(base) / PASTA / "python_embeded" / "python.exe"
+    py = _python_do_motor(base)
     r = subprocess.run([str(py), "-s", "-m", "pip", "install", *BIBLIOTECAS,
                         "--no-warn-script-location", "--disable-pip-version-check", "-q"],
                        capture_output=True, text=True, errors="replace",
@@ -287,7 +344,7 @@ def _trabalhar(base):
         _bibliotecas(base)
         # os nos que viajam no pacote (o da musica). Falha aqui PARA a instalacao com a frase
         # na tela: motor "pronto" sem o no deixaria a musica do YuE2 quebrada sem ninguem saber.
-        nos = nos_do_pacote(base / PASTA / "ComfyUI")
+        nos = nos_do_pacote(_comfy_dir(base))
         if not nos["ok"]:
             raise OSError("O motor foi instalado, mas " + (nos["erro"] or "os nos do pacote nao foram copiados") + ".")
         arquivo.unlink(missing_ok=True)       # so depois de tudo certo: 1,8 GB a menos
@@ -300,20 +357,75 @@ def _trabalhar(base):
         _parar = False
 
 
+def _trabalhar_mac(base):
+    """O mesmo trabalho do Windows, com o Homebrew no lugar do .7z: brew, git clone, venv e pip."""
+    global _parar
+    base = Path(base)
+    comfy = base / "ComfyUI"
+    venv = base / "venv"
+    vpy = venv / "bin" / "python"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        livre = shutil.disk_usage(str(base)).free / 1024 ** 3
+        if livre < PRECISA_GB_MAC:
+            raise OSError(f"O motor precisa de {PRECISA_GB_MAC} GB livres e o disco de {base.anchor} "
+                          f"tem {livre:.1f} GB. Escolha outro disco.")
+        brew = _brew()
+        if not brew:
+            raise OSError("Nao achei o Homebrew. Instale em https://brew.sh e clique de novo.")
+        _fase("preparando", total=0, baixados=0)
+        for pacote in ("python@3.12", "git"):
+            if subprocess.run([brew, "list", "--formula", pacote],
+                              capture_output=True).returncode != 0:
+                _comando([brew, "install", pacote], "preparando")
+        prefixo = _comando([brew, "--prefix", "python@3.12"], "preparando").stdout.strip()
+        py312 = Path(prefixo) / "bin" / "python3.12"
+        if not py312.is_file():
+            raise OSError("O Homebrew instalou o python@3.12, mas nao achei o python3.12.")
+        if not (comfy / "main.py").is_file():
+            _fase("baixando", total=0, baixados=0)
+            _comando(["git", "clone", "--depth", "1", "https://github.com/comfyanonymous/ComfyUI",
+                      str(comfy)], "baixando")
+        if not vpy.is_file():
+            _comando([str(py312), "-m", "venv", str(venv)], "ambiente")
+        _comando([str(vpy), "-m", "pip", "install", "--upgrade", "pip"], "ambiente")
+        _comando([str(vpy), "-m", "pip", "install", "torch", "torchvision", "torchaudio"], "ambiente")
+        _comando([str(vpy), "-m", "pip", "install", "-r", str(comfy / "requirements.txt")], "ambiente")
+        _comando([str(vpy), "-m", "pip", "install", "-r",
+                  str(Path(__file__).resolve().parent.parent / "requirements.txt")], "ambiente")
+        _fase("complementos")
+        for nome, repo, commit in COMPLEMENTOS:
+            if _parar:
+                raise _Parado()
+            _complemento(nome, repo, commit, base, comfy_dir=comfy)
+        _bibliotecas(base)
+        nos = nos_do_pacote(comfy)
+        if not nos["ok"]:
+            raise OSError("O motor foi instalado, mas " + (nos["erro"] or "os nos do pacote nao foram copiados") + ".")
+        _fase("pronto", erro=None)
+    except _Parado:
+        _fase(None, erro="Instalacao do motor parada.")
+    except Exception as exc:
+        _fase(None, erro=str(exc))
+    finally:
+        _parar = False
+
+
 def instalar(base):
     """Comeca a instalar em segundo plano. Devolve (comecou, recado)."""
     global _parar
-    if os.name != "nt":
-        return False, "A instalacao automatica do motor so existe no Windows."
+    if not (plataforma.WIN or plataforma.MAC):
+        return False, "A instalacao automatica do motor nao existe neste sistema."
     if instalado(base):
         return False, "O motor ja esta instalado neste disco."
     with _trava:
         if _estado["fase"] not in (None, "pronto"):
             return False, "O motor ja esta sendo instalado."
-        _estado.update({"fase": "baixando", "baixados": 0, "total": BYTES, "erro": None,
-                        "comecou": time.time()})
+        _estado.update({"fase": "baixando" if plataforma.WIN else "preparando", "baixados": 0,
+                        "total": bytes_estimados(), "erro": None, "comecou": time.time()})
     _parar = False
-    threading.Thread(target=_trabalhar, args=(str(base),), daemon=True).start()
+    alvo = _trabalhar if plataforma.WIN else _trabalhar_mac
+    threading.Thread(target=alvo, args=(str(base),), daemon=True).start()
     return True, "Comecando a instalar o motor."
 
 
