@@ -1423,6 +1423,11 @@ async def api_presets(req):
     # desligada; antes de desligar alguma de novo, pergunte a ele.
     for aba in ("imagem", "video"):
         dados[aba] = [p for p in dados.get(aba, []) if not p.get("desligado")]
+    # 16/11/2026: o plano-sequencia depende de projetos/fz_contexto/plano_sequencia.py, que
+    # nao viaja no pacote. Sem o script a aba so levaria a uma tela que acusa erro: esconde.
+    if not SCRIPT_DA_AUTOMACAO.is_file():
+        dados["video"] = [p for p in dados.get("video", []) if p.get("id") != "h3_contexto"]
+    dados["plano_disponivel"] = SCRIPT_DA_AUTOMACAO.is_file()
     ativos = [p for aba in ("imagem", "video") for p in dados.get(aba, [])]
     for p in ativos:
         f = ficha(p["id"])

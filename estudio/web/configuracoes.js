@@ -120,7 +120,13 @@
     const sel = $('#cfgNavSel'), msg = $('#cfgNavMsg'), selo = $('#cfgNavSelo');
     if (!sel) return;
     try {
-      const d = await (await fetch('/api/navegadores')).json();
+      const r = await fetch('/api/navegadores');
+      if (!r.ok) {
+        throw new Error(r.status === 404
+          ? 'o estúdio que está no ar é de uma versão antiga; reinicie o estúdio para carregar esta tela'
+          : `o estúdio respondeu ${r.status}`);
+      }
+      const d = await r.json();
       const opcoes = d.opcoes || [];
       sel.innerHTML = '';
       opcoes.forEach((n) => {
